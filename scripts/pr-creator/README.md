@@ -116,6 +116,7 @@ O script busca tokens nesta ordem:
 | `REPOS_LIMIT`           | `20`                   | Limite de repositórios                                 |
 | `SYNC_FORKS`            | `true`                 | Sincroniza forks com upstream antes de buscar branches |
 | `CLOSE_EXISTING_PRS`    | `false`                | Fecha todos os PRs existentes antes de criar novos     |
+| `SELECT_LARGEST_PRS`    | `false`                | Seleciona branches com mais arquivos alterados         |
 | `GITHUB_TOKEN`          | -                      | Token de API do GitHub (prioridade)                    |
 | `GITLAB_TOKEN`          | -                      | Token de API do GitLab (prioridade)                    |
 | `BITBUCKET_TOKEN`       | -                      | Token de API do Bitbucket (prioridade)                 |
@@ -157,6 +158,41 @@ export TARGET_BRANCH="main"
 cd scripts/pr-creator
 npm start
 ```
+
+## Selecionar PRs Maiores
+
+Por padrão, o script pega as primeiras branches disponíveis. Com `SELECT_LARGEST_PRS=true`, ele analisa as branches e seleciona as que têm **mais arquivos alterados**.
+
+### Como usar
+
+```bash
+export SELECT_LARGEST_PRS=true
+npm start
+```
+
+### O que faz
+
+1. Para cada repositório, analisa até 50 branches
+2. Compara cada branch com a default (main/master)
+3. Conta arquivos alterados e linhas (+/-)
+4. Ordena por tamanho (mais arquivos primeiro)
+5. Seleciona as N maiores para criar PRs
+
+### Exemplo de saída
+
+```
+   📊 Analyzing branch sizes to select largest PRs...
+   📈 Largest branches found:
+      1. feature/big-refactor: 45 files, +2340/-890 lines
+      2. feature/new-module: 32 files, +1200/-150 lines
+      3. fix/database-migration: 18 files, +450/-200 lines
+```
+
+### Quando usar
+
+- Testar performance do code review com PRs grandes
+- Simular carga real de produção
+- Encontrar PRs que podem causar memory issues
 
 ## Suporte a Forks
 

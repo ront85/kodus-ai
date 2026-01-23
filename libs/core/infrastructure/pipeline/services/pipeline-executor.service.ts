@@ -7,6 +7,19 @@ import { AutomationStatus } from '@libs/automation/domain/automation/enum/automa
 
 type SkipDecision = 'EXECUTE_STAGE' | 'SKIP_STAGE' | 'ABORT_PIPELINE';
 
+// Memory debugging - enable with PIPELINE_MEMORY_DEBUG=true
+const MEMORY_DEBUG_ENABLED = process.env.PIPELINE_MEMORY_DEBUG === 'true';
+
+function getMemoryMB(): { heapUsed: number; heapTotal: number; rss: number; external: number } {
+    const mem = process.memoryUsage();
+    return {
+        heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(mem.heapTotal / 1024 / 1024),
+        rss: Math.round(mem.rss / 1024 / 1024),
+        external: Math.round(mem.external / 1024 / 1024),
+    };
+}
+
 export class PipelineExecutor<TContext extends PipelineContext> {
     private readonly logger = createLogger(PipelineExecutor.name);
 
@@ -28,6 +41,16 @@ export class PipelineExecutor<TContext extends PipelineContext> {
             rootPipelineId: rootPipelineId || pipelineId,
             pipelineName,
         };
+
+        const pipelineMemStart = MEMORY_DEBUG_ENABLED ? getMemoryMB() : null;
+
+        if (MEMORY_DEBUG_ENABLED) {
+            this.logger.log({
+                message: `[MEM] ====== PIPELINE ${pipelineName} START: heap=${pipelineMemStart!.heapUsed}MB, rss=${pipelineMemStart!.rss}MB ======`,
+                context: PipelineExecutor.name,
+                serviceName: PipelineExecutor.name,
+            });
+        }
 
         this.logger.log({
             message: `Starting pipeline: ${pipelineName} (ID: ${pipelineId})`,
@@ -64,9 +87,35 @@ export class PipelineExecutor<TContext extends PipelineContext> {
             }
 
             const start = Date.now();
+            const memBefore = MEMORY_DEBUG_ENABLED ? getMemoryMB() : null;
+
+            if (MEMORY_DEBUG_ENABLED) {
+                this.logger.log({
+                    message: `[MEM] ${stage.stageName} START: heap=${memBefore!.heapUsed}MB, rss=${memBefore!.rss}MB, external=${memBefore!.external}MB`,
+                    context: PipelineExecutor.name,
+                    serviceName: PipelineExecutor.name,
+                });
+            }
 
             try {
                 context = await stage.execute(context);
+
+                const memAfter = MEMORY_DEBUG_ENABLED ? getMemoryMB() : null;
+                const memDiff = memBefore && memAfter ? memAfter.heapUsed - memBefore.heapUsed : 0;
+
+                if (MEMORY_DEBUG_ENABLED) {
+                    this.logger.log({
+                        message: `[MEM] ${stage.stageName} END: heap=${memAfter!.heapUsed}MB (${memDiff >= 0 ? '+' : ''}${memDiff}MB), rss=${memAfter!.rss}MB`,
+                        context: PipelineExecutor.name,
+                        serviceName: PipelineExecutor.name,
+                        metadata: {
+                            memoryDelta: memDiff,
+                            heapUsed: memAfter!.heapUsed,
+                            heapTotal: memAfter!.heapTotal,
+                            rss: memAfter!.rss,
+                        },
+                    });
+                }
 
                 this.logger.log({
                     message: `Stage '${stage.stageName}' completed in ${
@@ -125,6 +174,23 @@ export class PipelineExecutor<TContext extends PipelineContext> {
                 if (reason.message) {
                     draft.statusInfo.message = reason.message;
                 }
+            });
+        }
+
+        if (MEMORY_DEBUG_ENABLED && pipelineMemStart) {
+            const pipelineMemEnd = getMemoryMB();
+            const totalDiff = pipelineMemEnd.heapUsed - pipelineMemStart.heapUsed;
+            this.logger.log({
+                message: `[MEM] ====== PIPELINE ${pipelineName} END: heap=${pipelineMemEnd.heapUsed}MB (${totalDiff >= 0 ? '+' : ''}${totalDiff}MB total), rss=${pipelineMemEnd.rss}MB ======`,
+                context: PipelineExecutor.name,
+                serviceName: PipelineExecutor.name,
+                metadata: {
+                    pipelineName,
+                    memoryDelta: totalDiff,
+                    heapStart: pipelineMemStart.heapUsed,
+                    heapEnd: pipelineMemEnd.heapUsed,
+                    rssEnd: pipelineMemEnd.rss,
+                },
             });
         }
 

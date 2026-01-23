@@ -80,6 +80,7 @@ services:
             - API_LOG_PRETTY=true
             - PYROSCOPE_SERVER_ADDRESS=${PYROSCOPE_SERVER_ADDRESS:-http://pyroscope:4040}
             - PYROSCOPE_HEAP_PROFILING=${PYROSCOPE_HEAP_PROFILING:-true}
+            - PIPELINE_MEMORY_DEBUG=${PIPELINE_MEMORY_DEBUG:-true}
 
     webhooks:
         <<: *app-service-defaults
@@ -103,7 +104,7 @@ services:
             start_period: 60s
         environment:
             - API_CLOUD_MODE=${API_CLOUD_MODE:-false}
-            - NODE_OPTIONS=--max-old-space-size=800 --max-semi-space-size=64
+            - NODE_OPTIONS=--max-old-space-size=1600 --max-semi-space-size=64
             - DEBUG_PORT=9232
             - API_LOG_PRETTY=true
             - PYROSCOPE_SERVER_ADDRESS=${PYROSCOPE_SERVER_ADDRESS:-http://pyroscope:4040}

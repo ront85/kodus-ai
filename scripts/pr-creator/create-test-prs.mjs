@@ -7,7 +7,7 @@ import fetch from 'node-fetch';
 import { fileURLToPath } from 'url';
 
 const CONFIG = {
-    kodusUrl: process.env.KODUS_URL || 'https://api.kodus.ai',
+    kodusUrl: process.env.KODUS_URL || 'http://localhost:3001',
     email: process.env.KODUS_EMAIL,
     password: process.env.KODUS_PASSWORD,
     totalPRs: parseInt(process.env.TOTAL_PRS || '10'),
@@ -20,6 +20,8 @@ const CONFIG = {
     reposLimit: parseInt(process.env.REPOS_LIMIT || '20'),
     syncForks: process.env.SYNC_FORKS !== 'false',
     closeExistingPRs: process.env.CLOSE_EXISTING_PRS === 'true',
+    // Select largest PRs mode - sorts branches by number of changed files
+    selectLargestPRs: process.env.SELECT_LARGEST_PRS === 'true',
     // Tokens via env (prioridade)
     githubToken: process.env.GITHUB_TOKEN,
     gitlabToken: process.env.GITLAB_TOKEN,
@@ -293,10 +295,46 @@ async function runForAccount(account) {
             `   🚫 After filtering existing PRs: ${filteredByPRs.length}`,
         );
 
-        const availableBranches = filteredByPRs.slice(
-            0,
-            Math.ceil(totalPrsTarget / reposToProcess.length),
-        );
+        let availableBranches;
+        const branchLimit = Math.ceil(totalPrsTarget / reposToProcess.length);
+
+        if (CONFIG.selectLargestPRs && filteredByPRs.length > 0) {
+            console.log(`   📊 Analyzing branch sizes to select largest PRs...`);
+            const branchesWithSize = [];
+
+            // Limit analysis to avoid too many API calls
+            const branchesToAnalyze = filteredByPRs.slice(0, 50);
+
+            for (const branch of branchesToAnalyze) {
+                const size = await getBranchDiffSize(type, token, repo, branch, defaultBranchName);
+                const totalLines = size.additions + size.deletions;
+                branchesWithSize.push({
+                    branch,
+                    files: size.files,
+                    lines: totalLines,
+                    additions: size.additions,
+                    deletions: size.deletions,
+                });
+            }
+
+            // Sort by files (primary) and lines (secondary), descending
+            branchesWithSize.sort((a, b) => {
+                if (b.files !== a.files) return b.files - a.files;
+                return b.lines - a.lines;
+            });
+
+            availableBranches = branchesWithSize.slice(0, branchLimit).map(b => b.branch);
+
+            // Log the largest branches found
+            if (branchesWithSize.length > 0) {
+                console.log(`   📈 Largest branches found:`);
+                branchesWithSize.slice(0, branchLimit).forEach((b, i) => {
+                    console.log(`      ${i + 1}. ${b.branch}: ${b.files} files, +${b.additions}/-${b.deletions} lines`);
+                });
+            }
+        } else {
+            availableBranches = filteredByPRs.slice(0, branchLimit);
+        }
 
         if (availableBranches.length === 0 && branches.length > 1) {
             console.log(
@@ -1243,6 +1281,102 @@ async function closeAllPRs(repo, platform, token) {
             `❌ Failed to close PRs for ${repoNameFull}: ${error.message}`,
         );
         return [];
+    }
+}
+
+async function getBranchDiffSize(platform, token, repo, branch, defaultBranch) {
+    let repoNameFull = repo.full_name || repo.name;
+
+    if (platform === 'bitbucket') {
+        repoNameFull = bitbucketReposCache[repo.name] || repoNameFull;
+    }
+
+    const [owner, name] = repoNameFull.split('/');
+
+    try {
+        switch (platform) {
+            case 'github': {
+                const response = await fetch(
+                    `https://api.github.com/repos/${owner}/${name}/compare/${defaultBranch}...${branch}`,
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                    },
+                );
+                if (!response.ok) {
+                    return { files: 0, additions: 0, deletions: 0 };
+                }
+                const data = await response.json();
+                return {
+                    files: data.files?.length || 0,
+                    additions: data.files?.reduce((sum, f) => sum + (f.additions || 0), 0) || 0,
+                    deletions: data.files?.reduce((sum, f) => sum + (f.deletions || 0), 0) || 0,
+                    commits: data.commits?.length || 0,
+                };
+            }
+            case 'gitlab': {
+                const projectId = encodeURIComponent(repoNameFull);
+                const response = await fetch(
+                    `https://gitlab.com/api/v4/projects/${projectId}/repository/compare?from=${defaultBranch}&to=${branch}`,
+                    {
+                        headers: { Authorization: `Bearer ${token}` },
+                    },
+                );
+                if (!response.ok) {
+                    return { files: 0, additions: 0, deletions: 0 };
+                }
+                const data = await response.json();
+                return {
+                    files: data.diffs?.length || 0,
+                    additions: 0, // GitLab doesn't provide this in compare
+                    deletions: 0,
+                    commits: data.commits?.length || 0,
+                };
+            }
+            case 'bitbucket': {
+                const response = await fetch(
+                    `https://api.bitbucket.org/2.0/repositories/${repoNameFull}/diffstat/${defaultBranch}..${branch}`,
+                    {
+                        headers: {
+                            Authorization: getBitbucketAuthHeader(token),
+                        },
+                    },
+                );
+                if (!response.ok) {
+                    return { files: 0, additions: 0, deletions: 0 };
+                }
+                const data = await response.json();
+                const files = data.values || [];
+                return {
+                    files: files.length,
+                    additions: files.reduce((sum, f) => sum + (f.lines_added || 0), 0),
+                    deletions: files.reduce((sum, f) => sum + (f.lines_removed || 0), 0),
+                };
+            }
+            case 'azuredevops': {
+                const { org, project } = getAzureRepoContext(repo);
+                const response = await fetch(
+                    `https://dev.azure.com/${org}/${project}/_apis/git/repositories/${repo.id}/diffs/commits?baseVersion=${defaultBranch}&baseVersionType=branch&targetVersion=${branch}&targetVersionType=branch&api-version=6.0`,
+                    {
+                        headers: { Authorization: getAzureAuthHeader(token) },
+                    },
+                );
+                if (!response.ok) {
+                    return { files: 0, additions: 0, deletions: 0 };
+                }
+                const data = await response.json();
+                return {
+                    files: data.changes?.length || 0,
+                    additions: 0,
+                    deletions: 0,
+                    commits: data.aheadCount || 0,
+                };
+            }
+            default:
+                return { files: 0, additions: 0, deletions: 0 };
+        }
+    } catch (error) {
+        console.warn(`      ⚠️  Failed to get diff size for ${branch}: ${error.message}`);
+        return { files: 0, additions: 0, deletions: 0 };
     }
 }
 
