@@ -172,6 +172,7 @@ export class CheckIfPRCanBeApprovedCronProvider {
                     .find({
                         team: { uuid: team.uuid },
                         automation: { uuid: automationUuid },
+                        status: true,
                     })
                     .catch((error) => {
                         this.logger.error({
