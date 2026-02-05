@@ -170,7 +170,7 @@ function formatSyncErrors(errors: unknown[] | string | undefined): string {
             if (typeof error === 'object') {
                 const message =
                     typeof (error as Record<string, unknown>).message ===
-                        'string'
+                    'string'
                         ? ((error as Record<string, unknown>).message as string)
                         : 'Unknown reference error';
                 return `- ${message}`;
@@ -374,7 +374,7 @@ function extractLayerReferences(
                 entry &&
                 typeof entry === 'object' &&
                 typeof (entry as Record<string, unknown>).filePath ===
-                'string' &&
+                    'string' &&
                 typeof (entry as Record<string, unknown>).content === 'string',
         );
         if (hasFileContext) {
