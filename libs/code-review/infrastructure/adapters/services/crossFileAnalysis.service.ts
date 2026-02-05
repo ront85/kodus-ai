@@ -22,6 +22,7 @@ import {
     CrossFileAnalysisPayload,
     CrossFileAnalysisSchema,
     CrossFileAnalysisSchemaType,
+    CrossFileContextForPrompt,
     prompt_codereview_cross_file_analysis,
 } from '@libs/common/utils/langchainCommon/prompts/codeReviewCrossFileAnalysis';
 import { LabelType } from '@libs/common/utils/codeManagement/labels';
@@ -75,6 +76,7 @@ export class CrossFileAnalysisService {
         prNumber: number,
         context: AnalysisContext,
         preparedFiles: PreparedFileData[],
+        crossFileContexts?: CrossFileContextForPrompt[],
     ): Promise<{ codeSuggestions: CodeSuggestion[] }> {
         if (
             !preparedFiles ||
@@ -128,6 +130,7 @@ export class CrossFileAnalysisService {
                     language,
                     provider,
                     'analyzeCodeWithAI',
+                    crossFileContexts,
                 );
 
             const finalSuggestions: CodeSuggestion[] =
@@ -173,6 +176,7 @@ export class CrossFileAnalysisService {
         language: string,
         provider: LLMModelProvider,
         analysisType: AnalysisType,
+        crossFileContexts?: CrossFileContextForPrompt[],
     ): Promise<CodeSuggestion[]> {
         const chunkingResult = this.tokenChunkingService.chunkDataByTokens({
             model: provider,
@@ -207,6 +211,7 @@ export class CrossFileAnalysisService {
             prNumber,
             organizationAndTeamData,
             batchConfig,
+            crossFileContexts,
         );
 
         return allSuggestions;
@@ -224,6 +229,7 @@ export class CrossFileAnalysisService {
         prNumber: number,
         organizationAndTeamData: OrganizationAndTeamData,
         batchConfig: BatchProcessingConfig,
+        crossFileContexts?: CrossFileContextForPrompt[],
     ): Promise<CodeSuggestion[]> {
         const allSuggestions: CodeSuggestion[] = [];
         const totalChunks = chunks.length;
@@ -257,6 +263,7 @@ export class CrossFileAnalysisService {
                 prNumber,
                 organizationAndTeamData,
                 batchConfig,
+                crossFileContexts,
             );
 
             batchResults.forEach(({ result, error, chunkIndex }) => {
@@ -299,6 +306,7 @@ export class CrossFileAnalysisService {
         prNumber: number,
         organizationAndTeamData: OrganizationAndTeamData,
         batchConfig: BatchProcessingConfig,
+        crossFileContexts?: CrossFileContextForPrompt[],
     ): Promise<ChunkProcessingResult[]> {
         const chunkPromises = batchChunks.map(async (chunk, batchIndex) => {
             const chunkIndex = indexOffset + batchIndex;
@@ -313,6 +321,7 @@ export class CrossFileAnalysisService {
                 prNumber,
                 organizationAndTeamData,
                 batchConfig,
+                crossFileContexts,
             );
         });
 
@@ -332,6 +341,7 @@ export class CrossFileAnalysisService {
         prNumber: number,
         organizationAndTeamData: OrganizationAndTeamData,
         batchConfig: BatchProcessingConfig,
+        crossFileContexts?: CrossFileContextForPrompt[],
     ): Promise<ChunkProcessingResult> {
         const { retryAttempts, retryDelay } = batchConfig;
         const MAX_RETRY_DELAY = 10000;
@@ -360,6 +370,7 @@ export class CrossFileAnalysisService {
                     chunkIndex,
                     prNumber,
                     organizationAndTeamData,
+                    crossFileContexts,
                 );
 
                 return { chunkIndex, result };
@@ -421,6 +432,7 @@ export class CrossFileAnalysisService {
         chunkIndex: number,
         prNumber: number,
         organizationAndTeamData: OrganizationAndTeamData,
+        crossFileContexts?: CrossFileContextForPrompt[],
     ): Promise<CodeSuggestion[] | null> {
         const fileContexts =
             this.convertFilesToFileChangeContext(preparedFilesChunk);
@@ -429,6 +441,7 @@ export class CrossFileAnalysisService {
             files: fileContexts,
             language,
             v2PromptOverrides: context?.codeReviewConfig?.v2PromptOverrides,
+            crossFileContexts,
         };
 
         const fallbackProvider = LLMModelProvider.GEMINI_2_5_FLASH;

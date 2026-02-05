@@ -9,6 +9,7 @@ import { BasePipelineStage } from '@libs/core/infrastructure/pipeline/abstracts/
 import { IPipelineStrategy } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-strategy.interface';
 import { CodeReviewPipelineContext } from '../context/code-review-pipeline.context';
 import { AggregateResultsStage } from '../stages/aggregate-result.stage';
+import { CollectCrossFileContextStage } from '../stages/collect-cross-file-context.stage';
 import {
     ILoadExternalContextStage,
     LOAD_EXTERNAL_CONTEXT_STAGE_TOKEN,
@@ -41,6 +42,7 @@ export class CodeReviewPipelineStrategy implements IPipelineStrategy<CodeReviewP
         private readonly loadExternalContextStage: ILoadExternalContextStage,
         private readonly fileContextGateStage: FileContextGateStage,
         private readonly initialCommentStage: InitialCommentStage,
+        private readonly collectCrossFileContextStage: CollectCrossFileContextStage,
         private readonly processFilesPrLevelReviewStage: ProcessFilesPrLevelReviewStage,
         private readonly processFilesReview: ProcessFilesReview,
         private readonly createPrLevelCommentsStage: CreatePrLevelCommentsStage,
@@ -64,6 +66,7 @@ export class CodeReviewPipelineStrategy implements IPipelineStrategy<CodeReviewP
             this.loadExternalContextStage,
             this.fileContextGateStage,
             this.initialCommentStage,
+            this.collectCrossFileContextStage,
             this.processFilesPrLevelReviewStage,
             this.processFilesReview,
             this.createPrLevelCommentsStage,

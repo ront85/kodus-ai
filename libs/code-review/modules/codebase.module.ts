@@ -34,6 +34,10 @@ import {
     KodyRulesPrLevelAnalysisService,
 } from '@libs/ee/codeBase/kodyRulesPrLevelAnalysis.service';
 import {
+    COLLECT_CROSS_FILE_CONTEXTS_SERVICE_TOKEN,
+    CollectCrossFileContextsService,
+} from '../infrastructure/adapters/services/collectCrossFileContexts.service';
+import {
     CROSS_FILE_ANALYSIS_SERVICE_TOKEN,
     CrossFileAnalysisService,
 } from '../infrastructure/adapters/services/crossFileAnalysis.service';
@@ -113,6 +117,10 @@ import { GlobalCacheModule } from '@libs/core/cache/cache.module';
             useClass: KodyRulesPrLevelAnalysisService,
         },
         {
+            provide: COLLECT_CROSS_FILE_CONTEXTS_SERVICE_TOKEN,
+            useClass: CollectCrossFileContextsService,
+        },
+        {
             provide: CROSS_FILE_ANALYSIS_SERVICE_TOKEN,
             useClass: CrossFileAnalysisService,
         },
@@ -139,6 +147,7 @@ import { GlobalCacheModule } from '@libs/core/cache/cache.module';
         CODE_BASE_CONFIG_SERVICE_TOKEN,
         KODY_RULES_ANALYSIS_SERVICE_TOKEN,
         KODY_RULES_PR_LEVEL_ANALYSIS_SERVICE_TOKEN,
+        COLLECT_CROSS_FILE_CONTEXTS_SERVICE_TOKEN,
         CROSS_FILE_ANALYSIS_SERVICE_TOKEN,
         SUGGESTION_SERVICE_TOKEN,
         CodeAnalysisOrchestrator,

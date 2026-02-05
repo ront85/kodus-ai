@@ -6,6 +6,7 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import { CodeReviewPipelineContext } from '@libs/code-review/pipeline/context/code-review-pipeline.context';
 import { AggregateResultsStage } from '@libs/code-review/pipeline/stages/aggregate-result.stage';
+import { CollectCrossFileContextStage } from '@libs/code-review/pipeline/stages/collect-cross-file-context.stage';
 import {
     ILoadExternalContextStage,
     LOAD_EXTERNAL_CONTEXT_STAGE_TOKEN,
@@ -46,6 +47,7 @@ export class CodeReviewPipelineStrategyEE implements IPipelineStrategy<CodeRevie
         private readonly loadExternalContextStage: ILoadExternalContextStage,
         private readonly fileContextGateStage: FileContextGateStage,
         private readonly initialCommentStage: InitialCommentStage,
+        private readonly collectCrossFileContextStage: CollectCrossFileContextStage,
         private readonly kodyFineTuningStage: KodyFineTuningStage,
         private readonly codeAnalysisASTStage: CodeAnalysisASTStage,
         private readonly processFilesPrLevelReviewStage: ProcessFilesPrLevelReviewStage,
@@ -76,6 +78,7 @@ export class CodeReviewPipelineStrategyEE implements IPipelineStrategy<CodeRevie
             this.loadExternalContextStage,
             this.fileContextGateStage,
             this.initialCommentStage,
+            this.collectCrossFileContextStage,
             this.kodyFineTuningStage,
             this.processFilesPrLevelReviewStage,
             this.processFilesReview,

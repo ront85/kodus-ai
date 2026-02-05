@@ -1,0 +1,670 @@
+import { createLogger } from '@kodus/flow';
+import {
+    BYOKConfig,
+    LLMModelProvider,
+    ParserType,
+    PromptRole,
+    PromptRunnerService,
+} from '@kodus/kodus-common/llm';
+import { Injectable } from '@nestjs/common';
+
+import {
+    CrossFileContextPlannerSchema,
+    CrossFileContextPlannerSchemaType,
+    prompt_cross_file_context_planner,
+} from '@libs/common/utils/langchainCommon/prompts/codeReviewCrossFileContextPlanner';
+import { FileChange } from '@libs/core/infrastructure/config/types/general/codeReview.type';
+import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
+import { BYOKPromptRunnerService } from '@libs/core/infrastructure/services/tokenTracking/byokPromptRunner.service';
+import { ObservabilityService } from '@libs/core/log/observability.service';
+import {
+    WarpGrepClient,
+    WarpGrepResult,
+} from '@morphllm/morphsdk';
+
+/**
+ * Remote command executors for sandbox environments.
+ * Mirrors the RemoteCommands interface from @morphllm/morphsdk/tools/warp-grep.
+ */
+export interface RemoteCommands {
+    grep: (pattern: string, path: string, glob?: string) => Promise<string>;
+    read: (path: string, start: number, end: number) => Promise<string>;
+    listDir: (path: string, maxDepth: number) => Promise<string>;
+}
+
+//#region Constants
+const MAX_PLANNER_QUERIES = 8;
+const MAX_TOTAL_CONTEXTS = 60;
+const MAX_PER_FILE_CHARS = 8000;
+const MAX_TOTAL_CHARS = 200_000;
+const CONTEXT_WINDOW_SMALL = 25;
+const CONTEXT_WINDOW_SINGLE_LINE = 40;
+const MIN_SNIPPET_LINES = 5;
+//#endregion
+
+//#region Types
+export const COLLECT_CROSS_FILE_CONTEXTS_SERVICE_TOKEN = Symbol(
+    'CollectCrossFileContextsService',
+);
+
+export type CrossFileContextSnippet = {
+    filePath: string;
+    content: string;
+    rationale: string;
+    relevanceScore: number;
+    relatedSymbol?: string;
+    relationship: string;
+    hop: number;
+    startLine?: number;
+    endLine?: number;
+};
+
+export type CollectCrossFileContextsResult = {
+    contexts: CrossFileContextSnippet[];
+    plannerQueries: CrossFileContextPlannerSchemaType['queries'];
+    totalSearches: number;
+    totalSnippetsBeforeDedup: number;
+};
+
+interface CollectContextsParams {
+    remoteCommands: RemoteCommands;
+    changedFiles: FileChange[];
+    byokConfig?: BYOKConfig;
+    organizationAndTeamData: OrganizationAndTeamData;
+    prNumber: number;
+    language: string;
+    repoRoot: string;
+}
+
+type PlannerQuery = CrossFileContextPlannerSchemaType['queries'][number];
+//#endregion
+
+@Injectable()
+export class CollectCrossFileContextsService {
+    private readonly logger = createLogger(
+        CollectCrossFileContextsService.name,
+    );
+
+    constructor(
+        private readonly promptRunnerService: PromptRunnerService,
+        private readonly observabilityService: ObservabilityService,
+    ) {}
+
+    async collectContexts(
+        params: CollectContextsParams,
+    ): Promise<CollectCrossFileContextsResult> {
+        const {
+            remoteCommands,
+            changedFiles,
+            byokConfig,
+            organizationAndTeamData,
+            prNumber,
+            language,
+            repoRoot,
+        } = params;
+
+        const emptyResult: CollectCrossFileContextsResult = {
+            contexts: [],
+            plannerQueries: [],
+            totalSearches: 0,
+            totalSnippetsBeforeDedup: 0,
+        };
+
+        // 1. Run planner to get search queries
+        const plannerQueries = await this.runPlanner(
+            changedFiles,
+            byokConfig,
+            organizationAndTeamData,
+            prNumber,
+            language,
+        );
+
+        if (!plannerQueries?.length) {
+            this.logger.log({
+                message: `No planner queries generated for PR#${prNumber}`,
+                context: CollectCrossFileContextsService.name,
+                metadata: { organizationAndTeamData, prNumber },
+            });
+            return emptyResult;
+        }
+
+        // 2. Execute search queries via WarpGrep
+        const changedFilePaths = new Set(
+            changedFiles.map((f) => f.filename),
+        );
+
+        const searchResults = await this.executeSearchQueries(
+            plannerQueries,
+            remoteCommands,
+            changedFilePaths,
+            repoRoot,
+            organizationAndTeamData,
+            prNumber,
+        );
+
+        if (!searchResults.length) {
+            this.logger.log({
+                message: `No search results found for PR#${prNumber}`,
+                context: CollectCrossFileContextsService.name,
+                metadata: { organizationAndTeamData, prNumber },
+            });
+            return {
+                ...emptyResult,
+                plannerQueries,
+                totalSearches: plannerQueries.length,
+            };
+        }
+
+        // 3. Expand context windows for small snippets
+        const expandedSnippets = await this.expandContextWindows(
+            searchResults,
+            remoteCommands,
+        );
+
+        // 4. Execute hop 2 for high-risk queries
+        const hop2Snippets = await this.executeHop2(
+            expandedSnippets,
+            plannerQueries,
+            remoteCommands,
+            changedFilePaths,
+            repoRoot,
+            organizationAndTeamData,
+            prNumber,
+        );
+
+        const allSnippets = [...expandedSnippets, ...hop2Snippets];
+        const totalSnippetsBeforeDedup = allSnippets.length;
+
+        // 5. Deduplicate and rank
+        const finalContexts = this.deduplicateAndRank(allSnippets);
+
+        this.logger.log({
+            message: `Cross-file context collection completed for PR#${prNumber}`,
+            context: CollectCrossFileContextsService.name,
+            metadata: {
+                organizationAndTeamData,
+                prNumber,
+                queriesGenerated: plannerQueries.length,
+                totalSnippetsBeforeDedup,
+                finalContexts: finalContexts.length,
+            },
+        });
+
+        return {
+            contexts: finalContexts,
+            plannerQueries,
+            totalSearches: plannerQueries.length,
+            totalSnippetsBeforeDedup,
+        };
+    }
+
+    //#region Planner
+    private async runPlanner(
+        changedFiles: FileChange[],
+        byokConfig: BYOKConfig | undefined,
+        organizationAndTeamData: OrganizationAndTeamData,
+        prNumber: number,
+        language: string,
+    ): Promise<CrossFileContextPlannerSchemaType['queries']> {
+        try {
+            const diffSummary = changedFiles
+                .map((f) => {
+                    const diff = f.patchWithLinesStr || f.patch || '';
+                    const truncated =
+                        diff.length > 2000
+                            ? diff.substring(0, 2000) + '\n... (truncated)'
+                            : diff;
+                    return `### ${f.filename}\n${truncated}`;
+                })
+                .join('\n\n');
+
+            const changedFilenames = changedFiles.map((f) => f.filename);
+
+            const payload = { diffSummary, changedFilenames, language };
+
+            const provider = LLMModelProvider.GEMINI_3_FLASH_PREVIEW;
+            const fallbackProvider = LLMModelProvider.GEMINI_2_5_FLASH;
+
+            const promptRunner = new BYOKPromptRunnerService(
+                this.promptRunnerService,
+                provider,
+                fallbackProvider,
+                byokConfig,
+            );
+
+            const runName = 'crossFileContextPlanner';
+            const spanName = `${CollectCrossFileContextsService.name}::${runName}`;
+            const spanAttrs = {
+                organizationId: organizationAndTeamData?.organizationId,
+                prNumber,
+                type: promptRunner.executeMode,
+            };
+
+            const builder = promptRunner
+                .builder()
+                .setParser(ParserType.ZOD, CrossFileContextPlannerSchema)
+                .setLLMJsonMode(true)
+                .setPayload(payload)
+                .addPrompt({
+                    prompt: prompt_cross_file_context_planner,
+                    role: PromptRole.SYSTEM,
+                })
+                .addPrompt({
+                    prompt: 'Analyze the diff and generate search queries. Return the response in the specified JSON format.',
+                    role: PromptRole.USER,
+                })
+                .setTemperature(0)
+                .addTags(['crossFileContextPlanner', `model:${provider}`])
+                .setRunName(runName)
+                .addMetadata({
+                    organizationAndTeamData,
+                    prNumber,
+                    runName,
+                });
+
+            const { result } =
+                await this.observabilityService.runLLMInSpan({
+                    spanName,
+                    runName,
+                    attrs: spanAttrs,
+                    exec: (callbacks) =>
+                        builder.addCallbacks(callbacks).execute(),
+                });
+
+            if (!result?.queries?.length) {
+                this.logger.warn({
+                    message: `Planner returned empty queries for PR#${prNumber}`,
+                    context: CollectCrossFileContextsService.name,
+                    metadata: { organizationAndTeamData, prNumber },
+                });
+                return [];
+            }
+
+            return result.queries.slice(0, MAX_PLANNER_QUERIES);
+        } catch (error) {
+            this.logger.error({
+                message: `Planner LLM failed for PR#${prNumber}`,
+                context: CollectCrossFileContextsService.name,
+                error,
+                metadata: { organizationAndTeamData, prNumber },
+            });
+            return [];
+        }
+    }
+    //#endregion
+
+    //#region Search Execution
+    private async executeSearchQueries(
+        queries: PlannerQuery[],
+        remoteCommands: RemoteCommands,
+        changedFilePaths: Set<string>,
+        repoRoot: string,
+        organizationAndTeamData: OrganizationAndTeamData,
+        prNumber: number,
+    ): Promise<CrossFileContextSnippet[]> {
+        const allSnippets: CrossFileContextSnippet[] = [];
+
+        const client = new WarpGrepClient();
+
+        for (const query of queries) {
+            try {
+                const result: WarpGrepResult = await client.execute({
+                    query: query.pattern,
+                    repoRoot,
+                    remoteCommands,
+                    includes: query.fileGlob ? [query.fileGlob] : undefined,
+                    excludes: [
+                        'node_modules',
+                        '.git',
+                        'dist',
+                        'build',
+                        '*.min.js',
+                        '*.map',
+                    ],
+                });
+
+                if (!result.success || !result.contexts?.length) {
+                    continue;
+                }
+
+                for (const ctx of result.contexts) {
+                    // Filter out files that are already in the PR
+                    if (changedFilePaths.has(ctx.file)) {
+                        continue;
+                    }
+
+                    allSnippets.push({
+                        filePath: ctx.file,
+                        content: ctx.content,
+                        rationale: query.rationale,
+                        relevanceScore: this.getBaseScore(query.riskLevel),
+                        relatedSymbol: query.symbolName,
+                        relationship: `consumer of ${query.symbolName || query.pattern}`,
+                        hop: 1,
+                    });
+                }
+            } catch (error) {
+                this.logger.warn({
+                    message: `Search query failed for pattern "${query.pattern}" on PR#${prNumber}`,
+                    context: CollectCrossFileContextsService.name,
+                    error,
+                    metadata: {
+                        organizationAndTeamData,
+                        prNumber,
+                        pattern: query.pattern,
+                    },
+                });
+            }
+        }
+
+        return allSnippets;
+    }
+    //#endregion
+
+    //#region Context Expansion
+    private async expandContextWindows(
+        snippets: CrossFileContextSnippet[],
+        remoteCommands: RemoteCommands,
+    ): Promise<CrossFileContextSnippet[]> {
+        const expanded: CrossFileContextSnippet[] = [];
+
+        for (const snippet of snippets) {
+            try {
+                const lineCount = snippet.content.split('\n').length;
+
+                if (lineCount >= MIN_SNIPPET_LINES) {
+                    expanded.push(snippet);
+                    continue;
+                }
+
+                const window =
+                    lineCount <= 1
+                        ? CONTEXT_WINDOW_SINGLE_LINE
+                        : CONTEXT_WINDOW_SMALL;
+
+                const startLine = Math.max(
+                    1,
+                    (snippet.startLine || 1) - window,
+                );
+                const endLine =
+                    (snippet.endLine || lineCount) + window;
+
+                const expandedContent = await remoteCommands.read(
+                    snippet.filePath,
+                    startLine,
+                    endLine,
+                );
+
+                if (expandedContent) {
+                    // Enforce per-file char limit
+                    const trimmed = expandedContent.substring(
+                        0,
+                        MAX_PER_FILE_CHARS,
+                    );
+
+                    expanded.push({
+                        ...snippet,
+                        content: trimmed,
+                        startLine,
+                        endLine,
+                    });
+                } else {
+                    expanded.push(snippet);
+                }
+            } catch {
+                // Keep the original snippet if expansion fails
+                expanded.push(snippet);
+            }
+        }
+
+        return expanded;
+    }
+    //#endregion
+
+    //#region Hop 2
+    private async executeHop2(
+        hop1Snippets: CrossFileContextSnippet[],
+        queries: PlannerQuery[],
+        remoteCommands: RemoteCommands,
+        changedFilePaths: Set<string>,
+        repoRoot: string,
+        organizationAndTeamData: OrganizationAndTeamData,
+        prNumber: number,
+    ): Promise<CrossFileContextSnippet[]> {
+        const hop2Snippets: CrossFileContextSnippet[] = [];
+        const highRiskQueries = queries.filter(
+            (q) => q.riskLevel === 'high',
+        );
+
+        if (!highRiskQueries.length) {
+            return hop2Snippets;
+        }
+
+        try {
+            const client = new WarpGrepClient();
+
+            // Extract function names from hop 1 snippets for high-risk queries
+            const hop1FunctionNames = new Set<string>();
+            for (const snippet of hop1Snippets) {
+                const funcNames =
+                    this.extractFunctionNames(snippet.content);
+                funcNames.forEach((name) => hop1FunctionNames.add(name));
+            }
+
+            // For each function found in hop 1, search for its callers
+            const hop1FilePaths = new Set(
+                hop1Snippets.map((s) => s.filePath),
+            );
+            const excludedPaths = new Set([
+                ...changedFilePaths,
+                ...hop1FilePaths,
+            ]);
+
+            for (const funcName of hop1FunctionNames) {
+                if (!funcName || funcName.length < 3) continue;
+
+                try {
+                    const result = await client.execute({
+                        query: funcName,
+                        repoRoot,
+                        remoteCommands,
+                        excludes: [
+                            'node_modules',
+                            '.git',
+                            'dist',
+                            'build',
+                        ],
+                    });
+
+                    if (!result.success || !result.contexts?.length) {
+                        continue;
+                    }
+
+                    for (const ctx of result.contexts) {
+                        if (excludedPaths.has(ctx.file)) continue;
+
+                        hop2Snippets.push({
+                            filePath: ctx.file,
+                            content: ctx.content,
+                            rationale: `Hop 2: caller of ${funcName} found in hop 1 results`,
+                            relevanceScore:
+                                this.getBaseScore('high') - 10,
+                            relatedSymbol: funcName,
+                            relationship: `indirect consumer (hop 2) of ${funcName}`,
+                            hop: 2,
+                        });
+                    }
+                } catch (error) {
+                    this.logger.warn({
+                        message: `Hop 2 search failed for function "${funcName}" on PR#${prNumber}`,
+                        context: CollectCrossFileContextsService.name,
+                        error,
+                        metadata: {
+                            organizationAndTeamData,
+                            prNumber,
+                            funcName,
+                        },
+                    });
+                }
+            }
+        } catch (error) {
+            this.logger.warn({
+                message: `Hop 2 execution failed entirely for PR#${prNumber}`,
+                context: CollectCrossFileContextsService.name,
+                error,
+                metadata: { organizationAndTeamData, prNumber },
+            });
+        }
+
+        return hop2Snippets;
+    }
+    //#endregion
+
+    //#region Dedup & Rank
+    private deduplicateAndRank(
+        snippets: CrossFileContextSnippet[],
+    ): CrossFileContextSnippet[] {
+        // Group by file
+        const byFile = new Map<string, CrossFileContextSnippet[]>();
+        for (const snippet of snippets) {
+            const existing = byFile.get(snippet.filePath) || [];
+            existing.push(snippet);
+            byFile.set(snippet.filePath, existing);
+        }
+
+        // Merge overlapping snippets per file and enforce per-file limit
+        const merged: CrossFileContextSnippet[] = [];
+        for (const [filePath, fileSnippets] of byFile) {
+            // Sort by relevance score desc, keep the best
+            fileSnippets.sort(
+                (a, b) => b.relevanceScore - a.relevanceScore,
+            );
+
+            let totalChars = 0;
+            for (const snippet of fileSnippets) {
+                if (totalChars + snippet.content.length > MAX_PER_FILE_CHARS) {
+                    continue;
+                }
+
+                // Check for content overlap with already-merged snippets from same file
+                const isDuplicate = merged.some(
+                    (m) =>
+                        m.filePath === filePath &&
+                        this.hasContentOverlap(m.content, snippet.content),
+                );
+
+                if (isDuplicate) continue;
+
+                totalChars += snippet.content.length;
+                merged.push(snippet);
+            }
+        }
+
+        // Sort by score descending
+        merged.sort((a, b) => b.relevanceScore - a.relevanceScore);
+
+        // Cap at MAX_TOTAL_CONTEXTS and MAX_TOTAL_CHARS
+        const finalSnippets: CrossFileContextSnippet[] = [];
+        let totalChars = 0;
+
+        for (const snippet of merged) {
+            if (finalSnippets.length >= MAX_TOTAL_CONTEXTS) break;
+            if (totalChars + snippet.content.length > MAX_TOTAL_CHARS) continue;
+
+            totalChars += snippet.content.length;
+            finalSnippets.push(snippet);
+        }
+
+        return finalSnippets;
+    }
+    //#endregion
+
+    //#region Utilities
+    private getBaseScore(
+        riskLevel: 'low' | 'medium' | 'high',
+    ): number {
+        switch (riskLevel) {
+            case 'high':
+                return 80;
+            case 'medium':
+                return 50;
+            case 'low':
+                return 30;
+            default:
+                return 20;
+        }
+    }
+
+    private extractFunctionNames(content: string): string[] {
+        const names: string[] = [];
+
+        // Match common function/method patterns across languages
+        const patterns = [
+            // JS/TS: function name(, async name(, name(, name =(
+            /(?:function|async)\s+(\w+)\s*\(/g,
+            /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(/g,
+            /(\w+)\s*\([^)]*\)\s*\{/g,
+            // Python: def name(
+            /def\s+(\w+)\s*\(/g,
+            // Go: func name(, func (receiver) name(
+            /func\s+(?:\([^)]*\)\s+)?(\w+)\s*\(/g,
+            // Java/C#: access modifier type name(
+            /(?:public|private|protected|static)\s+\w+\s+(\w+)\s*\(/g,
+        ];
+
+        for (const pattern of patterns) {
+            let match: RegExpExecArray | null;
+            while ((match = pattern.exec(content)) !== null) {
+                const name = match[1];
+                if (name && name.length >= 3 && !this.isCommonKeyword(name)) {
+                    names.push(name);
+                }
+            }
+        }
+
+        return [...new Set(names)];
+    }
+
+    private isCommonKeyword(name: string): boolean {
+        const keywords = new Set([
+            'if',
+            'for',
+            'while',
+            'return',
+            'const',
+            'let',
+            'var',
+            'function',
+            'class',
+            'import',
+            'export',
+            'from',
+            'new',
+            'this',
+            'super',
+            'async',
+            'await',
+            'try',
+            'catch',
+            'throw',
+            'else',
+            'switch',
+            'case',
+            'break',
+            'continue',
+            'default',
+            'typeof',
+            'instanceof',
+        ]);
+        return keywords.has(name);
+    }
+
+    private hasContentOverlap(a: string, b: string): boolean {
+        if (a === b) return true;
+        // Check if one contains a significant portion of the other
+        const shorter = a.length < b.length ? a : b;
+        const longer = a.length >= b.length ? a : b;
+        return longer.includes(shorter.substring(0, Math.min(200, shorter.length)));
+    }
+    //#endregion
+}

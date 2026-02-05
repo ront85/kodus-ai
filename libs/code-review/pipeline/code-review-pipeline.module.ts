@@ -10,6 +10,7 @@ import { FileContextGateStage } from './stages/file-context-gate.stage';
 import { FinalizeGithubCheckStage } from './stages/finalize-github-check.stage';
 import { UpdateCommentsAndGenerateSummaryStage } from './stages/finish-comments.stage';
 import { RequestChangesOrApproveStage } from './stages/finish-process-review.stage';
+import { CollectCrossFileContextStage } from './stages/collect-cross-file-context.stage';
 import { InitialCommentStage } from './stages/initial-comment.stage';
 import { LoadExternalContextStage } from './stages/load-external-context.stage';
 import { ProcessFilesPrLevelReviewStage } from './stages/process-files-pr-level-review.stage';
@@ -92,6 +93,7 @@ import { CodeReviewPipelineObserver } from '../infrastructure/observers/code-rev
         LoadExternalContextStage,
         FileContextGateStage,
         InitialCommentStage,
+        CollectCrossFileContextStage,
         ProcessFilesPrLevelReviewStage,
         ProcessFilesReview,
         CreatePrLevelCommentsStage,
@@ -134,6 +136,7 @@ import { CodeReviewPipelineObserver } from '../infrastructure/observers/code-rev
         ValidatePrerequisitesStage,
         FetchChangedFilesStage,
         InitialCommentStage,
+        CollectCrossFileContextStage,
         AggregateResultsStage,
         LoadExternalContextStage,
         LOAD_EXTERNAL_CONTEXT_STAGE_TOKEN,
