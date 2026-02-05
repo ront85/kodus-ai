@@ -37,6 +37,7 @@ import {
     COLLECT_CROSS_FILE_CONTEXTS_SERVICE_TOKEN,
     CollectCrossFileContextsService,
 } from '../infrastructure/adapters/services/collectCrossFileContexts.service';
+import { E2BSandboxService } from '../infrastructure/adapters/services/e2bSandbox.service';
 import {
     CROSS_FILE_ANALYSIS_SERVICE_TOKEN,
     CrossFileAnalysisService,
@@ -128,6 +129,7 @@ import { GlobalCacheModule } from '@libs/core/cache/cache.module';
             provide: SUGGESTION_SERVICE_TOKEN,
             useClass: SuggestionService,
         },
+        E2BSandboxService,
         CodeAnalysisOrchestrator,
         CodeReviewHandlerService,
         KodyFineTuningService,
@@ -150,6 +152,7 @@ import { GlobalCacheModule } from '@libs/core/cache/cache.module';
         COLLECT_CROSS_FILE_CONTEXTS_SERVICE_TOKEN,
         CROSS_FILE_ANALYSIS_SERVICE_TOKEN,
         SUGGESTION_SERVICE_TOKEN,
+        E2BSandboxService,
         CodeAnalysisOrchestrator,
         KodyFineTuningService,
         CodeReviewHandlerService,

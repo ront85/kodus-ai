@@ -55,6 +55,7 @@ export type CrossFileContextSnippet = {
     relatedSymbol?: string;
     relationship: string;
     hop: number;
+    riskLevel: 'low' | 'medium' | 'high';
     startLine?: number;
     endLine?: number;
 };
@@ -164,7 +165,6 @@ export class CollectCrossFileContextsService {
         // 4. Execute hop 2 for high-risk queries
         const hop2Snippets = await this.executeHop2(
             expandedSnippets,
-            plannerQueries,
             remoteCommands,
             changedFilePaths,
             repoRoot,
@@ -341,6 +341,7 @@ export class CollectCrossFileContextsService {
                         relatedSymbol: query.symbolName,
                         relationship: `consumer of ${query.symbolName || query.pattern}`,
                         hop: 1,
+                        riskLevel: query.riskLevel,
                     });
                 }
             } catch (error) {
@@ -373,6 +374,13 @@ export class CollectCrossFileContextsService {
                 const lineCount = snippet.content.split('\n').length;
 
                 if (lineCount >= MIN_SNIPPET_LINES) {
+                    expanded.push(snippet);
+                    continue;
+                }
+
+                // Skip expansion if we don't have actual line position info
+                // Without it, we'd read wrong lines from the file
+                if (!snippet.startLine || !snippet.endLine) {
                     expanded.push(snippet);
                     continue;
                 }
@@ -424,7 +432,6 @@ export class CollectCrossFileContextsService {
     //#region Hop 2
     private async executeHop2(
         hop1Snippets: CrossFileContextSnippet[],
-        queries: PlannerQuery[],
         remoteCommands: RemoteCommands,
         changedFilePaths: Set<string>,
         repoRoot: string,
@@ -432,20 +439,20 @@ export class CollectCrossFileContextsService {
         prNumber: number,
     ): Promise<CrossFileContextSnippet[]> {
         const hop2Snippets: CrossFileContextSnippet[] = [];
-        const highRiskQueries = queries.filter(
-            (q) => q.riskLevel === 'high',
+        const highRiskSnippets = hop1Snippets.filter(
+            (s) => s.riskLevel === 'high',
         );
 
-        if (!highRiskQueries.length) {
+        if (!highRiskSnippets.length) {
             return hop2Snippets;
         }
 
         try {
             const client = new WarpGrepClient();
 
-            // Extract function names from hop 1 snippets for high-risk queries
+            // Extract function names only from high-risk hop 1 snippets
             const hop1FunctionNames = new Set<string>();
-            for (const snippet of hop1Snippets) {
+            for (const snippet of highRiskSnippets) {
                 const funcNames =
                     this.extractFunctionNames(snippet.content);
                 funcNames.forEach((name) => hop1FunctionNames.add(name));
@@ -492,6 +499,7 @@ export class CollectCrossFileContextsService {
                             relatedSymbol: funcName,
                             relationship: `indirect consumer (hop 2) of ${funcName}`,
                             hop: 2,
+                            riskLevel: 'high',
                         });
                     }
                 } catch (error) {

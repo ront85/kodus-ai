@@ -1,4 +1,5 @@
 import { LimitationType } from '@libs/core/infrastructure/config/types/general/codeReview.type';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import { getTextOrDefault, sanitizePromptText } from '../prompt.helpers';
 import { ContextPack } from '@kodus/flow';
 import { getDefaultKodusConfigFile } from '@libs/common/utils/validateCodeReviewConfigFile';
@@ -68,6 +69,7 @@ export interface CodeReviewPayload {
         }
     >;
     contextPack?: ContextPack;
+    crossFileSnippets?: CrossFileContextSnippet[];
 }
 
 const PATH_SOURCE_TYPE_MAP: Record<string, string> = {
@@ -1428,6 +1430,15 @@ export const prompt_codereview_system_gemini_v2 = (
     );
     if (augmentationBlock) {
         collectExternalContext('augmentations', augmentationBlock);
+    }
+
+    if (payload?.crossFileSnippets?.length) {
+        const snippetLines = payload.crossFileSnippets.map(
+            (s) =>
+                `### ${s.filePath}${s.relatedSymbol ? ` (symbol: ${s.relatedSymbol})` : ''}\n**Rationale:** ${s.rationale}\n\`\`\`\n${s.content}\n\`\`\``,
+        );
+        const codebaseContextBlock = `### Codebase Context\nThe following snippets come from **other files in the repository** that interact with the code under review. Use them to detect cross-file issues (broken contracts, missing migrations, wrong assumptions).\n\n${snippetLines.join('\n\n')}`;
+        collectExternalContext('codebase_context', codebaseContextBlock);
     }
 
     const prompt = buildFinalPrompt(

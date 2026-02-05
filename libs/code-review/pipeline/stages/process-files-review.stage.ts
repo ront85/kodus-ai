@@ -39,6 +39,7 @@ import { createOptimizedBatches } from '@libs/common/utils/batch.helper';
 import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import { CodeAnalysisOrchestrator } from '@libs/ee/codeBase/codeAnalysisOrchestrator.service';
 import {
     CodeReviewPipelineContext,
@@ -437,6 +438,25 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         }
     }
 
+    private filterSnippetsForFile(
+        allSnippets: CrossFileContextSnippet[] | undefined,
+        file: FileChange,
+    ): CrossFileContextSnippet[] {
+        if (!allSnippets?.length) {
+            return [];
+        }
+
+        const diff = file.patchWithLinesStr || file.patch || '';
+        if (!diff) {
+            return [];
+        }
+
+        return allSnippets.filter(
+            (snippet) =>
+                snippet.relatedSymbol && diff.includes(snippet.relatedSymbol),
+        );
+    }
+
     private async filterAndPrepareFiles(
         batch: FileChange[],
         context: AnalysisContext,
@@ -450,6 +470,10 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                         ...context,
                         fileAugmentations:
                             context.augmentationsByFile?.[file.filename] ?? {},
+                        crossFileSnippets: this.filterSnippetsForFile(
+                            context.crossFileSnippets,
+                            file,
+                        ),
                     };
 
                     return this.fileReviewContextPreparation.prepareFileContext(
@@ -984,6 +1008,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             filePromptOverrides: this.buildFilePromptOverrides(
                 context.fileContextMap,
             ),
+            crossFileSnippets: context.crossFileContexts?.contexts,
         };
     }
 

@@ -5,8 +5,10 @@ import {
     COLLECT_CROSS_FILE_CONTEXTS_SERVICE_TOKEN,
     CollectCrossFileContextsService,
 } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
+import { E2BSandboxService } from '@libs/code-review/infrastructure/adapters/services/e2bSandbox.service';
 import { BasePipelineStage } from '@libs/core/infrastructure/pipeline/abstracts/base-stage.abstract';
 import { StageVisibility } from '@libs/core/infrastructure/pipeline/enums/stage-visibility.enum';
+import { CodeManagementService } from '@libs/platform/infrastructure/adapters/services/codeManagement.service';
 import { CodeReviewPipelineContext } from '../context/code-review-pipeline.context';
 
 @Injectable()
@@ -22,6 +24,8 @@ export class CollectCrossFileContextStage extends BasePipelineStage<CodeReviewPi
     constructor(
         @Inject(COLLECT_CROSS_FILE_CONTEXTS_SERVICE_TOKEN)
         private readonly collectCrossFileContextsService: CollectCrossFileContextsService,
+        private readonly e2bSandboxService: E2BSandboxService,
+        private readonly codeManagementService: CodeManagementService,
     ) {
         super();
     }
@@ -55,10 +59,10 @@ export class CollectCrossFileContextStage extends BasePipelineStage<CodeReviewPi
             return context;
         }
 
-        // Guard: skip if no remoteCommands available
-        if (!context?.remoteCommands) {
+        // Guard: skip if E2B is not available
+        if (!this.e2bSandboxService.isAvailable()) {
             this.logger.log({
-                message: `Skipping cross-file context collection: remoteCommands not available for PR#${context?.pullRequest?.number}`,
+                message: `Skipping cross-file context collection: E2B_API_KEY not configured for PR#${context?.pullRequest?.number}`,
                 context: this.stageName,
                 metadata: {
                     organizationAndTeamData: context?.organizationAndTeamData,
@@ -68,10 +72,36 @@ export class CollectCrossFileContextStage extends BasePipelineStage<CodeReviewPi
             return context;
         }
 
+        let cleanup: (() => Promise<void>) | undefined;
+
         try {
+            // 1. Get clone params from the platform
+            const cloneParams =
+                await this.codeManagementService.getCloneParams(
+                    {
+                        repository: context.repository,
+                        organizationAndTeamData:
+                            context.organizationAndTeamData,
+                    },
+                    context.platformType,
+                );
+
+            // 2. Create E2B sandbox and clone repo
+            const sandbox =
+                await this.e2bSandboxService.createSandboxWithRepo({
+                    cloneUrl: cloneParams.url,
+                    authToken: cloneParams.auth?.token || '',
+                    branch: context.branch,
+                    prNumber: context.pullRequest.number,
+                    platform: context.platformType,
+                });
+
+            cleanup = sandbox.cleanup;
+
+            // 3. Collect cross-file contexts using sandbox remoteCommands
             const result =
                 await this.collectCrossFileContextsService.collectContexts({
-                    remoteCommands: context.remoteCommands,
+                    remoteCommands: sandbox.remoteCommands,
                     changedFiles: context.changedFiles,
                     byokConfig: context.codeReviewConfig?.byokConfig,
                     organizationAndTeamData: context.organizationAndTeamData,
@@ -79,7 +109,7 @@ export class CollectCrossFileContextStage extends BasePipelineStage<CodeReviewPi
                     language:
                         context.codeReviewConfig?.languageResultPrompt ||
                         'en-US',
-                    repoRoot: context.repository?.fullName || '.',
+                    repoRoot: '.',
                 });
 
             this.logger.log({
@@ -109,6 +139,10 @@ export class CollectCrossFileContextStage extends BasePipelineStage<CodeReviewPi
                 },
             });
             return context;
+        } finally {
+            if (cleanup) {
+                await cleanup();
+            }
         }
     }
 }

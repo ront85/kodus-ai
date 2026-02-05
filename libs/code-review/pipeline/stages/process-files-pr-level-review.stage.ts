@@ -8,7 +8,6 @@ import {
     CROSS_FILE_ANALYSIS_SERVICE_TOKEN,
     CrossFileAnalysisService,
 } from '@libs/code-review/infrastructure/adapters/services/crossFileAnalysis.service';
-import { CrossFileContextForPrompt } from '@libs/common/utils/langchainCommon/prompts/codeReviewCrossFileAnalysis';
 import {
     CodeSuggestion,
     ReviewModeResponse,
@@ -216,23 +215,13 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                 patchWithLinesStr: file.patchWithLinesStr,
             }));
 
-            // Extract cross-file contexts collected by the earlier pipeline stage
-            const crossFileContexts: CrossFileContextForPrompt[] | undefined =
-                context.crossFileContexts?.contexts?.map((ctx) => ({
-                    filePath: ctx.filePath,
-                    content: ctx.content,
-                    rationale: ctx.rationale,
-                    relationship: ctx.relationship,
-                    relatedSymbol: ctx.relatedSymbol,
-                }));
-
             const crossFileAnalysis =
                 await this.crossFileAnalysisService.analyzeCrossFileCode(
                     context.organizationAndTeamData,
                     context.pullRequest.number,
                     context,
                     preparedFilesData,
-                    crossFileContexts,
+                    undefined,
                 );
 
             const crossFileAnalysisSuggestions =
