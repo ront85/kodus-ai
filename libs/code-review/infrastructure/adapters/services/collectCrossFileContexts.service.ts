@@ -16,6 +16,7 @@ import {
 import { FileChange } from '@libs/core/infrastructure/config/types/general/codeReview.type';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
 import { BYOKPromptRunnerService } from '@libs/core/infrastructure/services/tokenTracking/byokPromptRunner.service';
+import { TokenChunkingService } from '@libs/core/infrastructure/services/tokenChunking/tokenChunking.service';
 import { ObservabilityService } from '@libs/core/log/observability.service';
 import {
     WarpGrepClient,
@@ -33,7 +34,7 @@ export interface RemoteCommands {
 }
 
 //#region Constants
-const MAX_PLANNER_QUERIES = 8;
+const MAX_PLANNER_QUERIES = 16;
 const MAX_TOTAL_CONTEXTS = 60;
 const MAX_PER_FILE_CHARS = 8000;
 const MAX_TOTAL_CHARS = 200_000;
@@ -89,6 +90,7 @@ export class CollectCrossFileContextsService {
     constructor(
         private readonly promptRunnerService: PromptRunnerService,
         private readonly observabilityService: ObservabilityService,
+        private readonly tokenChunkingService: TokenChunkingService,
     ) {}
 
     async collectContexts(
@@ -207,71 +209,81 @@ export class CollectCrossFileContextsService {
         language: string,
     ): Promise<CrossFileContextPlannerSchemaType['queries']> {
         try {
-            const diffSummary = changedFiles
-                .map((f) => {
-                    const diff = f.patchWithLinesStr || f.patch || '';
-                    const truncated =
-                        diff.length > 2000
-                            ? diff.substring(0, 2000) + '\n... (truncated)'
-                            : diff;
-                    return `### ${f.filename}\n${truncated}`;
-                })
-                .join('\n\n');
+            // Prepare per-file diff items (truncated to 2k chars each)
+            const fileDiffItems = changedFiles.map((f) => {
+                const diff = f.patchWithLinesStr || f.patch || '';
+                const truncated =
+                    diff.length > 2000
+                        ? diff.substring(0, 2000) + '\n... (truncated)'
+                        : diff;
+                return `### ${f.filename}\n${truncated}`;
+            });
 
             const changedFilenames = changedFiles.map((f) => f.filename);
 
-            const payload = { diffSummary, changedFilenames, language };
+            // Determine effective model for token counting
+            const effectiveModel = byokConfig?.main?.model
+                ? byokConfig.main.model
+                : LLMModelProvider.GEMINI_3_FLASH_PREVIEW;
 
-            const provider = LLMModelProvider.GEMINI_3_FLASH_PREVIEW;
-            const fallbackProvider = LLMModelProvider.GEMINI_2_5_FLASH;
+            // Chunk diff items by token limits
+            const chunkingResult =
+                this.tokenChunkingService.chunkDataByTokens({
+                    model: effectiveModel,
+                    data: fileDiffItems,
+                    usagePercentage: 50,
+                    defaultMaxTokens: 64000,
+                });
 
-            const promptRunner = new BYOKPromptRunnerService(
-                this.promptRunnerService,
-                provider,
-                fallbackProvider,
-                byokConfig,
-            );
-
-            const runName = 'crossFileContextPlanner';
-            const spanName = `${CollectCrossFileContextsService.name}::${runName}`;
-            const spanAttrs = {
-                organizationId: organizationAndTeamData?.organizationId,
-                prNumber,
-                type: promptRunner.executeMode,
-            };
-
-            const builder = promptRunner
-                .builder()
-                .setParser(ParserType.ZOD, CrossFileContextPlannerSchema)
-                .setLLMJsonMode(true)
-                .setPayload(payload)
-                .addPrompt({
-                    prompt: prompt_cross_file_context_planner,
-                    role: PromptRole.SYSTEM,
-                })
-                .addPrompt({
-                    prompt: 'Analyze the diff and generate search queries. Return the response in the specified JSON format.',
-                    role: PromptRole.USER,
-                })
-                .setTemperature(0)
-                .addTags(['crossFileContextPlanner', `model:${provider}`])
-                .setRunName(runName)
-                .addMetadata({
+            this.logger.log({
+                message: `Planner chunked ${fileDiffItems.length} files into ${chunkingResult.totalChunks} batch(es) for PR#${prNumber}`,
+                context: CollectCrossFileContextsService.name,
+                metadata: {
                     organizationAndTeamData,
                     prNumber,
-                    runName,
-                });
+                    totalFiles: fileDiffItems.length,
+                    totalChunks: chunkingResult.totalChunks,
+                    tokenLimit: chunkingResult.tokenLimit,
+                    tokensPerChunk: chunkingResult.tokensPerChunk,
+                },
+            });
 
-            const { result } =
-                await this.observabilityService.runLLMInSpan({
-                    spanName,
-                    runName,
-                    attrs: spanAttrs,
-                    exec: (callbacks) =>
-                        builder.addCallbacks(callbacks).execute(),
-                });
+            // Run planner batches with limited concurrency (max 4 at a time)
+            const BATCH_CONCURRENCY = 4;
+            const allQueries: PlannerQuery[] = [];
+            const chunks = chunkingResult.chunks as string[][];
 
-            if (!result?.queries?.length) {
+            for (let i = 0; i < chunks.length; i += BATCH_CONCURRENCY) {
+                const window = chunks.slice(i, i + BATCH_CONCURRENCY);
+                const batchSettled = await Promise.allSettled(
+                    window.map((batchItems) => {
+                        const batchDiffSummary = batchItems.join('\n\n');
+                        return this.buildPlannerPromptRunner(
+                            batchDiffSummary,
+                            changedFilenames,
+                            language,
+                            byokConfig,
+                            organizationAndTeamData,
+                            prNumber,
+                        );
+                    }),
+                );
+
+                for (const settled of batchSettled) {
+                    if (settled.status === 'fulfilled') {
+                        allQueries.push(...(settled.value ?? []));
+                    } else {
+                        this.logger.warn({
+                            message: `Planner batch failed for PR#${prNumber}`,
+                            context: CollectCrossFileContextsService.name,
+                            error: settled.reason,
+                            metadata: { organizationAndTeamData, prNumber },
+                        });
+                    }
+                }
+            }
+
+            if (!allQueries.length) {
                 this.logger.warn({
                     message: `Planner returned empty queries for PR#${prNumber}`,
                     context: CollectCrossFileContextsService.name,
@@ -280,7 +292,9 @@ export class CollectCrossFileContextsService {
                 return [];
             }
 
-            return result.queries.slice(0, MAX_PLANNER_QUERIES);
+            // Deduplicate across batches and apply global cap
+            const deduped = this.deduplicatePlannerQueries(allQueries);
+            return deduped.slice(0, MAX_PLANNER_QUERIES);
         } catch (error) {
             this.logger.error({
                 message: `Planner LLM failed for PR#${prNumber}`,
@@ -290,6 +304,95 @@ export class CollectCrossFileContextsService {
             });
             return [];
         }
+    }
+
+    private async buildPlannerPromptRunner(
+        diffSummary: string,
+        changedFilenames: string[],
+        language: string,
+        byokConfig: BYOKConfig | undefined,
+        organizationAndTeamData: OrganizationAndTeamData,
+        prNumber: number,
+    ): Promise<CrossFileContextPlannerSchemaType['queries']> {
+        const payload = { diffSummary, changedFilenames, language };
+
+        const provider = LLMModelProvider.GEMINI_3_FLASH_PREVIEW;
+        const fallbackProvider = LLMModelProvider.GEMINI_2_5_FLASH;
+
+        const promptRunner = new BYOKPromptRunnerService(
+            this.promptRunnerService,
+            provider,
+            fallbackProvider,
+            byokConfig,
+        );
+
+        const runName = 'crossFileContextPlanner';
+        const spanName = `${CollectCrossFileContextsService.name}::${runName}`;
+        const spanAttrs = {
+            organizationId: organizationAndTeamData?.organizationId,
+            prNumber,
+            type: promptRunner.executeMode,
+        };
+
+        const builder = promptRunner
+            .builder()
+            .setParser(ParserType.ZOD, CrossFileContextPlannerSchema)
+            .setLLMJsonMode(true)
+            .setPayload(payload)
+            .addPrompt({
+                prompt: prompt_cross_file_context_planner,
+                role: PromptRole.SYSTEM,
+            })
+            .addPrompt({
+                prompt: 'Analyze the diff and generate search queries. Return the response in the specified JSON format.',
+                role: PromptRole.USER,
+            })
+            .setTemperature(0)
+            .addTags(['crossFileContextPlanner', `model:${provider}`])
+            .setRunName(runName)
+            .addMetadata({
+                organizationAndTeamData,
+                prNumber,
+                runName,
+            });
+
+        const { result } =
+            await this.observabilityService.runLLMInSpan({
+                spanName,
+                runName,
+                attrs: spanAttrs,
+                exec: (callbacks) =>
+                    builder.addCallbacks(callbacks).execute(),
+            });
+
+        return result?.queries ?? [];
+    }
+
+    private deduplicatePlannerQueries(
+        queries: PlannerQuery[],
+    ): PlannerQuery[] {
+        const riskRank: Record<string, number> = {
+            high: 3,
+            medium: 2,
+            low: 1,
+        };
+
+        const seen = new Map<string, PlannerQuery>();
+
+        for (const query of queries) {
+            const key = `${query.symbolName ?? ''}::${query.pattern}`;
+            const existing = seen.get(key);
+
+            if (
+                !existing ||
+                (riskRank[query.riskLevel] ?? 0) >
+                    (riskRank[existing.riskLevel] ?? 0)
+            ) {
+                seen.set(key, query);
+            }
+        }
+
+        return Array.from(seen.values());
     }
     //#endregion
 
