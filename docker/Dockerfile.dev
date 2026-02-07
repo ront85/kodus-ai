@@ -1,0 +1,27 @@
+ARG API_CLOUD_MODE=false
+
+FROM docker.io/library/node:22.22.0-slim
+
+ARG API_CLOUD_MODE
+ENV API_CLOUD_MODE=${API_CLOUD_MODE}
+
+WORKDIR /usr/src/app
+ENV NODE_ENV=development
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+RUN corepack disable \
+ && npm i -g yarn@1.22.22
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates python3 make g++ procps git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm i -g yalc chokidar-cli nodemon
+
+COPY package.json yarn.lock ./
+COPY nest-cli.json tsconfig*.json ./
+
+COPY --chmod=0755 docker/dev-entrypoint.sh /usr/local/bin/dev-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/dev-entrypoint"]
+CMD ["yarn", "start:dev"]
