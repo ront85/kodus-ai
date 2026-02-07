@@ -33,18 +33,25 @@ function tryParseJSONObjectWithFallback(payload) {
         // JSON5 not available in promptfoo runtime, use JSON.parse directly
         return JSON.parse(payload);
     } catch {
+        // Try extracting from code blocks and parsing directly (preserves escape sequences)
         try {
             const noCodeBlocks = stripCodeBlocks(payload);
-            const cleanedPayload = noCodeBlocks
-                .replace(/\\n/g, '')
-                .replace(/\\/g, '')
-                .replace(/\/\*[\s\S]*?\*\//g, '')
-                .replace(/<[^>]*>/g, '')
-                .replace(/^`+|`+$/g, '')
-                .trim();
-            return JSON.parse(cleanedPayload);
+            return JSON.parse(noCodeBlocks.trim());
         } catch {
-            return null;
+            // Last resort: aggressive cleaning (may corrupt escape sequences in strings)
+            try {
+                const noCodeBlocks = stripCodeBlocks(payload);
+                const cleanedPayload = noCodeBlocks
+                    .replace(/\\n/g, '')
+                    .replace(/\\/g, '')
+                    .replace(/\/\*[\s\S]*?\*\//g, '')
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/^`+|`+$/g, '')
+                    .trim();
+                return JSON.parse(cleanedPayload);
+            } catch {
+                return null;
+            }
         }
     }
 }

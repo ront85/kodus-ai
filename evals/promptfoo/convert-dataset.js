@@ -4,8 +4,11 @@ const fs = require('fs');
 const path = require('path');
 
 // Accept --lang argument: tsjs, python, java, ruby, all (default: all)
+// Accept --limit=N argument: take only first N examples per language (default: all)
 const langArg = process.argv.find(a => a.startsWith('--lang='));
 const lang = langArg ? langArg.split('=')[1] : 'all';
+const limitArg = process.argv.find(a => a.startsWith('--limit='));
+const limitPerLang = limitArg ? parseInt(limitArg.split('=')[1], 10) : Infinity;
 
 const DATASETS = {
     tsjs: 'tsjs.jsonl',
@@ -22,6 +25,9 @@ const files = lang === 'all'
 
 const outputFile = path.join(__dirname, 'datasets', 'codereview-tests.json');
 
+// Map dataset filename -> language key (e.g. 'tsjs.jsonl' -> 'tsjs')
+const fileToLang = Object.fromEntries(Object.entries(DATASETS).map(([k, v]) => [v, k]));
+
 const lines = files.flatMap(file => {
     const filePath = path.join(__dirname, 'datasets', file);
     if (!fs.existsSync(filePath)) {
@@ -30,7 +36,7 @@ const lines = files.flatMap(file => {
     }
     return fs.readFileSync(filePath, 'utf-8').split('\n').filter(Boolean).filter(line => {
         try { JSON.parse(line); return true; } catch { console.warn(`Warning: skipping malformed JSON line in ${file}`); return false; }
-    });
+    }).slice(0, limitPerLang).map(line => ({ line, datasetFile: file, language: fileToLang[file] || 'unknown' }));
 });
 
 // Escape template patterns to avoid nunjucks interpretation
@@ -44,8 +50,8 @@ function escapeTemplatePatterns(str) {
         .replace(/%\}/g, '% }');
 }
 
-const tests = lines.map((line, index) => {
-    const data = JSON.parse(line);
+const tests = lines.map(({ line: rawLine, datasetFile, language }, index) => {
+    const data = JSON.parse(rawLine);
     const inputs = data.inputs?.inputs || data.inputs || {};
     const outputs = data.outputs?.reference_outputs || data.outputs || {};
 
@@ -68,6 +74,9 @@ const tests = lines.map((line, index) => {
             fileContent: escapeTemplatePatterns(inputs.fileContent || ''),
             patchWithLinesStr: escapeTemplatePatterns(inputs.patchWithLinesStr || ''),
             prSummary: escapeTemplatePatterns(prSummary),
+            // Metadata for analysis (not used in prompt template)
+            language,
+            datasetFile,
             // Reference data for assertions (not used in prompt template)
             referenceBugs: JSON.stringify(referenceBugs),
             referenceCodeSuggestions: JSON.stringify(codeSuggestions, null, 2),

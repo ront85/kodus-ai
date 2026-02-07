@@ -1,0 +1,279 @@
+{
+  "generated": "2026-02-07T20:49:52.348Z",
+  "threshold": 0.6428579653686812,
+  "stats": {
+    "mean": 0.7502011718750001,
+    "stdev": 0.10734320650631887
+  },
+  "weakCells": [
+    {
+      "model": "anthropic:messages:claude-sonnet-4-5-20250929",
+      "language": "tsjs",
+      "combined_score": 0.6145,
+      "categories": {
+        "parse_error": 0,
+        "api_error": 1,
+        "low_coverage": 1,
+        "low_validity": 3,
+        "judge_fail": 0
+      },
+      "details": {
+        "parse_error": [],
+        "api_error": [
+          {
+            "desc": "Example 4: packages/realtime/src/client/WebSocketManager.ts",
+            "error": "JUDGE_METRICS sonnet_score=0.5830 gpt_score=0.2917 sonnet_coverage=0.6670 sonnet_validity=0.5000 gpt_coverage=0.3333 gpt_validity=0.2500\n\n--- SONNET JUDGE ---\nHeartbeat()` is actually a bug... In the current code, it's not a bug because `startHeartbeat()` doesn't check the variable. But the reference bug description says it \"can cause multiple heartbeat intervals running simultaneously after several reconnects\" - this would happen if `startHeartbeat()` is called multiple times, which Suggestion 1 addresses.\n\nStatus: **FOUND** (by Suggestion 1, which addresses the underlying issue differently)\n\n2. **Missing timeout clear before reconnect** - Directly addressed by Suggestion 2. Status: **FOUND**\n\n3. **Message queue never expires old messages** - NOT addressed by any suggestion. Suggestion 3 talks about sorting performance, not about expiring old messages. Status: **MISSED**\n\nCoverage: 2/3 reference bugs found\n\n## Step 3: Validity\n\nValid suggestions: 2 (Suggestions 1 and 2)\nTotal suggestions: 4\nValidity score: 2/4 = 0.5\n\n## Step 4: Final Score\n\ncoverage_score = 2/3 = 0.667\nvalidity_score = 2/4 = 0.5\nfinal_score = 0.667 * 0.5 + 0.5 * 0.5 = 0.583\n\n--- GPT JUDGE ---\nONE - cannot construct one\n- Expected output: `this.heartbeatInterval` should be null after stopping\n- Actual output: `this.heartbeatInterval` remains non-null after `clearInterval`\n- Verdict: INVALID\n- Reason: As stated, it’s a “latent issue” dependent on hypothetical future code (“if startHeartbeat is modified…”). No current failing behavior is shown. Also duplicates the reference bug theme but doesn’t prove an actual failure in the current code path.\n\n## Step 2: Coverage (reference bugs found by at least one VALID suggestion)\n1. Heartbeat interval not nullified after clear - multiple intervals after reconnects: MISSED (no VALID suggestion matched this concrete bug)\n2. Missing timeout clear before reconnect - multiple concurrent reconnection attempts: FOUND (Suggestion 2)\n3. Message queue never expires old messages - stale data sent after reconnection: MISSED\n\ncoverage_score = 1/3 = 0.3333333333\nvalidity_score = 1/4 = 0.25\nfinal_score = 0.3333333333 * 0.5 + 0.25 * 0.5 = 0.29166666665"
+          }
+        ],
+        "low_coverage": [
+          {
+            "desc": "Example 3: packages/text/src/utils/TextTruncator.ts",
+            "coverage": 0,
+            "reasoning": "--- SONNET JUDGE ---\nmalized) when truncated, but 'Hello  world  test' (preserved) when not truncated\n- Verdict: VALID\n- Reason: This is a clear inconsistency bug. The function behaves differently with whitespace depending on whether truncation occurs. For the same input text with different maxWords values, the whitespace handling changes unpredictably. This is a correctness issue where the function's output format is inconsistent.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **String.length counts "
+          }
+        ],
+        "low_validity": [
+          {
+            "desc": "Example 2: packages/core/src/cache/RequestCache.ts",
+            "validity": 0.50015,
+            "reasoning": "--- SONNET JUDGE ---\nsign a readonly property. This is a provable bug that prevents the code from even running. The failing input is simply calling the clear() method, and the actual output is a compilation failure.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **WeakMap only accepts objects as keys, not primitive values like strings** - **FOUND** by Suggestion 1\n   - The reference bug correctly identifies that WeakMap cannot use string keys and will throw TypeError at runtime\n   - Suggestion 1 ident"
+          },
+          {
+            "desc": "Example 3: packages/text/src/utils/TextTruncator.ts",
+            "validity": 0.25,
+            "reasoning": "--- SONNET JUDGE ---\nmalized) when truncated, but 'Hello  world  test' (preserved) when not truncated\n- Verdict: VALID\n- Reason: This is a clear inconsistency bug. The function behaves differently with whitespace depending on whether truncation occurs. For the same input text with different maxWords values, the whitespace handling changes unpredictably. This is a correctness issue where the function's output format is inconsistent.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **String.length counts "
+          },
+          {
+            "desc": "Example 5: packages/validation/src/validators/InputValidator.ts",
+            "validity": 0.6668499999999999,
+            "reasoning": "--- SONNET JUDGE ---\nrnRule`, the returned validation rule will exhibit the same stateful behavior as Suggestion 1. The function doesn't protect against this by removing the global flag or creating new regex instances, so it will produce incorrect validation results when called multiple times with the same input.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **RegExp global flag causes validation to alternate true/false on repeated calls** - FOUND\n   - This bug is found by Suggestion 1 (directly addr"
+          }
+        ],
+        "judge_fail": []
+      }
+    },
+    {
+      "model": "google:gemini-3-pro-preview",
+      "language": "java",
+      "combined_score": 0.5500700000000001,
+      "categories": {
+        "parse_error": 0,
+        "api_error": 0,
+        "low_coverage": 5,
+        "low_validity": 4,
+        "judge_fail": 0
+      },
+      "details": {
+        "parse_error": [],
+        "api_error": [],
+        "low_coverage": [
+          {
+            "desc": "Example 11: src/main/java/com/app/analytics/MetricsCalculator.java",
+            "coverage": 0,
+            "reasoning": "--- SONNET JUDGE ---\nsses `calculatePercentile` method with in-place sorting - this is also a DIFFERENT method and DIFFERENT issue\n\n**Reference bug MISSED** - Neither suggestion addresses the auto-boxing issue in the `sumValues` method mentioned in the reference bug. However, I need to reconsider: the reference bug is about *performance* (creating garbage objects), not *correctness*. According to my instructions, performance issues should be marked INVALID. But this is a reference bug, so I'm ev"
+          },
+          {
+            "desc": "Example 12: src/main/java/com/app/service/SessionManager.java",
+            "coverage": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\nA (duplicate)\n- Expected output: N/A (duplicate)\n- Actual output: N/A (duplicate)\n- Verdict: INVALID\n- Reason: Duplicates Suggestion 1's identification of the ConcurrentModificationException bug in cleanupExpiredSessions.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **ConcurrentModificationException in cleanupExpiredSessions (lines 42-48)**: FOUND by Suggestion 1 (and duplicated by Suggestion 3)\n2. **ConcurrentModificationException in invalidateUserSessions (lines 51-55)**: MISS"
+          },
+          {
+            "desc": "Example 13: src/main/java/com/app/controller/FileController.java",
+            "coverage": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\next. This is demonstrable with specific inputs and system configurations.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **Path traversal in downloadFile** - FOUND (by Suggestion 1)\n2. **Path traversal in deleteFile** - MISSED (the model only flagged downloadFile, not deleteFile specifically, though it mentioned \"and others in this class\")\n\nThe model identified the path traversal vulnerability in downloadFile but did not create a separate suggestion for the deleteFile method's pat"
+          },
+          {
+            "desc": "Example 14: src/main/java/com/app/service/UserService.java",
+            "coverage": 0.6668499999999999,
+            "reasoning": "--- SONNET JUDGE ---\ncauses valid permissions to be incorrectly denied.\n\n## Step 2: Coverage\n\nChecking which reference bugs were found:\n\n**Reference Bug 1**: String comparison with == in isAdmin method (line 26)\n- Status: FOUND by Suggestion 1\n- The model correctly identified the `role == \"ADMIN\"` bug\n\n**Reference Bug 2**: String comparison with == in validateUserStatus method (line 32)\n- Status: MISSED\n- The model did not identify this bug in the validateUserStatus method\n\n**Reference Bug 3**: "
+          },
+          {
+            "desc": "Example 15: src/main/java/com/app/finance/TaxCalculator.java",
+            "coverage": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\n**First reference bug** (verifyCalculation method with floating-point comparison): The model's suggestion mentions `verifyCalculation` as one of the affected methods in the suggestionContent, but the primary focus and code example is on `isEligibleForRefund`. Since the suggestion explicitly states \"This same issue affects `isPriceMatch`, `verifyCalculation`, `hasZeroBalance`, and `isWithinBudget`\", it does identify this bug. **FOUND**\n\n2. **Second reference bug** (isEligible"
+          }
+        ],
+        "low_validity": [
+          {
+            "desc": "Example 12: src/main/java/com/app/service/SessionManager.java",
+            "validity": 0.49985,
+            "reasoning": "--- SONNET JUDGE ---\nA (duplicate)\n- Expected output: N/A (duplicate)\n- Actual output: N/A (duplicate)\n- Verdict: INVALID\n- Reason: Duplicates Suggestion 1's identification of the ConcurrentModificationException bug in cleanupExpiredSessions.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **ConcurrentModificationException in cleanupExpiredSessions (lines 42-48)**: FOUND by Suggestion 1 (and duplicated by Suggestion 3)\n2. **ConcurrentModificationException in invalidateUserSessions (lines 51-55)**: MISS"
+          },
+          {
+            "desc": "Example 13: src/main/java/com/app/controller/FileController.java",
+            "validity": 0.66665,
+            "reasoning": "--- SONNET JUDGE ---\next. This is demonstrable with specific inputs and system configurations.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **Path traversal in downloadFile** - FOUND (by Suggestion 1)\n2. **Path traversal in deleteFile** - MISSED (the model only flagged downloadFile, not deleteFile specifically, though it mentioned \"and others in this class\")\n\nThe model identified the path traversal vulnerability in downloadFile but did not create a separate suggestion for the deleteFile method's pat"
+          },
+          {
+            "desc": "Example 14: src/main/java/com/app/service/UserService.java",
+            "validity": 0.6668499999999999,
+            "reasoning": "--- SONNET JUDGE ---\ncauses valid permissions to be incorrectly denied.\n\n## Step 2: Coverage\n\nChecking which reference bugs were found:\n\n**Reference Bug 1**: String comparison with == in isAdmin method (line 26)\n- Status: FOUND by Suggestion 1\n- The model correctly identified the `role == \"ADMIN\"` bug\n\n**Reference Bug 2**: String comparison with == in validateUserStatus method (line 32)\n- Status: MISSED\n- The model did not identify this bug in the validateUserStatus method\n\n**Reference Bug 3**: "
+          },
+          {
+            "desc": "Example 15: src/main/java/com/app/finance/TaxCalculator.java",
+            "validity": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\n**First reference bug** (verifyCalculation method with floating-point comparison): The model's suggestion mentions `verifyCalculation` as one of the affected methods in the suggestionContent, but the primary focus and code example is on `isEligibleForRefund`. Since the suggestion explicitly states \"This same issue affects `isPriceMatch`, `verifyCalculation`, `hasZeroBalance`, and `isWithinBudget`\", it does identify this bug. **FOUND**\n\n2. **Second reference bug** (isEligible"
+          }
+        ],
+        "judge_fail": []
+      }
+    },
+    {
+      "model": "google:gemini-3-flash-preview",
+      "language": "ruby",
+      "combined_score": 0.5,
+      "categories": {
+        "parse_error": 0,
+        "api_error": 0,
+        "low_coverage": 4,
+        "low_validity": 3,
+        "judge_fail": 0
+      },
+      "details": {
+        "parse_error": [],
+        "api_error": [],
+        "low_coverage": [
+          {
+            "desc": "Example 16: app/services/data_processor.rb",
+            "coverage": 0,
+            "reasoning": "--- SONNET JUDGE ---\nthod exists. Integer, Float, TrueClass, and FalseClass don't implement `.empty?`, so passing these types will crash the application. This is a correctness bug, not just a style issue.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **Lambda captures mutable config reference** - MISSED\n   - The model did not identify this issue. The model's suggestions focused on the `process_all` method's result accumulation bug and the `validate_with_rule` method's `.empty?` bug, but did not menti"
+          },
+          {
+            "desc": "Example 18: app/controllers/users_controller.rb",
+            "coverage": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\nams`\n   - **FOUND** by Suggestion 1 (though framed as a crash issue rather than security issue, it does identify the need to use `user_params`)\n\n2. **Bug 2**: Mass assignment vulnerability in `update` method (line 30) - uses `params[:user]` instead of `user_params`\n   - **FOUND** by Suggestion 1 (same as above)\n\n3. **Bug 3**: Mass assignment in `bulk_update` (lines 42-45) - uses unpermitted `user_data`\n   - **FOUND** by Suggestion 2 (identifies the unpermitted parameters iss"
+          },
+          {
+            "desc": "Example 19: app/services/notification_service.rb",
+            "coverage": 0.25,
+            "reasoning": "--- SONNET JUDGE ---\nk_notify`. Suggestion 1 is about tags being shared within a single invocation among different user notifications. These are different bugs, though both stem from mutation of the tags array.\n\nActually, re-reading Suggestion 1 more carefully: it does mention \"the caller's original `tags` array will also be mutated\" which touches on the cross-call issue, but the main focus and the improved code only addresses the within-loop sharing issue, not the default argument issue. The im"
+          },
+          {
+            "desc": "Example 20: app/services/config_loader.rb",
+            "coverage": 0,
+            "reasoning": "--- SONNET JUDGE ---\ncache check `if @cache[filename]` fails because it's checking truthiness rather than key presence. This causes unnecessary file I/O and defeats the caching mechanism. The bug is demonstrable with concrete input (a YAML file containing `false`).\n\n## Step 2: Coverage\n\nReference bugs:\n1. **YAML.load allows arbitrary code execution via malicious YAML files** - MISSED\n\nThe model did not identify the `YAML.load` security vulnerability. While suggestion 1 found a different security"
+          }
+        ],
+        "low_validity": [
+          {
+            "desc": "Example 18: app/controllers/users_controller.rb",
+            "validity": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\nams`\n   - **FOUND** by Suggestion 1 (though framed as a crash issue rather than security issue, it does identify the need to use `user_params`)\n\n2. **Bug 2**: Mass assignment vulnerability in `update` method (line 30) - uses `params[:user]` instead of `user_params`\n   - **FOUND** by Suggestion 1 (same as above)\n\n3. **Bug 3**: Mass assignment in `bulk_update` (lines 42-45) - uses unpermitted `user_data`\n   - **FOUND** by Suggestion 2 (identifies the unpermitted parameters iss"
+          },
+          {
+            "desc": "Example 19: app/services/notification_service.rb",
+            "validity": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\nk_notify`. Suggestion 1 is about tags being shared within a single invocation among different user notifications. These are different bugs, though both stem from mutation of the tags array.\n\nActually, re-reading Suggestion 1 more carefully: it does mention \"the caller's original `tags` array will also be mutated\" which touches on the cross-call issue, but the main focus and the improved code only addresses the within-loop sharing issue, not the default argument issue. The im"
+          },
+          {
+            "desc": "Example 20: app/services/config_loader.rb",
+            "validity": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\ncache check `if @cache[filename]` fails because it's checking truthiness rather than key presence. This causes unnecessary file I/O and defeats the caching mechanism. The bug is demonstrable with concrete input (a YAML file containing `false`).\n\n## Step 2: Coverage\n\nReference bugs:\n1. **YAML.load allows arbitrary code execution via malicious YAML files** - MISSED\n\nThe model did not identify the `YAML.load` security vulnerability. While suggestion 1 found a different security"
+          }
+        ],
+        "judge_fail": []
+      }
+    },
+    {
+      "model": "google:gemini-3-pro-preview",
+      "language": "ruby",
+      "combined_score": 0.5832999999999999,
+      "categories": {
+        "parse_error": 0,
+        "api_error": 0,
+        "low_coverage": 4,
+        "low_validity": 2,
+        "judge_fail": 0
+      },
+      "details": {
+        "parse_error": [],
+        "api_error": [],
+        "low_coverage": [
+          {
+            "desc": "Example 16: app/services/data_processor.rb",
+            "coverage": 0,
+            "reasoning": "--- SONNET JUDGE ---\nss bug. While creating many threads is inefficient and could cause problems with extremely large inputs, it doesn't produce incorrect results. The code will work correctly (just slowly/inefficiently) for normal inputs. This is about best practices and performance optimization, not a provable bug that produces wrong output.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **Lambda captures mutable config reference** - MISSED\n   - None of the valid suggestions identified the closure/l"
+          },
+          {
+            "desc": "Example 17: app/services/pricing_calculator.rb",
+            "coverage": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\n method in passing in the suggestionContent, it does not provide a separate suggestion with existingCode/improvedCode for this specific method. The suggestion focuses on `verify_payment` only in its code blocks.\n\nWait, let me re-examine Suggestion 1 more carefully. The suggestionContent says \"This same issue affects `is_zero_balance?`, `prices_match?`, and `eligible_for_discount?`\" but the existingCode and improvedCode only address `verify_payment`. The reference bugs are se"
+          },
+          {
+            "desc": "Example 19: app/services/notification_service.rb",
+            "coverage": 0.25,
+            "reasoning": "--- SONNET JUDGE ---\n\"After one bulk operation, subsequent calls will have all previous tags accumulated.\" This is about the default argument `tags: []` being shared across different invocations of `bulk_notify`.\n\nThe model's suggestion is about tags being shared within a single call to `bulk_notify` (between different notifications in the same batch), not about accumulation across multiple calls to `bulk_notify`.\n\nThese are actually two different bugs:\n1. Reference bug: Default `tags: []` is sh"
+          },
+          {
+            "desc": "Example 20: app/services/config_loader.rb",
+            "coverage": 0,
+            "reasoning": "--- SONNET JUDGE ---\nct: VALID\n- Reason: This is a concrete security vulnerability. While it requires the filename to be user-controlled (which may or may not be the case), the code as written does allow path traversal. This is a real bug in the security model of the code - if the API accepts filenames, it should validate them.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **YAML.load allows arbitrary code execution via malicious YAML files** - MISSED\n   - None of the suggestions identified the unsaf"
+          }
+        ],
+        "low_validity": [
+          {
+            "desc": "Example 16: app/services/data_processor.rb",
+            "validity": 0.6668499999999999,
+            "reasoning": "--- SONNET JUDGE ---\nss bug. While creating many threads is inefficient and could cause problems with extremely large inputs, it doesn't produce incorrect results. The code will work correctly (just slowly/inefficiently) for normal inputs. This is about best practices and performance optimization, not a provable bug that produces wrong output.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **Lambda captures mutable config reference** - MISSED\n   - None of the valid suggestions identified the closure/l"
+          },
+          {
+            "desc": "Example 20: app/services/config_loader.rb",
+            "validity": 0.66665,
+            "reasoning": "--- SONNET JUDGE ---\nct: VALID\n- Reason: This is a concrete security vulnerability. While it requires the filename to be user-controlled (which may or may not be the case), the code as written does allow path traversal. This is a real bug in the security model of the code - if the API accepts filenames, it should validate them.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **YAML.load allows arbitrary code execution via malicious YAML files** - MISSED\n   - None of the suggestions identified the unsaf"
+          }
+        ],
+        "judge_fail": []
+      }
+    },
+    {
+      "model": "anthropic:messages:claude-haiku-4-5-20251001",
+      "language": "ruby",
+      "combined_score": 0.6391899999999999,
+      "categories": {
+        "parse_error": 0,
+        "api_error": 0,
+        "low_coverage": 2,
+        "low_validity": 3,
+        "judge_fail": 0
+      },
+      "details": {
+        "parse_error": [],
+        "api_error": [],
+        "low_coverage": [
+          {
+            "desc": "Example 16: app/services/data_processor.rb",
+            "coverage": 0,
+            "reasoning": "--- SONNET JUDGE ---\nusing accumulation. The concrete failing case demonstrates the problem clearly.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **Lambda captures mutable config reference** - This is about the `register_processors` method capturing config in a lambda. \n   - Suggestion 2 addresses this exact code (lines 7-11, register_processors method)\n   - However, Suggestion 2 is INVALID because it misunderstands Ruby's closure semantics\n   - The reference bug description itself appears to be inc"
+          },
+          {
+            "desc": "Example 20: app/services/config_loader.rb",
+            "coverage": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\ny code\n- Verdict: VALID\n- Reason: Same YAML.load vulnerability as Suggestions 2 and 4, but in yet another method. This is the same underlying security bug.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **YAML.load security vulnerability (line 17)** - FOUND by Suggestions 2, 4, and 5\n\nThe reference bug list contains 1 bug, and it was found.\n\ncoverage_score = 1/1 = 1.0\n\n## Step 3: Validity\n\nValid suggestions: 4 (Suggestions 1, 2, 4, 5)\nTotal suggestions: 5\n\nNote: Suggestions 2, 4, "
+          }
+        ],
+        "low_validity": [
+          {
+            "desc": "Example 16: app/services/data_processor.rb",
+            "validity": 0.375,
+            "reasoning": "--- SONNET JUDGE ---\nusing accumulation. The concrete failing case demonstrates the problem clearly.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **Lambda captures mutable config reference** - This is about the `register_processors` method capturing config in a lambda. \n   - Suggestion 2 addresses this exact code (lines 7-11, register_processors method)\n   - However, Suggestion 2 is INVALID because it misunderstands Ruby's closure semantics\n   - The reference bug description itself appears to be inc"
+          },
+          {
+            "desc": "Example 18: app/controllers/users_controller.rb",
+            "validity": 0.6000000000000001,
+            "reasoning": "--- SONNET JUDGE ---\nor with `params[:users] = \"string\"`\n- Expected output: Graceful error handling with appropriate error message\n- Actual output: NoMethodError: undefined method `each' for nil:NilClass (or for String)\n- Verdict: VALID\n- Reason: This is a concrete bug. If `params[:users]` is nil or not an array, calling `.each` on it will raise an exception. This is a provable bug with specific failing input and output.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **Mass assignment in create method"
+          },
+          {
+            "desc": "Example 20: app/services/config_loader.rb",
+            "validity": 0.5,
+            "reasoning": "--- SONNET JUDGE ---\ny code\n- Verdict: VALID\n- Reason: Same YAML.load vulnerability as Suggestions 2 and 4, but in yet another method. This is the same underlying security bug.\n\n## Step 2: Coverage\n\nReference bugs:\n1. **YAML.load security vulnerability (line 17)** - FOUND by Suggestions 2, 4, and 5\n\nThe reference bug list contains 1 bug, and it was found.\n\ncoverage_score = 1/1 = 1.0\n\n## Step 3: Validity\n\nValid suggestions: 4 (Suggestions 1, 2, 4, 5)\nTotal suggestions: 5\n\nNote: Suggestions 2, 4, "
+          }
+        ],
+        "judge_fail": []
+      }
+    }
+  ],
+  "patterns": {
+    "modelWide": [],
+    "languageWide": []
+  }
+}

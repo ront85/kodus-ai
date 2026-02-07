@@ -15,14 +15,17 @@ extract_env() {
 export OPENAI_API_KEY="$(extract_env API_OPEN_AI_API_KEY)"
 export ANTHROPIC_API_KEY="$(extract_env API_ANTHROPIC_API_KEY)"
 export GOOGLE_API_KEY="$(extract_env API_GOOGLE_AI_API_KEY)"
-export OPENROUTER_API_KEY="$(extract_env API_OPENROUTER_KEY)"
+export OPENROUTER_API_KEY="$(extract_env OPENROUTER_API_KEY)"
 
-# Extract --lang argument for convert-dataset.js (pass the rest to promptfoo)
+# Extract --lang and --limit arguments for convert-dataset.js (pass the rest to promptfoo)
 LANG_ARG=""
+LIMIT_ARG=""
 PROMPTFOO_ARGS=()
 for arg in "$@"; do
     if [[ "$arg" == --lang=* ]]; then
         LANG_ARG="$arg"
+    elif [[ "$arg" == --limit=* ]]; then
+        LIMIT_ARG="$arg"
     else
         PROMPTFOO_ARGS+=("$arg")
     fi
@@ -30,7 +33,7 @@ done
 
 # Run convert-dataset.js to generate test cases
 cd "$SCRIPT_DIR"
-node convert-dataset.js ${LANG_ARG}
+node convert-dataset.js ${LANG_ARG} ${LIMIT_ARG}
 
-# Run promptfoo
-npx promptfoo eval -c promptfoo.yaml -j 10 "${PROMPTFOO_ARGS[@]}"
+# Run promptfoo (exit code != 0 is expected when test cases fail, not a script error)
+npx promptfoo eval -c promptfoo.yaml -j 10 "${PROMPTFOO_ARGS[@]}" || true
