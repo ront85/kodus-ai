@@ -29,6 +29,7 @@ import {
     GetImpactAnalysisResponse,
     TaskStatus,
 } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import { IClusterizedSuggestion } from '@libs/kodyFineTuning/domain/interfaces/kodyFineTuning.interface';
 import { IKodyRule } from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
 import { OrganizationAndTeamData } from './organizationAndTeamData';
@@ -129,6 +130,8 @@ export type AnalysisContext<TPullRequest = any> = {
     fileAugmentations?: ContextAugmentationsMap;
     /** Dynamically generated augmentations during pipeline, mapped by filename. */
     augmentationsByFile?: Record<string, ContextAugmentationsMap>;
+    /** Cross-file context snippets relevant to the current file under review. */
+    crossFileSnippets?: CrossFileContextSnippet[];
 };
 
 export type ASTAnalysisResult = {
@@ -170,6 +173,7 @@ export type CodeSuggestion = {
     label: string;
     llmPrompt?: string;
     severity?: string;
+    crossFileEvidence?: boolean;
     rankScore?: number;
     priorityStatus?: PriorityStatus;
     deliveryStatus?: DeliveryStatus;

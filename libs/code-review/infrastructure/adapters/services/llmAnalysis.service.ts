@@ -401,6 +401,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
                 ...(context?.fileAugmentations ?? {}),
             } as ContextAugmentationsMap,
             contextPack: context?.sharedContextPack as ContextPack | undefined,
+            crossFileSnippets: context?.crossFileSnippets,
         };
 
         return baseContext;

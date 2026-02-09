@@ -39,6 +39,7 @@ import { createOptimizedBatches } from '@libs/common/utils/batch.helper';
 import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import { CodeAnalysisOrchestrator } from '@libs/ee/codeBase/codeAnalysisOrchestrator.service';
 import {
     CodeReviewPipelineContext,
@@ -437,6 +438,103 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         }
     }
 
+    private filterSnippetsForFile(
+        allSnippets: CrossFileContextSnippet[] | undefined,
+        file: FileChange,
+    ): CrossFileContextSnippet[] {
+        if (!allSnippets?.length) {
+            return [];
+        }
+
+        const diff = file.patchWithLinesStr || file.patch || '';
+        if (!diff) {
+            return [];
+        }
+
+        // Extract identifiers defined/exported in this file's diff (+lines).
+        // Used for reverse matching: does the snippet consume something this file changes?
+        const diffIdentifiers = this.extractDiffIdentifiers(diff);
+
+        return allSnippets.filter((snippet) => {
+            // Hop-1 snippets always pass — the planner already validated
+            // their relevance and filtering them out loses critical
+            // cross-file evidence (e.g. a consumer using a string literal
+            // that was renamed in the diff — the very mismatch that makes
+            // it a bug also prevents text-based matching).
+            if (snippet.hop === 1) {
+                return true;
+            }
+
+            // Snippets without relatedSymbol pass through — the planner
+            // already deemed them relevant; let the LLM judge per-file.
+            if (!snippet.relatedSymbol) {
+                return true;
+            }
+
+            // Forward match: snippet's relatedSymbol appears in this file's diff
+            if (diff.includes(snippet.relatedSymbol)) {
+                return true;
+            }
+
+            // Split compound symbols (e.g. "PlanType.PREMIUM") and match parts.
+            // Skip short tokens (<3 chars) to avoid false positives.
+            const parts = snippet.relatedSymbol
+                .split('.')
+                .filter((p) => p.length >= 3);
+
+            if (parts.some((part) => diff.includes(part))) {
+                return true;
+            }
+
+            // Reverse match: this file defines/changes symbols that appear in the snippet's content.
+            // Catches cases like: notificationEvents.ts changes NOTIFICATION_EVENTS,
+            // and PaymentService snippet references NOTIFICATION_EVENTS.
+            if (
+                diffIdentifiers.length > 0 &&
+                diffIdentifiers.some((id) => snippet.content.includes(id))
+            ) {
+                return true;
+            }
+
+            return false;
+        });
+    }
+
+    /**
+     * Extract identifiers defined or exported in the diff's added lines.
+     * Returns unique names of consts, functions, classes, types, enums, interfaces,
+     * and string-keyed object properties.
+     */
+    private extractDiffIdentifiers(diff: string): string[] {
+        const identifiers = new Set<string>();
+        const lines = diff.split('\n');
+
+        for (const line of lines) {
+            // Only look at added lines
+            if (!line.startsWith('+')) continue;
+
+            // Match: export const FOO, function bar, class Baz, type X, enum Y, interface Z
+            const declarationPattern =
+                /(?:export\s+)?(?:const|let|var|function|class|interface|type|enum)\s+(\w+)/g;
+            let match: RegExpExecArray | null;
+            while ((match = declarationPattern.exec(line)) !== null) {
+                if (match[1] && match[1].length >= 3) {
+                    identifiers.add(match[1]);
+                }
+            }
+
+            // Match string-keyed object properties: "payment.captured": ...
+            const stringKeyPattern = /["']([^"']+)["']\s*:/g;
+            while ((match = stringKeyPattern.exec(line)) !== null) {
+                if (match[1] && match[1].length >= 3) {
+                    identifiers.add(match[1]);
+                }
+            }
+        }
+
+        return Array.from(identifiers);
+    }
+
     private async filterAndPrepareFiles(
         batch: FileChange[],
         context: AnalysisContext,
@@ -446,10 +544,31 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         const settledResults = await Promise.allSettled(
             batch.map((file) =>
                 limit(() => {
+                    const filteredSnippets = this.filterSnippetsForFile(
+                        context.crossFileSnippets,
+                        file,
+                    );
+
+                    if (context.crossFileSnippets?.length) {
+                        this.logger.log({
+                            message: `Cross-file snippets for ${file.filename}: ${filteredSnippets.length}/${context.crossFileSnippets.length} passed filter`,
+                            context: ProcessFilesReview.name,
+                            metadata: {
+                                filename: file.filename,
+                                totalSnippets: context.crossFileSnippets.length,
+                                filteredSnippets: filteredSnippets.length,
+                                matchedSymbols: filteredSnippets
+                                    .filter((s) => s.relatedSymbol)
+                                    .map((s) => s.relatedSymbol),
+                            },
+                        });
+                    }
+
                     const perFileContext: AnalysisContext = {
                         ...context,
                         fileAugmentations:
                             context.augmentationsByFile?.[file.filename] ?? {},
+                        crossFileSnippets: filteredSnippets,
                     };
 
                     return this.fileReviewContextPreparation.prepareFileContext(
@@ -598,6 +717,19 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         const crossFileIds = new Set(
             validCrossFileSuggestions?.map((suggestion) => suggestion.id),
         );
+
+        // Standard review suggestions that the LLM flagged as based on
+        // cross-file evidence should also bypass safeguard — the safeguard
+        // LLM doesn't receive cross-file snippets and would discard them
+        // as "speculative".
+        for (const suggestion of keepedSuggestions) {
+            if (
+                !crossFileIds.has(suggestion.id) &&
+                suggestion.crossFileEvidence === true
+            ) {
+                crossFileIds.add(suggestion.id);
+            }
+        }
 
         const filteredCrossFileSuggestions = keepedSuggestions.filter(
             (suggestion) => crossFileIds?.has(suggestion.id),
@@ -987,6 +1119,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             filePromptOverrides: this.buildFilePromptOverrides(
                 context.fileContextMap,
             ),
+            crossFileSnippets: context.crossFileContexts?.contexts,
         };
     }
 
