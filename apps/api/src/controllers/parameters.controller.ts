@@ -91,7 +91,13 @@ export class ParametersController {
     @Post('/create-or-update')
     @ApiOperation({
         summary: 'Create or update parameter',
-        description: 'Create or update a parameter configuration by key.',
+        description: `Create or update a parameter configuration by key. 
+        
+Available parameter keys:
+- code_review_config: Code review settings
+- language_config: Language for Kody's responses (comments, summaries, UI text) - controls the human language Kody uses to communicate
+- platform_configs: Platform-specific configurations
+- issue_creation_config: Issue creation settings`,
     })
     @ApiCreatedResponse({ type: ParametersStoredResponseDto })
     @ApiBody({
@@ -102,9 +108,13 @@ export class ParametersController {
                 key: {
                     type: 'string',
                     enum: Object.values(ParametersKey),
+                    description:
+                        'Parameter key (e.g., language_config for Kody response language)',
                 },
                 configValue: {
                     type: 'object',
+                    description:
+                        'Configuration value (e.g., "en-US" for language_config)',
                 },
                 organizationAndTeamData: {
                     type: 'object',
@@ -114,14 +124,30 @@ export class ParametersController {
                     },
                 },
             },
-            example: {
-                key: ParametersKey.CODE_REVIEW_CONFIG,
-                configValue: {
-                    useLLM: true,
-                    reviewMode: 'comment',
+            examples: {
+                codeReview: {
+                    value: {
+                        key: ParametersKey.CODE_REVIEW_CONFIG,
+                        configValue: {
+                            useLLM: true,
+                            reviewMode: 'comment',
+                        },
+                        organizationAndTeamData: {
+                            teamId: 'c33ef663-70e7-4f43-9605-0bbef979b8e0',
+                        },
+                    },
+                    summary: 'Code review configuration example',
                 },
-                organizationAndTeamData: {
-                    teamId: 'c33ef663-70e7-4f43-9605-0bbef979b8e0',
+                language: {
+                    value: {
+                        key: ParametersKey.LANGUAGE_CONFIG,
+                        configValue: 'en-US',
+                        organizationAndTeamData: {
+                            teamId: 'c33ef663-70e7-4f43-9605-0bbef979b8e0',
+                        },
+                    },
+                    summary:
+                        'Language configuration example - sets language for Kody responses',
                 },
             },
         },
@@ -163,11 +189,15 @@ export class ParametersController {
         enum: ParametersKey,
         type: String,
         required: true,
+        description:
+            'Parameter key (e.g., language_config to get the language for Kody responses)',
     })
     @ApiQuery({ name: 'teamId', type: String, required: true })
     @ApiOperation({
         summary: 'Find parameter by key',
-        description: 'Return a parameter configuration by key for a team.',
+        description: `Return a parameter configuration by key for a team.
+        
+For language_config: Returns the language setting for Kody's responses (comments, summaries, UI text).`,
     })
     @ApiOkResponse({ type: ParametersStoredResponseDto })
     @UseGuards(PolicyGuard)

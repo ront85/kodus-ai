@@ -1,7 +1,13 @@
 export enum ParametersKey {
     CODE_REVIEW_CONFIG = 'code_review_config',
     PLATFORM_CONFIGS = 'platform_configs',
+    
+    /**
+     * Language for Kody's responses (comments, summaries, UI text).
+     * Controls the human language Kody uses to communicate, not programming languages.
+     */
     LANGUAGE_CONFIG = 'language_config',
+    
     ISSUE_CREATION_CONFIG = 'issue_creation_config',
 
     //DEPRECATED

@@ -54,6 +54,14 @@ export enum KodyLearningStatus {
     GENERATING_CONFIG = 'generating_config',
 }
 
+/**
+ * Maps parameter keys to their value types.
+ * 
+ * @property CODE_REVIEW_CONFIG - Configuration for code review settings
+ * @property LANGUAGE_CONFIG - Language for Kody's responses (e.g., "en-US", "pt-BR"). 
+ *           Controls the human language used in comments, summaries, and UI text.
+ * @property PLATFORM_CONFIGS - Platform-specific configurations
+ */
 export type ConfigValueMap = {
     [ParametersKey.CODE_REVIEW_CONFIG]: CodeReviewParameter;
     [ParametersKey.LANGUAGE_CONFIG]: LanguageValue;

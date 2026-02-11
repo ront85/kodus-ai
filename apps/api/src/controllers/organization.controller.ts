@@ -101,8 +101,11 @@ export class OrganizationController {
 
     @Get('/language')
     @ApiOperation({
-        summary: 'Detect organization language',
-        description: 'Infer primary language based on repository or team data.',
+        summary: 'Detect programming language',
+        description: `Infer primary programming language (e.g., JavaScript, Python, Java) based on repository or team data.
+        
+Note: This is for programming language detection, NOT for Kody's response language. 
+To set the language for Kody's responses, use the 'language_config' parameter via /parameters endpoints.`,
     })
     @ApiQuery({ name: 'teamId', type: String, required: true })
     @ApiQuery({ name: 'repositoryId', type: String, required: false })

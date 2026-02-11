@@ -1,3 +1,13 @@
+/**
+ * Language preference for Kody's responses and UI text.
+ * 
+ * This setting controls the human language that Kody uses to communicate with you:
+ * - Code review comments and suggestions
+ * - Pull request summaries and descriptions
+ * - Feedback messages and interactions
+ * 
+ * Note: This is NOT related to programming languages or code translation.
+ */
 export enum LanguageValue {
     ENGLISH = 'en-US',
     PORTUGUESE_BR = 'pt-BR',
