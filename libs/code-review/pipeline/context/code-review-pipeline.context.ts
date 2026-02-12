@@ -99,8 +99,6 @@ export interface CodeReviewPipelineContext extends PipelineContext {
 
     pullRequestMessagesConfig?: IPullRequestMessages;
 
-    batches: FileChange[][];
-
     clusterizedSuggestions?: IClusterizedSuggestion[];
 
     preparedFileContexts: AnalysisContext<PullRequestType>[];

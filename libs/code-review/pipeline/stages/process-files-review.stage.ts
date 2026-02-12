@@ -35,7 +35,6 @@ import {
     FileChange,
     IFinalAnalysisResult,
 } from '@libs/core/infrastructure/config/types/general/codeReview.type';
-import { createOptimizedBatches } from '@libs/common/utils/batch.helper';
 import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
@@ -47,7 +46,7 @@ import {
 } from '../context/code-review-pipeline.context';
 
 interface FileProcessingResult {
-    file: FileChange;
+    filename: string;
     validSuggestionsToAnalyze: Partial<CodeSuggestion>[];
     discardedSuggestionsBySafeGuard: Partial<CodeSuggestion>[];
     error?: PipelineError;
@@ -61,6 +60,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
     readonly label = 'Reviewing File Level';
     readonly visibility = StageVisibility.PRIMARY;
 
+    private readonly MIN_BATCH_SIZE = 20;
+    private readonly MAX_BATCH_SIZE = 30;
     private readonly concurrencyLimit = 30;
     private readonly logger = createLogger(ProcessFilesReview.name);
 
@@ -113,6 +114,11 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 if (errors?.length > 0) {
                     draft.errors.push(...errors);
                 }
+
+                // Release heavy data no longer needed by subsequent stages
+                for (const file of draft.changedFiles) {
+                    delete file.patchWithLinesStr;
+                }
             });
         } catch (error) {
             this.logger.error({
@@ -122,7 +128,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 metadata: {
                     pullRequestNumber: context.pullRequest.number,
                     repositoryName: context.repository.name,
-                    batchCount: context.batches?.length || 0,
+                    changedFilesCount: context.changedFiles?.length || 0,
                 },
             });
 
@@ -160,32 +166,29 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 },
             });
 
-            const batches = this.createOptimizedBatches(changedFiles);
+            const batches = this.createBatches(changedFiles);
 
-            const { results, tasks } = await this.runBatches(
-                batches,
-                analysisContext,
-            );
-
-            // Create collections
+            // Create collections upfront — results are collected inline per batch
             const validSuggestions: Partial<CodeSuggestion>[] = [];
             const discardedSuggestions: Partial<CodeSuggestion>[] = [];
             const fileMetadata = new Map<string, any>();
             const errors: PipelineError[] = [];
 
-            // Process results
-            results.forEach((result) => {
-                if (result.error) {
-                    errors.push(result.error);
-                }
+            const tasks: AnalysisContext['tasks'] = {
+                astAnalysis: {
+                    ...analysisContext.tasks.astAnalysis,
+                },
+            };
 
-                this.collectFileProcessingResult(
-                    result,
-                    validSuggestions,
-                    discardedSuggestions,
-                    fileMetadata,
-                );
-            });
+            await this.processBatchesSequentially(
+                batches,
+                analysisContext,
+                tasks,
+                validSuggestions,
+                discardedSuggestions,
+                fileMetadata,
+                errors,
+            );
 
             this.logger.log({
                 message: `Finished all batches - Analysis complete for PR#${pullRequest.number}`,
@@ -198,15 +201,14 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 },
             });
 
-            // Retornar apenas os dados analisados sem criar comentários
             return {
-                validSuggestions: validSuggestions,
-                discardedSuggestions: discardedSuggestions,
-                fileMetadata: fileMetadata,
+                validSuggestions,
+                discardedSuggestions,
+                fileMetadata,
                 validCrossFileSuggestions:
                     analysisContext.validCrossFileSuggestions || [],
-                tasks: tasks,
-                errors: errors,
+                tasks,
+                errors,
             };
         } catch (error) {
             this.logProcessingError(
@@ -248,81 +250,37 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         });
     }
 
-    private async runBatches(
-        batches: FileChange[][],
-        context: AnalysisContext,
-    ): Promise<{
-        results: FileProcessingResult[];
-        tasks: AnalysisContext['tasks'];
-    }> {
-        const tasks: AnalysisContext['tasks'] = {
-            astAnalysis: {
-                ...context.tasks.astAnalysis,
-            },
-        };
+    private createBatches(files: FileChange[]): FileChange[][] {
+        const totalItems = files.length;
 
-        const results = await this.processBatchesSequentially(
-            batches,
-            context,
-            tasks,
-        );
+        let batchSize = totalItems;
 
-        return {
-            results,
-            tasks,
-        };
-    }
+        if (totalItems > this.MIN_BATCH_SIZE) {
+            const numBatchesByMin = Math.ceil(totalItems / this.MIN_BATCH_SIZE);
+            batchSize = Math.ceil(totalItems / numBatchesByMin);
 
-    /**
-     * Creates optimized batches of files for parallel processing
-     * @param files Array of files to be processed
-     * @returns Array of file batches
-     */
-    private createOptimizedBatches(files: FileChange[]): FileChange[][] {
-        const batches = createOptimizedBatches(files, {
-            minBatchSize: 20,
-            maxBatchSize: 30,
-        });
-
-        this.validateBatchIntegrity(batches, files.length);
-
-        return batches;
-    }
-
-    /**
-     * Validates the integrity of the batches to ensure all files are processed
-     * @param batches Batches created for processing
-     * @param totalFileCount Original total number of files
-     */
-    private validateBatchIntegrity(
-        batches: FileChange[][],
-        totalFileCount: number,
-    ): void {
-        const totalFilesInBatches = batches.reduce(
-            (sum, batch) => sum + batch.length,
-            0,
-        );
-        if (totalFilesInBatches !== totalFileCount) {
-            this.logger.warn({
-                message: `Potential file processing mismatch! Total files: ${totalFileCount}, files in batches: ${totalFilesInBatches}`,
-                context: ProcessFilesReview.name,
-            });
-            // Ensure all files are processed even in case of mismatch
-            if (totalFilesInBatches < totalFileCount) {
-                // If we identify that files might be missing, process all at once
-                batches.length = 0;
-                batches.push(Array.from({ length: totalFileCount }));
+            if (batchSize > this.MAX_BATCH_SIZE) {
+                const numBatchesByMax = Math.ceil(totalItems / this.MAX_BATCH_SIZE);
+                batchSize = Math.ceil(totalItems / numBatchesByMax);
             }
         }
+
+        const batches: FileChange[][] = [];
+        for (let i = 0; i < totalItems; i += batchSize) {
+            batches.push(files.slice(i, i + batchSize));
+        }
+        return batches;
     }
 
     private async processBatchesSequentially(
         batches: FileChange[][],
         context: AnalysisContext,
         tasks: AnalysisContext['tasks'],
-    ): Promise<FileProcessingResult[]> {
-        const allResults: FileProcessingResult[] = [];
-
+        validSuggestions: Partial<CodeSuggestion>[],
+        discardedSuggestions: Partial<CodeSuggestion>[],
+        fileMetadata: Map<string, any>,
+        errors: PipelineError[],
+    ): Promise<void> {
         for (const [index, batch] of batches.entries()) {
             this.logger.log({
                 message: `Processing batch ${index + 1}/${batches.length} with ${batch.length} files`,
@@ -337,7 +295,19 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                     tasks,
                 );
 
-                allResults.push(...batchResults);
+                // Collect immediately — no accumulation of intermediate array
+                for (const result of batchResults) {
+                    if (result.error) {
+                        errors.push(result.error);
+                    }
+                    this.collectFileProcessingResult(
+                        result,
+                        validSuggestions,
+                        discardedSuggestions,
+                        fileMetadata,
+                    );
+                }
+                // batchResults goes out of scope here → GC can reclaim
             } catch (error) {
                 this.logger.error({
                     message: `Error processing batch ${index + 1}`,
@@ -351,8 +321,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 });
             }
         }
-
-        return allResults;
     }
 
     private async processSingleBatch(
@@ -413,7 +381,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
      * @param fileMetadata Map to store file metadata
      */
     private collectFileProcessingResult(
-        fileProcessingResult: IFinalAnalysisResult & { file: FileChange },
+        fileProcessingResult: FileProcessingResult,
         validSuggestionsToAnalyze: Partial<CodeSuggestion>[],
         discardedSuggestionsBySafeGuard: Partial<CodeSuggestion>[],
         fileMetadata: Map<string, any>,
@@ -430,8 +398,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             );
         }
 
-        if (fileProcessingResult?.file?.filename) {
-            fileMetadata.set(fileProcessingResult.file.filename, {
+        if (fileProcessingResult?.filename) {
+            fileMetadata.set(fileProcessingResult.filename, {
                 reviewMode: fileProcessingResult.reviewMode,
                 codeReviewModelUsed: fileProcessingResult.codeReviewModelUsed,
             });
@@ -642,7 +610,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 context,
             );
 
-            return { ...finalResult, file };
+            return { ...finalResult, filename: file.filename };
         } catch (error) {
             this.logger.error({
                 message: `Error analyzing file ${file.filename}`,
@@ -660,7 +628,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             return {
                 validSuggestionsToAnalyze: [],
                 discardedSuggestionsBySafeGuard: [],
-                file,
+                filename: file.filename,
                 error: {
                     stage: this.stageName,
                     substage: file.filename,
