@@ -72,4 +72,59 @@ describe('prompt_codereview_system_gemini_v2', () => {
         expect(result).toContain(knowledgeContent);
         expect(result).toContain('## External Context & Injected Knowledge');
     });
+
+    it('injects cross-file snippets into the prompt with correct format', () => {
+        const payload: CodeReviewPayload = {
+            crossFileSnippets: [
+                {
+                    filePath: 'src/types/plan.ts',
+                    content: 'export enum PlanType { FREE, PRO }',
+                    rationale: 'PlanType enum was renamed from PREMIUM to PRO',
+                    relevanceScore: 90,
+                    relatedSymbol: 'PlanType',
+                    relationship: 'type definition',
+                    hop: 1,
+                    riskLevel: 'high',
+                },
+                {
+                    filePath: 'src/events/bus.ts',
+                    content: 'export class EventBus { emit(event: string) {} }',
+                    rationale: 'EventBus uses colon separator',
+                    relevanceScore: 80,
+                    relationship: 'event emitter',
+                    hop: 1,
+                    riskLevel: 'medium',
+                },
+            ],
+        };
+
+        const result = prompt_codereview_system_gemini_v2(payload);
+
+        // Verify the section header and instructions exist
+        expect(result).toContain('### Codebase Context');
+        expect(result).toContain('MUST check for broken contracts');
+
+        // Verify each snippet is formatted
+        expect(result).toContain('### src/types/plan.ts (symbol: PlanType)');
+        expect(result).toContain('**Rationale:** PlanType enum was renamed from PREMIUM to PRO');
+        expect(result).toContain('export enum PlanType { FREE, PRO }');
+
+        // Snippet without relatedSymbol should omit the "(symbol: ...)" part
+        expect(result).toContain('### src/events/bus.ts\n');
+        expect(result).not.toContain('### src/events/bus.ts (symbol:');
+
+        // Verify it's in the External Context section
+        expect(result).toContain('## External Context & Injected Knowledge');
+    });
+
+    it('does NOT inject cross-file block when snippets array is empty', () => {
+        const payload: CodeReviewPayload = {
+            crossFileSnippets: [],
+        };
+
+        const result = prompt_codereview_system_gemini_v2(payload);
+
+        expect(result).not.toContain('### Codebase Context');
+        expect(result).not.toContain('## External Context & Injected Knowledge');
+    });
 });
