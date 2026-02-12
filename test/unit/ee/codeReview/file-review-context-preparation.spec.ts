@@ -99,7 +99,7 @@ describe('FileReviewContextPreparation (EE)', () => {
             expect(result).toBe(ReviewModeResponse.HEAVY_MODE);
         });
 
-        it('should call aiAnalysisService when LIGHT_MODE_FULL is configured', async () => {
+        it('should always return HEAVY_MODE regardless of config', async () => {
             const options = {
                 context: {
                     organizationAndTeamData: {},
@@ -112,14 +112,10 @@ describe('FileReviewContextPreparation (EE)', () => {
                 patch: 'diff',
             } as any;
 
-            mockAiAnalysisService.selectReviewMode.mockResolvedValue(
-                ReviewModeResponse.LIGHT_MODE,
-            );
-
             const result = await (service as any).determineReviewMode(options);
 
-            expect(mockAiAnalysisService.selectReviewMode).toHaveBeenCalled();
-            expect(result).toBe(ReviewModeResponse.LIGHT_MODE);
+            expect(mockAiAnalysisService.selectReviewMode).not.toHaveBeenCalled();
+            expect(result).toBe(ReviewModeResponse.HEAVY_MODE);
         });
     });
 });

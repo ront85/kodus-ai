@@ -26,7 +26,6 @@ import {
     prompt_codereview_user_gemini,
     prompt_codereview_user_gemini_v2,
 } from '@libs/common/utils/langchainCommon/prompts/configuration/codeReview';
-import { prompt_selectorLightOrHeavyMode_system } from '@libs/common/utils/langchainCommon/prompts/seletorLightOrHeavyMode';
 import { prompt_severity_analysis_user } from '@libs/common/utils/langchainCommon/prompts/severityAnalysis';
 import {
     AIAnalysisResult,
@@ -68,25 +67,6 @@ export class LLMAnalysisService implements IAIAnalysisService {
     }) {
         if (!context?.patchWithLinesStr) {
             throw new Error('Required context parameters are missing');
-        }
-
-        const { reviewMode } = context;
-
-        if (reviewMode === ReviewModeResponse.LIGHT_MODE) {
-            return `
-## Context
-
-<codeDiff>
-    ${context.patchWithLinesStr}
-</codeDiff>
-
-<filePath>
-    ${context.filePath}
-</filePath>
-
-<suggestionsContext>
-    ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
-</suggestionsContext>`;
         }
 
         return `
@@ -411,7 +391,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
         sessionId: string,
         question: string,
         parameters: any,
-        reviewMode: ReviewModeResponse = ReviewModeResponse.LIGHT_MODE,
+        reviewMode: ReviewModeResponse = ReviewModeResponse.HEAVY_MODE,
     ) {
         const provider =
             parameters.llmProvider || LLMModelProvider.GEMINI_2_5_PRO;
@@ -906,90 +886,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
         file: FileChange,
         codeDiff: string,
     ): Promise<ReviewModeResponse> {
-        const fallbackProvider =
-            provider === LLMModelProvider.OPENAI_GPT_4O
-                ? LLMModelProvider.NOVITA_DEEPSEEK_V3_0324
-                : LLMModelProvider.OPENAI_GPT_4O;
-        const runName = 'selectReviewMode';
-
-        const payload = { file, codeDiff };
-        const spanName = `${LLMAnalysisService.name}::${runName}`;
-        const spanAttrs = {
-            type: 'system',
-            organizationId: organizationAndTeamData?.organizationId,
-            prNumber,
-        };
-
-        try {
-            const { result } = await this.observability.runLLMInSpan({
-                spanName,
-                runName,
-                attrs: spanAttrs,
-                exec: async (callbacks) => {
-                    return await this.promptRunnerService
-                        .builder()
-                        .setProviders({
-                            main: provider,
-                            fallback: fallbackProvider,
-                        })
-                        .setParser(ParserType.STRING)
-                        .setLLMJsonMode(true)
-                        .setTemperature(0)
-                        .setPayload(payload)
-                        .addPrompt({
-                            prompt: prompt_selectorLightOrHeavyMode_system,
-                            role: PromptRole.SYSTEM,
-                        })
-                        .addCallbacks(callbacks)
-                        .addMetadata({
-                            organizationId:
-                                organizationAndTeamData?.organizationId,
-                            teamId: organizationAndTeamData?.teamId,
-                            pullRequestId: prNumber,
-                            provider,
-                            fallbackProvider,
-                            runName,
-                        })
-                        .setRunName(runName)
-                        .execute();
-                },
-            });
-
-            if (!result) {
-                const message = `No response from select review mode for PR#${prNumber}`;
-                this.logger.warn({
-                    message,
-                    context: LLMAnalysisService.name,
-                    metadata: {
-                        organizationAndTeamData,
-                        prNumber,
-                        provider,
-                    },
-                });
-                throw new Error(message);
-            }
-
-            const reviewMode =
-                this.llmResponseProcessor.processReviewModeResponse(
-                    organizationAndTeamData,
-                    prNumber,
-                    result,
-                );
-
-            return reviewMode?.reviewMode || ReviewModeResponse.LIGHT_MODE;
-        } catch (error) {
-            this.logger.error({
-                message: 'Error executing select review mode chain:',
-                error,
-                context: LLMAnalysisService.name,
-                metadata: {
-                    organizationAndTeamData,
-                    prNumber,
-                    provider,
-                },
-            });
-            return ReviewModeResponse.LIGHT_MODE;
-        }
+        return ReviewModeResponse.HEAVY_MODE;
     }
     //#endregion
 }

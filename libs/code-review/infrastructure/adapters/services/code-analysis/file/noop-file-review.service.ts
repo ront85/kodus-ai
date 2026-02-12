@@ -20,7 +20,7 @@ export class FileReviewContextPreparation extends BaseFileReviewContextPreparati
         options?: ReviewModeOptions,
         byokConfig?: BYOKConfig,
     ): Promise<ReviewModeResponse> {
-        return ReviewModeResponse.LIGHT_MODE;
+        return ReviewModeResponse.HEAVY_MODE;
     }
 
     protected getRelevantFileContent(file: FileChange): Promise<{
