@@ -35,6 +35,7 @@ import {
     FileChange,
     IFinalAnalysisResult,
 } from '@libs/core/infrastructure/config/types/general/codeReview.type';
+import { createOptimizedBatches } from '@libs/common/utils/batch.helper';
 import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
@@ -251,25 +252,10 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
     }
 
     private createBatches(files: FileChange[]): FileChange[][] {
-        const totalItems = files.length;
-
-        let batchSize = totalItems;
-
-        if (totalItems > this.MIN_BATCH_SIZE) {
-            const numBatchesByMin = Math.ceil(totalItems / this.MIN_BATCH_SIZE);
-            batchSize = Math.ceil(totalItems / numBatchesByMin);
-
-            if (batchSize > this.MAX_BATCH_SIZE) {
-                const numBatchesByMax = Math.ceil(totalItems / this.MAX_BATCH_SIZE);
-                batchSize = Math.ceil(totalItems / numBatchesByMax);
-            }
-        }
-
-        const batches: FileChange[][] = [];
-        for (let i = 0; i < totalItems; i += batchSize) {
-            batches.push(files.slice(i, i + batchSize));
-        }
-        return batches;
+        return createOptimizedBatches(files, {
+            minBatchSize: this.MIN_BATCH_SIZE,
+            maxBatchSize: this.MAX_BATCH_SIZE,
+        });
     }
 
     private async processBatchesSequentially(
