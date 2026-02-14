@@ -251,7 +251,7 @@ export class CollectCrossFileContextsService {
             // Determine effective model for token counting
             const effectiveModel = byokConfig?.main?.model
                 ? byokConfig.main.model
-                : LLMModelProvider.GEMINI_3_FLASH_PREVIEW;
+                : LLMModelProvider.CEREBRAS_GPT_OSS_120B;
 
             // Chunk diff items by token limits
             const chunkingResult =
@@ -343,7 +343,7 @@ export class CollectCrossFileContextsService {
     ): Promise<CrossFileContextPlannerSchemaType['queries']> {
         const payload = { diffSummary, changedFilenames, language };
 
-        const provider = LLMModelProvider.GEMINI_3_FLASH_PREVIEW;
+        const provider = LLMModelProvider.CEREBRAS_GPT_OSS_120B;
         const fallbackProvider = LLMModelProvider.GEMINI_2_5_FLASH;
 
         const promptRunner = new BYOKPromptRunnerService(
@@ -434,7 +434,7 @@ export class CollectCrossFileContextsService {
     ): Promise<CrossFileContextSnippet[]> {
         const allSnippets: CrossFileContextSnippet[] = [];
 
-        const client = new WarpGrepClient();
+        const client = new WarpGrepClient({ morphApiKey: process.env.API_MORPHLLM_API_KEY ?? '' });
 
         for (const query of queries) {
             try {
@@ -610,7 +610,7 @@ export class CollectCrossFileContextsService {
         }
 
         try {
-            const client = new WarpGrepClient();
+            const client = new WarpGrepClient({ morphApiKey: process.env.API_MORPHLLM_API_KEY ?? '' });
 
             // Extract function names only from high-risk hop 1 snippets
             const hop1FunctionNames = new Set<string>();
