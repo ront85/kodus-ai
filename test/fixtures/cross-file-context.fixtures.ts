@@ -38,6 +38,7 @@ export function createSamplePlannerQuery(
         rationale: string;
         riskLevel: 'low' | 'medium' | 'high';
         fileGlob: string;
+        sourceFile: string;
     }> = {},
 ) {
     return {
@@ -46,6 +47,7 @@ export function createSamplePlannerQuery(
         rationale: 'Callers of greet may break with the new type signature',
         riskLevel: 'high' as const,
         fileGlob: '**/*.ts',
+        sourceFile: 'src/utils/greet.ts',
         ...overrides,
     };
 }

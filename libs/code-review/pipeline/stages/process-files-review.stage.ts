@@ -410,6 +410,13 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         const diffIdentifiers = this.extractDiffIdentifiers(diff);
 
         return allSnippets.filter((snippet) => {
+            // Direct file targeting — replaces text heuristics when available
+            if (snippet.targetFiles?.length) {
+                return snippet.targetFiles.includes(file.filename);
+            }
+
+            // Fallback: existing text-based matching for snippets without targetFiles
+
             // Hop-1 snippets always pass — the planner already validated
             // their relevance and filtering them out loses critical
             // cross-file evidence (e.g. a consumer using a string literal

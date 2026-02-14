@@ -15,6 +15,7 @@ export const CrossFileContextPlannerSchema = z.object({
                 riskLevel: z.enum(['low', 'medium', 'high']),
                 symbolName: z.string().optional(),
                 fileGlob: z.string().optional(),
+                sourceFile: z.string().min(1),
             }),
         )
         .max(8),
@@ -69,6 +70,7 @@ Return a JSON object with a "queries" array. Each query has:
 - riskLevel: "low" | "medium" | "high"
 - symbolName: (optional) the primary symbol name
 - fileGlob: (optional) glob to filter files, e.g. "*.ts"
+- sourceFile: the changed file where the symbol was modified (from the "Changed Files" list)
 
 ## Language
 All rationale text must be in ${payload.language || 'en-US'}.

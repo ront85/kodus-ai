@@ -59,6 +59,7 @@ export type CrossFileContextSnippet = {
     riskLevel: 'low' | 'medium' | 'high';
     startLine?: number;
     endLine?: number;
+    targetFiles?: string[];
 };
 
 export type CollectCrossFileContextsResult = {
@@ -504,6 +505,7 @@ export class CollectCrossFileContextsService {
                         relationship: `consumer of ${query.symbolName || query.pattern}`,
                         hop: 1,
                         riskLevel: query.riskLevel,
+                        targetFiles: [query.sourceFile],
                     });
                 }
             } catch (error) {
@@ -614,10 +616,16 @@ export class CollectCrossFileContextsService {
 
             // Extract function names only from high-risk hop 1 snippets
             const hop1FunctionNames = new Set<string>();
+            const funcToTargetFiles = new Map<string, Set<string>>();
             for (const snippet of highRiskSnippets) {
                 const funcNames =
                     this.extractFunctionNames(snippet.content);
-                funcNames.forEach((name) => hop1FunctionNames.add(name));
+                for (const name of funcNames) {
+                    hop1FunctionNames.add(name);
+                    const existing = funcToTargetFiles.get(name) || new Set<string>();
+                    snippet.targetFiles?.forEach(f => existing.add(f));
+                    funcToTargetFiles.set(name, existing);
+                }
             }
 
             // For each function found in hop 1, search for its callers
@@ -662,6 +670,7 @@ export class CollectCrossFileContextsService {
                             relationship: `indirect consumer (hop 2) of ${funcName}`,
                             hop: 2,
                             riskLevel: 'high',
+                            targetFiles: [...(funcToTargetFiles.get(funcName) || [])],
                         });
                     }
                 } catch (error) {
@@ -717,13 +726,24 @@ export class CollectCrossFileContextsService {
                 }
 
                 // Check for content overlap with already-merged snippets from same file
-                const isDuplicate = merged.some(
+                const existingDuplicate = merged.find(
                     (m) =>
                         m.filePath === filePath &&
                         this.hasContentOverlap(m.content, snippet.content),
                 );
 
-                if (isDuplicate) continue;
+                if (existingDuplicate) {
+                    // Merge targetFiles from the duplicate into the survivor
+                    if (snippet.targetFiles?.length) {
+                        existingDuplicate.targetFiles = [
+                            ...new Set([
+                                ...(existingDuplicate.targetFiles || []),
+                                ...snippet.targetFiles,
+                            ]),
+                        ];
+                    }
+                    continue;
+                }
 
                 totalChars += snippet.content.length;
                 merged.push(snippet);
