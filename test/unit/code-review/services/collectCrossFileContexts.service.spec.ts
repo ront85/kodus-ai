@@ -185,6 +185,53 @@ describe('CollectCrossFileContextsService', () => {
         it('should return empty array for empty input', () => {
             expect(dedup([])).toEqual([]);
         });
+
+        it('should merge targetFiles when deduplicating overlapping snippets', () => {
+            const shared = 'export function greet(name: string) { return name; }';
+            const snippets = [
+                createSampleSnippet({
+                    filePath: 'a.ts',
+                    content: shared,
+                    relevanceScore: 90,
+                    targetFiles: ['src/handler.ts'],
+                }),
+                createSampleSnippet({
+                    filePath: 'a.ts',
+                    content: shared,
+                    relevanceScore: 70,
+                    targetFiles: ['src/controller.ts'],
+                }),
+            ];
+
+            const result = dedup(snippets);
+            expect(result).toHaveLength(1);
+            expect(result[0].targetFiles).toEqual(
+                expect.arrayContaining(['src/handler.ts', 'src/controller.ts']),
+            );
+            expect(result[0].targetFiles).toHaveLength(2);
+        });
+
+        it('should deduplicate targetFiles entries during merge', () => {
+            const shared = 'export function greet(name: string) { return name; }';
+            const snippets = [
+                createSampleSnippet({
+                    filePath: 'a.ts',
+                    content: shared,
+                    relevanceScore: 90,
+                    targetFiles: ['src/handler.ts'],
+                }),
+                createSampleSnippet({
+                    filePath: 'a.ts',
+                    content: shared,
+                    relevanceScore: 70,
+                    targetFiles: ['src/handler.ts', 'src/controller.ts'],
+                }),
+            ];
+
+            const result = dedup(snippets);
+            expect(result).toHaveLength(1);
+            expect(result[0].targetFiles).toHaveLength(2);
+        });
     });
 
     describe('extractFunctionNames()', () => {
@@ -793,6 +840,37 @@ const greet = () => {}
             if (result.length > 0) {
                 expect(result[0].hop).toBe(2);
                 expect(result[0].relevanceScore).toBe(70); // 80 - 10
+            }
+        });
+
+        it('should propagate targetFiles from hop1 to hop2 snippets', async () => {
+            const mockExecute = jest.fn().mockResolvedValue({
+                success: true,
+                contexts: [
+                    { file: 'src/hop2.ts', content: 'hop2 content' },
+                ],
+            });
+            WarpGrepClient.mockImplementation(() => ({
+                execute: mockExecute,
+            }));
+
+            const hop1Snippets = [
+                createSampleSnippet({
+                    riskLevel: 'high',
+                    content: 'function processRequest() {}',
+                    targetFiles: ['src/changed-file.ts'],
+                }),
+            ];
+
+            const result = await executeHop2(
+                hop1Snippets,
+                createMockRemoteCommands() as any,
+                new Set(),
+                '.',
+            );
+
+            if (result.length > 0) {
+                expect(result[0].targetFiles).toEqual(['src/changed-file.ts']);
             }
         });
     });

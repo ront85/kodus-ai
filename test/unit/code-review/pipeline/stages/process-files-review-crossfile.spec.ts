@@ -186,6 +186,61 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
             expect(result).toHaveLength(1);
         });
 
+        it('should use targetFiles as primary filter when populated', () => {
+            const file = createSampleFileChange({
+                filename: 'src/handler.ts',
+                patchWithLinesStr: '+some code',
+            });
+            const snippets = [
+                createSampleSnippet({
+                    relatedSymbol: 'greet',
+                    targetFiles: ['src/handler.ts'],
+                }),
+                createSampleSnippet({
+                    relatedSymbol: 'greet',
+                    targetFiles: ['src/other.ts'],
+                    filePath: 'other-consumer.ts',
+                }),
+            ];
+
+            const result = filterSnippets(snippets, file);
+            expect(result).toHaveLength(1);
+            expect(result[0].targetFiles).toEqual(['src/handler.ts']);
+        });
+
+        it('should fall back to text heuristics when targetFiles is not populated', () => {
+            const file = createSampleFileChange({
+                filename: 'src/handler.ts',
+                patchWithLinesStr: '+import { greet } from "./utils";',
+            });
+            const snippets = [
+                createSampleSnippet({
+                    relatedSymbol: 'greet',
+                    // no targetFiles — backward compat
+                }),
+            ];
+
+            const result = filterSnippets(snippets, file);
+            // Should still pass via text-based matching (hop=1 pass-through)
+            expect(result).toHaveLength(1);
+        });
+
+        it('should exclude snippet when targetFiles is populated but does not include file', () => {
+            const file = createSampleFileChange({
+                filename: 'src/handler.ts',
+                patchWithLinesStr: '+import { greet } from "./utils";\n+greet("world");',
+            });
+            const snippets = [
+                createSampleSnippet({
+                    relatedSymbol: 'greet',
+                    targetFiles: ['src/completely-different.ts'],
+                }),
+            ];
+
+            const result = filterSnippets(snippets, file);
+            expect(result).toHaveLength(0);
+        });
+
         it('should route different snippets to different files based on their diff', () => {
             const fileA = createSampleFileChange({
                 filename: 'handler.ts',
