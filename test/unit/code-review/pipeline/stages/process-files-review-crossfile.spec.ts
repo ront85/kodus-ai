@@ -134,7 +134,7 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
             expect(result[0].relatedSymbol).toBe('greet');
         });
 
-        it('should include snippets with undefined relatedSymbol (pass-through)', () => {
+        it('should exclude snippets with undefined relatedSymbol when no targetFiles', () => {
             const file = createSampleFileChange({
                 patchWithLinesStr: '+some code change',
             });
@@ -143,7 +143,7 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
             ];
 
             const result = filterSnippets(snippets, file);
-            expect(result).toHaveLength(1);
+            expect(result).toHaveLength(0);
         });
 
         it('should match compound symbol parts (e.g. PlanType.PREMIUM matches PlanType)', () => {
@@ -269,17 +269,17 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
             const resultA = filterSnippets(allSnippets, fileA);
             const resultB = filterSnippets(allSnippets, fileB);
 
-            // fileA gets EventBus snippet + config (no symbol)
+            // fileA gets only EventBus snippet (config has no relatedSymbol → excluded)
             expect(resultA.map((s: CrossFileContextSnippet) => s.filePath)).toEqual(
-                expect.arrayContaining(['event-bus.ts', 'config.ts']),
+                ['event-bus.ts'],
             );
-            expect(resultA).toHaveLength(2);
+            expect(resultA).toHaveLength(1);
 
-            // fileB gets cacheKey snippet + config (no symbol)
+            // fileB gets only cacheKey snippet (config has no relatedSymbol → excluded)
             expect(resultB.map((s: CrossFileContextSnippet) => s.filePath)).toEqual(
-                expect.arrayContaining(['cache-keys.ts', 'config.ts']),
+                ['cache-keys.ts'],
             );
-            expect(resultB).toHaveLength(2);
+            expect(resultB).toHaveLength(1);
         });
     });
 
