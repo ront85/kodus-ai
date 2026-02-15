@@ -711,6 +711,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             relevantContent,
             patchWithLinesStr,
             reviewModeResponse,
+            context.crossFileSnippets,
         );
 
         safeguardLLMProvider = safeGuardResult.safeguardLLMProvider;
@@ -980,6 +981,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         relevantContent,
         patchWithLinesStr: string,
         reviewModeResponse: any,
+        crossFileSnippets?: CrossFileContextSnippet[],
     ): Promise<{
         safeguardSuggestions: Partial<CodeSuggestion>[];
         allDiscardedSuggestions: Partial<CodeSuggestion>[];
@@ -1021,6 +1023,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 context?.codeReviewConfig?.languageResultPrompt,
                 reviewModeResponse,
                 context?.codeReviewConfig?.byokConfig,
+                crossFileSnippets,
             );
 
         const safeguardLLMProvider =

@@ -20,6 +20,8 @@ import {
     prompt_codeReviewSafeguard_system,
     prompt_validateImplementedSuggestions,
 } from '@libs/common/utils/langchainCommon/prompts';
+import { SAFEGUARD_CROSS_FILE_CONTEXT_PREAMBLE } from '@libs/common/utils/langchainCommon/prompts/codeReviewSafeguard';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import {
     prompt_codereview_system_gemini,
     prompt_codereview_system_gemini_v2,
@@ -64,9 +66,19 @@ export class LLMAnalysisService implements IAIAnalysisService {
         filePath: string;
         suggestions?: CodeSuggestion[];
         reviewMode: ReviewModeResponse;
+        crossFileSnippets?: CrossFileContextSnippet[];
     }) {
         if (!context?.patchWithLinesStr) {
             throw new Error('Required context parameters are missing');
+        }
+
+        let crossFileBlock = '';
+        if (context.crossFileSnippets?.length) {
+            const snippetLines = context.crossFileSnippets.map(
+                (s) =>
+                    `#### ${s.filePath}${s.relatedSymbol ? ` (symbol: ${s.relatedSymbol})` : ''}\n**Rationale:** ${s.rationale}\n\`\`\`\n${s.content}\n\`\`\``,
+            );
+            crossFileBlock = `\n\n<codebaseContext>\n${SAFEGUARD_CROSS_FILE_CONTEXT_PREAMBLE}\n${snippetLines.join('\n\n')}\n</codebaseContext>`;
         }
 
         return `
@@ -86,7 +98,7 @@ export class LLMAnalysisService implements IAIAnalysisService {
 
 <suggestionsContext>
 ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
-</suggestionsContext>`;
+</suggestionsContext>${crossFileBlock}`;
     }
 
     //#endregion
@@ -591,6 +603,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
         languageResultPrompt: string,
         reviewMode: ReviewModeResponse,
         byokConfig: BYOKConfig,
+        crossFileSnippets?: CrossFileContextSnippet[],
     ): Promise<ISafeguardResponse> {
         const runName = 'filterSuggestionsSafeGuard';
 
@@ -625,6 +638,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
             suggestions,
             languageResultPrompt,
             reviewMode,
+            crossFileSnippets,
         };
 
         const spanName = `${LLMAnalysisService.name}::${runName}`;

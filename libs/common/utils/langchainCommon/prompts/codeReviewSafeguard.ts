@@ -257,3 +257,14 @@ DISCUSSION
 
 Start analysis`;
 };
+
+/**
+ * Additional context block injected into the safeguard user prompt when
+ * cross-file snippets are available for the file under review.
+ * Kept concise — the panel only needs to know this is real code
+ * that should be considered as extra evidence when evaluating suggestions.
+ */
+export const SAFEGUARD_CROSS_FILE_CONTEXT_PREAMBLE = `### Codebase Context (additional evidence)
+
+The snippets below are **real code from the repository** — callers, consumers, or dependents of the code being changed in this PR. Use them as extra evidence when evaluating each suggestion. If a suggestion addresses a real breakage visible in these snippets, that is strong evidence to **keep** it. If a suggestion contradicts what these snippets show, that is evidence to **discard** it.
+`;
