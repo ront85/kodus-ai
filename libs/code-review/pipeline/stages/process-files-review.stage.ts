@@ -415,50 +415,53 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 return snippet.targetFiles.includes(file.filename);
             }
 
-            // Fallback: existing text-based matching for snippets without targetFiles
-
-            // Hop-1 snippets always pass — the planner already validated
-            // their relevance and filtering them out loses critical
-            // cross-file evidence (e.g. a consumer using a string literal
-            // that was renamed in the diff — the very mismatch that makes
-            // it a bug also prevents text-based matching).
-            if (snippet.hop === 1) {
-                return true;
-            }
-
-            // Snippets without relatedSymbol pass through — the planner
-            // already deemed them relevant; let the LLM judge per-file.
-            if (!snippet.relatedSymbol) {
-                return true;
-            }
-
-            // Forward match: snippet's relatedSymbol appears in this file's diff
-            if (diff.includes(snippet.relatedSymbol)) {
-                return true;
-            }
-
-            // Split compound symbols (e.g. "PlanType.PREMIUM") and match parts.
-            // Skip short tokens (<3 chars) to avoid false positives.
-            const parts = snippet.relatedSymbol
-                .split('.')
-                .filter((p) => p.length >= 3);
-
-            if (parts.some((part) => diff.includes(part))) {
-                return true;
-            }
-
-            // Reverse match: this file defines/changes symbols that appear in the snippet's content.
-            // Catches cases like: notificationEvents.ts changes NOTIFICATION_EVENTS,
-            // and PaymentService snippet references NOTIFICATION_EVENTS.
-            if (
-                diffIdentifiers.length > 0 &&
-                diffIdentifiers.some((id) => snippet.content.includes(id))
-            ) {
-                return true;
-            }
-
-            return false;
+            // Fallback: same text-based matching for both hop 1 and hop 2
+            return this.matchSnippetByTextHeuristics(snippet, diff, diffIdentifiers);
         });
+    }
+
+    /**
+     * Text-based heuristic to determine if a snippet is relevant to a file's diff.
+     * Used as fallback when targetFiles is not available (backward compat).
+     * Applied equally to hop 1 and hop 2 snippets.
+     */
+    private matchSnippetByTextHeuristics(
+        snippet: CrossFileContextSnippet,
+        diff: string,
+        diffIdentifiers: string[],
+    ): boolean {
+        // Snippets without relatedSymbol pass through — the planner
+        // already deemed them relevant; let the LLM judge per-file.
+        if (!snippet.relatedSymbol) {
+            return false;
+        }
+
+        // Forward match: snippet's relatedSymbol appears in this file's diff
+        if (diff.includes(snippet.relatedSymbol)) {
+            return true;
+        }
+
+        // Split compound symbols (e.g. "PlanType.PREMIUM") and match parts.
+        // Skip short tokens (<3 chars) to avoid false positives.
+        const parts = snippet.relatedSymbol
+            .split('.')
+            .filter((p) => p.length >= 3);
+
+        if (parts.some((part) => diff.includes(part))) {
+            return true;
+        }
+
+        // Reverse match: this file defines/changes symbols that appear in the snippet's content.
+        // Catches cases like: notificationEvents.ts changes NOTIFICATION_EVENTS,
+        // and PaymentService snippet references NOTIFICATION_EVENTS.
+        if (
+            diffIdentifiers.length > 0 &&
+            diffIdentifiers.some((id) => snippet.content.includes(id))
+        ) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
