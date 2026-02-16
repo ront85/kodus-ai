@@ -231,6 +231,7 @@ export type FileChange = {
         safeguard?: string;
     };
     patchWithLinesStr?: string;
+    astFormattedContent?: string;
 };
 
 export type FileChangeContext = {

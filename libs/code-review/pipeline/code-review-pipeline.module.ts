@@ -52,6 +52,7 @@ import { CodeReviewJobProcessorService } from '../workflow/code-review-job-proce
 import { ImplementationVerificationProcessor } from '../workflow/implementation-verification.processor';
 import { LOAD_EXTERNAL_CONTEXT_STAGE_TOKEN } from './stages/contracts/loadExternalContextStage.contract';
 import { ValidateSuggestionsStage } from './stages/validate-suggestions.stage';
+import { ASTContentFormatterService } from '../infrastructure/adapters/services/astContentFormatter.service';
 import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.strategy';
 
 @Module({
@@ -98,6 +99,7 @@ import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.stra
         CollectCrossFileContextStage,
         ProcessFilesPrLevelReviewStage,
         ProcessFilesReview,
+        ASTContentFormatterService,
         CreatePrLevelCommentsStage,
         CreateFileCommentsStage,
         AggregateResultsStage,

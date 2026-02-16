@@ -40,6 +40,7 @@ import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/pri
 import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
 import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
+import { ASTContentFormatterService } from '@libs/code-review/infrastructure/adapters/services/astContentFormatter.service';
 import { CodeAnalysisOrchestrator } from '@libs/ee/codeBase/codeAnalysisOrchestrator.service';
 import {
     CodeReviewPipelineContext,
@@ -83,6 +84,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         private readonly kodyAstAnalyzeContextPreparation: IKodyASTAnalyzeContextPreparationService,
 
         private readonly codeAnalysisOrchestrator: CodeAnalysisOrchestrator,
+
+        private readonly astContentFormatter: ASTContentFormatterService,
     ) {
         super();
     }
@@ -341,6 +344,22 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         tasks: AnalysisContext['tasks'],
     ): Promise<FileProcessingResult[]> {
         const { organizationAndTeamData, pullRequest } = context;
+
+        // Fetch AST formatted content for this batch
+        const astResults = await this.astContentFormatter.fetchFormattedContent(
+            batch,
+            context,
+        );
+
+        // Attach AST results to files before preparing contexts
+        if (astResults.size > 0) {
+            for (const file of batch) {
+                const astResult = astResults.get(file.filename);
+                if (astResult) {
+                    file.astFormattedContent = astResult.content;
+                }
+            }
+        }
 
         const preparedFiles = await this.filterAndPrepareFiles(batch, context);
 

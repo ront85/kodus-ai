@@ -110,6 +110,15 @@ export class FileReviewContextPreparation extends BaseFileReviewContextPreparati
         hasRelevantContent?: boolean;
     }> {
         try {
+            // Use AST formatted content when available (set by ASTContentFormatterService)
+            if (file.astFormattedContent) {
+                return {
+                    relevantContent: file.astFormattedContent,
+                    hasRelevantContent: true,
+                    taskStatus: TaskStatus.TASK_STATUS_COMPLETED,
+                };
+            }
+
             const { taskId } = context.tasks.astAnalysis;
 
             if (!taskId) {
