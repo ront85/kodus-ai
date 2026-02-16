@@ -6,13 +6,16 @@ import { FILE_REVIEW_CONTEXT_PREPARATION_TOKEN } from '@/core/domain/interfaces/
 import { KODY_FINE_TUNING_CONTEXT_PREPARATION_TOKEN } from '@/core/domain/interfaces/kody-fine-tuning-context-preparation.interface';
 import { KODY_AST_ANALYZE_CONTEXT_PREPARATION_TOKEN } from '@/core/domain/interfaces/kody-ast-analyze-context-preparation.interface';
 import { CodeAnalysisOrchestrator } from '@/ee/codeBase/codeAnalysisOrchestrator.service';
+import { ASTContentFormatterService } from '@/code-review/infrastructure/adapters/services/astContentFormatter.service';
 import { PriorityStatus } from '@/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import { DeliveryStatus } from '@/platformData/domain/pullRequests/enums/deliveryStatus.enum';
 import {
     AnalysisContext,
     AIAnalysisResult,
     CodeSuggestion,
+    FileChange,
 } from '@/core/infrastructure/config/types/general/codeReview.type';
+import { FileContentFlag } from '@/ee/kodyAST/interfaces/code-ast-analysis.interface';
 
 jest.mock('@kodus/flow', () => ({
     createLogger: () => ({
@@ -59,6 +62,10 @@ describe('ProcessFilesReview', () => {
         executeKodyRulesAnalysis: jest.fn(),
     };
 
+    const mockAstContentFormatter = {
+        fetchFormattedContent: jest.fn(),
+    };
+
     const mockOrganizationAndTeamData = {
         organizationId: 'org-123',
         teamId: 'team-456',
@@ -91,6 +98,10 @@ describe('ProcessFilesReview', () => {
                 {
                     provide: CodeAnalysisOrchestrator,
                     useValue: mockCodeAnalysisOrchestrator,
+                },
+                {
+                    provide: ASTContentFormatterService,
+                    useValue: mockAstContentFormatter,
                 },
             ],
         }).compile();
@@ -418,6 +429,276 @@ describe('ProcessFilesReview', () => {
             const validIds = result.validSuggestionsToAnalyze.map((s) => s.id);
             expect(validIds).not.toContain('cf-1'); // discarded by severity
             expect(validIds).not.toContain('cf-2'); // different file, never processed
+        });
+    });
+
+    describe('AST content formatter integration in processSingleBatch', () => {
+        function createFile(filename: string): FileChange {
+            return {
+                content: null,
+                sha: 'abc',
+                filename,
+                status: 'modified',
+                additions: 1,
+                deletions: 0,
+                changes: 1,
+                blob_url: '',
+                raw_url: '',
+                contents_url: '',
+                patch: '@@ -1,3 +1,3 @@\n-old\n+new',
+                fileContent: `original content of ${filename}`,
+            } as FileChange;
+        }
+
+        function createBatchContext(): AnalysisContext {
+            return {
+                organizationAndTeamData: mockOrganizationAndTeamData as any,
+                pullRequest: {
+                    number: 42,
+                    base: { repo: { fullName: 'org/repo' } },
+                    repository: { id: 'repo-1', fullName: 'org/repo' },
+                },
+                platformType: 'github',
+                codeReviewConfig: { reviewOptions: {} } as any,
+                tasks: { astAnalysis: { taskId: 'task-1' } },
+            } as any;
+        }
+
+        it('should attach AST formatted content to files when AST returns results', async () => {
+            const file = createFile('src/app.ts');
+            const astResultMap = new Map([
+                [
+                    'src/app.ts',
+                    {
+                        content: 'AST formatted content',
+                        flag: FileContentFlag.DIFF,
+                    },
+                ],
+            ]);
+            mockAstContentFormatter.fetchFormattedContent.mockResolvedValue(
+                astResultMap,
+            );
+
+            // prepareFileContext captures the file passed to it
+            let capturedFile: FileChange | null = null;
+            mockFileReviewContextPreparation.prepareFileContext.mockImplementation(
+                (f: FileChange, ctx: AnalysisContext) => {
+                    capturedFile = { ...f }; // snapshot before cleanup
+                    return Promise.resolve({
+                        fileContext: {
+                            ...ctx,
+                            fileChangeContext: {
+                                file: f,
+                                relevantContent: f.astFormattedContent || f.fileContent,
+                                patchWithLinesStr: '@@ -1,3 +1,3 @@\n-old\n+new',
+                                hasRelevantContent: !!f.astFormattedContent,
+                            },
+                            tasks: {
+                                astAnalysis: {
+                                    taskId: 'task-1',
+                                    status: 3,
+                                },
+                            },
+                        },
+                    });
+                },
+            );
+
+            mockCodeAnalysisOrchestrator.executeStandardAnalysis.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+            mockSuggestionService.filterCodeSuggestionsByReviewOptions.mockReturnValue(
+                { codeSuggestions: [] },
+            );
+            mockSuggestionService.filterSuggestionsCodeDiff.mockReturnValue([]);
+            mockSuggestionService.getDiscardedSuggestions.mockReturnValue([]);
+            mockKodyFineTuningContextPreparation.prepareKodyFineTuningContext.mockResolvedValue(
+                { keepedSuggestions: [], discardedSuggestions: [] },
+            );
+            mockSuggestionService.filterSuggestionsSafeGuard.mockResolvedValue({
+                suggestions: [],
+                codeReviewModelUsed: { safeguard: '' },
+            });
+            mockSuggestionService.analyzeSuggestionsSeverity.mockResolvedValue(
+                [],
+            );
+            mockCodeAnalysisOrchestrator.executeKodyRulesAnalysis.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+            mockKodyAstAnalyzeContextPreparation.prepareKodyASTAnalyzeContext.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+
+            const context = createBatchContext();
+            const tasks = { astAnalysis: { taskId: 'task-1' } };
+
+            await (stage as any).processSingleBatch(
+                [file],
+                context,
+                0,
+                tasks,
+            );
+
+            // prepareFileContext should have received the file WITH astFormattedContent
+            expect(capturedFile).not.toBeNull();
+            expect(capturedFile!.astFormattedContent).toBe(
+                'AST formatted content',
+            );
+        });
+
+        it('should NOT attach AST content when AST returns empty map (fallback)', async () => {
+            const file = createFile('src/app.ts');
+            mockAstContentFormatter.fetchFormattedContent.mockResolvedValue(
+                new Map(),
+            );
+
+            let capturedFile: FileChange | null = null;
+            mockFileReviewContextPreparation.prepareFileContext.mockImplementation(
+                (f: FileChange, ctx: AnalysisContext) => {
+                    capturedFile = { ...f };
+                    return Promise.resolve({
+                        fileContext: {
+                            ...ctx,
+                            fileChangeContext: {
+                                file: f,
+                                relevantContent: f.fileContent,
+                                patchWithLinesStr: '@@ -1,3 +1,3 @@\n-old\n+new',
+                                hasRelevantContent: false,
+                            },
+                            tasks: {
+                                astAnalysis: {
+                                    taskId: 'task-1',
+                                    status: 3,
+                                },
+                            },
+                        },
+                    });
+                },
+            );
+
+            mockCodeAnalysisOrchestrator.executeStandardAnalysis.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+            mockSuggestionService.filterCodeSuggestionsByReviewOptions.mockReturnValue(
+                { codeSuggestions: [] },
+            );
+            mockSuggestionService.filterSuggestionsCodeDiff.mockReturnValue([]);
+            mockSuggestionService.getDiscardedSuggestions.mockReturnValue([]);
+            mockKodyFineTuningContextPreparation.prepareKodyFineTuningContext.mockResolvedValue(
+                { keepedSuggestions: [], discardedSuggestions: [] },
+            );
+            mockSuggestionService.filterSuggestionsSafeGuard.mockResolvedValue({
+                suggestions: [],
+                codeReviewModelUsed: { safeguard: '' },
+            });
+            mockSuggestionService.analyzeSuggestionsSeverity.mockResolvedValue(
+                [],
+            );
+            mockCodeAnalysisOrchestrator.executeKodyRulesAnalysis.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+            mockKodyAstAnalyzeContextPreparation.prepareKodyASTAnalyzeContext.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+
+            const context = createBatchContext();
+            const tasks = { astAnalysis: { taskId: 'task-1' } };
+
+            await (stage as any).processSingleBatch(
+                [file],
+                context,
+                0,
+                tasks,
+            );
+
+            // File should NOT have astFormattedContent
+            expect(capturedFile).not.toBeNull();
+            expect(capturedFile!.astFormattedContent).toBeUndefined();
+        });
+
+        it('should clean up astFormattedContent from files after filterAndPrepareFiles', async () => {
+            const file1 = createFile('src/a.ts');
+            const file2 = createFile('src/b.ts');
+
+            const astResultMap = new Map([
+                [
+                    'src/a.ts',
+                    { content: 'formatted a', flag: FileContentFlag.DIFF },
+                ],
+                [
+                    'src/b.ts',
+                    { content: 'formatted b', flag: FileContentFlag.FULL },
+                ],
+            ]);
+            mockAstContentFormatter.fetchFormattedContent.mockResolvedValue(
+                astResultMap,
+            );
+
+            mockFileReviewContextPreparation.prepareFileContext.mockImplementation(
+                (f: FileChange, ctx: AnalysisContext) => {
+                    return Promise.resolve({
+                        fileContext: {
+                            ...ctx,
+                            fileChangeContext: {
+                                file: f,
+                                relevantContent: f.astFormattedContent || f.fileContent,
+                                patchWithLinesStr: '@@ -1,3 +1,3 @@\n-old\n+new',
+                                hasRelevantContent: !!f.astFormattedContent,
+                            },
+                            tasks: {
+                                astAnalysis: {
+                                    taskId: 'task-1',
+                                    status: 3,
+                                },
+                            },
+                        },
+                    });
+                },
+            );
+
+            mockCodeAnalysisOrchestrator.executeStandardAnalysis.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+            mockSuggestionService.filterCodeSuggestionsByReviewOptions.mockReturnValue(
+                { codeSuggestions: [] },
+            );
+            mockSuggestionService.filterSuggestionsCodeDiff.mockReturnValue([]);
+            mockSuggestionService.getDiscardedSuggestions.mockReturnValue([]);
+            mockKodyFineTuningContextPreparation.prepareKodyFineTuningContext.mockResolvedValue(
+                { keepedSuggestions: [], discardedSuggestions: [] },
+            );
+            mockSuggestionService.filterSuggestionsSafeGuard.mockResolvedValue({
+                suggestions: [],
+                codeReviewModelUsed: { safeguard: '' },
+            });
+            mockSuggestionService.analyzeSuggestionsSeverity.mockResolvedValue(
+                [],
+            );
+            mockCodeAnalysisOrchestrator.executeKodyRulesAnalysis.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+            mockKodyAstAnalyzeContextPreparation.prepareKodyASTAnalyzeContext.mockResolvedValue(
+                { codeSuggestions: [] },
+            );
+
+            const batch = [file1, file2];
+            const context = createBatchContext();
+            const tasks = { astAnalysis: { taskId: 'task-1' } };
+
+            await (stage as any).processSingleBatch(
+                batch,
+                context,
+                0,
+                tasks,
+            );
+
+            // After processSingleBatch, astFormattedContent must be deleted from all files
+            expect(file1.astFormattedContent).toBeUndefined();
+            expect(file2.astFormattedContent).toBeUndefined();
+
+            // But original fileContent must still be intact
+            expect(file1.fileContent).toBe('original content of src/a.ts');
+            expect(file2.fileContent).toBe('original content of src/b.ts');
         });
     });
 });

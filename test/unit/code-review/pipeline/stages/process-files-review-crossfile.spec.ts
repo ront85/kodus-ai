@@ -6,6 +6,7 @@ import { FILE_REVIEW_CONTEXT_PREPARATION_TOKEN } from '@libs/core/domain/interfa
 import { KODY_FINE_TUNING_CONTEXT_PREPARATION_TOKEN } from '@libs/core/domain/interfaces/kody-fine-tuning-context-preparation.interface';
 import { KODY_AST_ANALYZE_CONTEXT_PREPARATION_TOKEN } from '@libs/core/domain/interfaces/kody-ast-analyze-context-preparation.interface';
 import { CodeAnalysisOrchestrator } from '@libs/ee/codeBase/codeAnalysisOrchestrator.service';
+import { ASTContentFormatterService } from '@libs/code-review/infrastructure/adapters/services/astContentFormatter.service';
 import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import {
     createSampleFileChange,
@@ -72,6 +73,12 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
                     useValue: {
                         executeStandardAnalysis: jest.fn(),
                         executeKodyRulesAnalysis: jest.fn(),
+                    },
+                },
+                {
+                    provide: ASTContentFormatterService,
+                    useValue: {
+                        fetchFormattedContent: jest.fn().mockResolvedValue(new Map()),
                     },
                 },
             ],
