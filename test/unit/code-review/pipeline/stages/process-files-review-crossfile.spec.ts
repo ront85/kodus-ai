@@ -283,6 +283,101 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
         });
     });
 
+    // ─── snippet pruning between batches ────────────────────────────────────
+
+    describe('processBatchesSequentially() — snippet pruning', () => {
+        const processBatches = (
+            batches: any[][],
+            context: any,
+        ) => {
+            // Spy on processSingleBatch to skip real file processing
+            jest.spyOn(stage as any, 'processSingleBatch').mockResolvedValue([]);
+
+            return (stage as any).processBatchesSequentially(
+                batches,
+                context,
+                { astAnalysis: {} },
+                [],
+                [],
+                new Map(),
+                [],
+            );
+        };
+
+        it('should prune snippets whose targetFiles are all processed after a batch', async () => {
+            const snippetForFileA = createSampleSnippet({
+                filePath: 'consumer.ts',
+                targetFiles: ['src/fileA.ts'],
+            });
+            const snippetForFileB = createSampleSnippet({
+                filePath: 'other-consumer.ts',
+                targetFiles: ['src/fileB.ts'],
+            });
+
+            const context = {
+                pullRequest: { number: 1 },
+                crossFileSnippets: [snippetForFileA, snippetForFileB],
+            };
+
+            const batch1 = [createSampleFileChange({ filename: 'src/fileA.ts' })];
+            const batch2 = [createSampleFileChange({ filename: 'src/fileB.ts' })];
+
+            await processBatches([batch1, batch2], context);
+
+            // After both batches, all snippets should be pruned
+            expect(context.crossFileSnippets).toHaveLength(0);
+        });
+
+        it('should keep snippets that still have unprocessed targetFiles', async () => {
+            const snippetForBoth = createSampleSnippet({
+                filePath: 'consumer.ts',
+                targetFiles: ['src/fileA.ts', 'src/fileB.ts'],
+            });
+            const snippetForA = createSampleSnippet({
+                filePath: 'other.ts',
+                targetFiles: ['src/fileA.ts'],
+            });
+
+            const context = {
+                pullRequest: { number: 1 },
+                crossFileSnippets: [snippetForBoth, snippetForA],
+            };
+
+            const batch1 = [createSampleFileChange({ filename: 'src/fileA.ts' })];
+
+            await processBatches([batch1], context);
+
+            // snippetForA should be pruned (only target was fileA)
+            // snippetForBoth should remain (fileB not yet processed)
+            expect(context.crossFileSnippets).toHaveLength(1);
+            expect(context.crossFileSnippets[0].filePath).toBe('consumer.ts');
+        });
+
+        it('should keep snippets without targetFiles (backward compat)', async () => {
+            const snippetWithTarget = createSampleSnippet({
+                filePath: 'consumer.ts',
+                targetFiles: ['src/fileA.ts'],
+            });
+            const snippetWithoutTarget = createSampleSnippet({
+                filePath: 'legacy.ts',
+                // no targetFiles
+            });
+
+            const context = {
+                pullRequest: { number: 1 },
+                crossFileSnippets: [snippetWithTarget, snippetWithoutTarget],
+            };
+
+            const batch1 = [createSampleFileChange({ filename: 'src/fileA.ts' })];
+
+            await processBatches([batch1], context);
+
+            // snippetWithTarget pruned, snippetWithoutTarget kept
+            expect(context.crossFileSnippets).toHaveLength(1);
+            expect(context.crossFileSnippets[0].filePath).toBe('legacy.ts');
+        });
+    });
+
     // ─── createAnalysisContextFromPipelineContext ───────────────────────────
 
     describe('createAnalysisContextFromPipelineContext()', () => {
