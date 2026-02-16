@@ -267,6 +267,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         fileMetadata: Map<string, any>,
         errors: PipelineError[],
     ): Promise<void> {
+        const processedFiles = new Set<string>();
+
         for (const [index, batch] of batches.entries()) {
             this.logger.log({
                 message: `Processing batch ${index + 1}/${batches.length} with ${batch.length} files`,
@@ -305,6 +307,29 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                         pullRequestNumber: context.pullRequest.number,
                     },
                 });
+            }
+
+            // Prune fully-consumed cross-file snippets between batches
+            for (const file of batch) {
+                processedFiles.add(file.filename);
+            }
+            if (context.crossFileSnippets?.length) {
+                const before = context.crossFileSnippets.length;
+                context.crossFileSnippets = context.crossFileSnippets.filter(
+                    (snippet) => {
+                        if (!snippet.targetFiles?.length) return true;
+                        return !snippet.targetFiles.every((f) =>
+                            processedFiles.has(f),
+                        );
+                    },
+                );
+                const pruned = before - context.crossFileSnippets.length;
+                if (pruned > 0) {
+                    this.logger.log({
+                        message: `Pruned ${pruned} fully-consumed cross-file snippets after batch ${index + 1} (${context.crossFileSnippets.length} remaining)`,
+                        context: ProcessFilesReview.name,
+                    });
+                }
             }
         }
     }
