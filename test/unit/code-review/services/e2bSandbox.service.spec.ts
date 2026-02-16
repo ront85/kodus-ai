@@ -313,7 +313,7 @@ describe('E2BSandboxService', () => {
                 const result = await remoteCommands.grep('myFunc\\(', 'src/index.ts');
 
                 expect(mockRun).toHaveBeenCalledWith(
-                    'rg --no-heading -n "myFunc\\(" /home/user/repo/src/index.ts',
+                    "rg --no-heading -n 'myFunc\\(' /home/user/repo/src/index.ts",
                     { timeoutMs: 30_000 },
                 );
                 expect(result).toBe('output');
@@ -323,7 +323,7 @@ describe('E2BSandboxService', () => {
                 await remoteCommands.grep('pattern', 'src', '*.ts');
 
                 expect(mockRun).toHaveBeenCalledWith(
-                    'rg --no-heading -n "pattern" /home/user/repo/src --glob "*.ts"',
+                    "rg --no-heading -n 'pattern' /home/user/repo/src --glob \"*.ts\"",
                     { timeoutMs: 30_000 },
                 );
             });
@@ -332,7 +332,7 @@ describe('E2BSandboxService', () => {
                 await remoteCommands.grep('pattern', '/tmp/other');
 
                 expect(mockRun).toHaveBeenCalledWith(
-                    'rg --no-heading -n "pattern" /tmp/other',
+                    "rg --no-heading -n 'pattern' /tmp/other",
                     { timeoutMs: 30_000 },
                 );
             });
