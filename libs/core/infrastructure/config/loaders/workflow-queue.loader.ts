@@ -11,7 +11,27 @@ export const WorkflowQueueLoader = registerAs(
     (): WorkflowQueueConfig => ({
         WORKFLOW_QUEUE_WORKER_PREFETCH: parseIntOrDefault(
             process.env.WORKFLOW_QUEUE_WORKER_PREFETCH,
-            60,
+            20,
+        ),
+        WORKFLOW_QUEUE_PUBLISHER_PREFETCH: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_PUBLISHER_PREFETCH,
+            5,
+        ),
+        WORKFLOW_QUEUE_WEBHOOK_PREFETCH: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_WEBHOOK_PREFETCH,
+            20,
+        ),
+        WORKFLOW_QUEUE_CODE_REVIEW_PREFETCH: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_CODE_REVIEW_PREFETCH,
+            20,
+        ),
+        WORKFLOW_QUEUE_CHECK_IMPLEMENTATION_PREFETCH: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_CHECK_IMPLEMENTATION_PREFETCH,
+            20,
+        ),
+        WORKFLOW_QUEUE_FEEDBACK_PREFETCH: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_FEEDBACK_PREFETCH,
+            20,
         ),
         WORKFLOW_QUEUE_WORKER_MAX_RETRIES: parseIntOrDefault(
             process.env.WORKFLOW_QUEUE_WORKER_MAX_RETRIES,
@@ -20,6 +40,22 @@ export const WorkflowQueueLoader = registerAs(
         WORKFLOW_QUEUE_WORKER_RETRY_DELAY_MS: parseIntOrDefault(
             process.env.WORKFLOW_QUEUE_WORKER_RETRY_DELAY_MS,
             1000,
+        ),
+        WORKFLOW_QUEUE_WEBHOOK_PROCESS_TIMEOUT_MS: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_WEBHOOK_PROCESS_TIMEOUT_MS,
+            10 * 60 * 1000,
+        ),
+        WORKFLOW_QUEUE_CODE_REVIEW_PROCESS_TIMEOUT_MS: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_CODE_REVIEW_PROCESS_TIMEOUT_MS,
+            2 * 60 * 60 * 1000,
+        ),
+        WORKFLOW_QUEUE_CHECK_IMPLEMENTATION_TIMEOUT_MS: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_CHECK_IMPLEMENTATION_TIMEOUT_MS,
+            10 * 60 * 1000,
+        ),
+        WORKFLOW_QUEUE_HANDLER_TIMEOUT_MS: parseIntOrDefault(
+            process.env.WORKFLOW_QUEUE_HANDLER_TIMEOUT_MS,
+            60000,
         ),
         WORKFLOW_QUEUE_CIRCUIT_BREAKER_FAILURE_THRESHOLD: parseIntOrDefault(
             process.env.WORKFLOW_QUEUE_CIRCUIT_BREAKER_FAILURE_THRESHOLD,

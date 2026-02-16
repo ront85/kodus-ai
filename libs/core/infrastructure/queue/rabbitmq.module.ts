@@ -90,8 +90,42 @@ export class RabbitMQWrapperModule {
                     enableControllerDiscovery: options.enableConsumers,
                     prefetchCount:
                         configService.get<number>(
+                            'workflowQueue.WORKFLOW_QUEUE_PUBLISHER_PREFETCH',
+                        ) ??
+                        configService.get<number>(
                             'workflowQueue.WORKFLOW_QUEUE_WORKER_PREFETCH',
-                        ) ?? 5,
+                        ) ??
+                        5,
+                    channels: {
+                        'channel-webhook': {
+                            prefetchCount:
+                                configService.get<number>(
+                                    'workflowQueue.WORKFLOW_QUEUE_WEBHOOK_PREFETCH',
+                                ) ?? 20,
+                            default: false,
+                        },
+                        'channel-code-review': {
+                            prefetchCount:
+                                configService.get<number>(
+                                    'workflowQueue.WORKFLOW_QUEUE_CODE_REVIEW_PREFETCH',
+                                ) ?? 20,
+                            default: false,
+                        },
+                        'channel-check-implementation': {
+                            prefetchCount:
+                                configService.get<number>(
+                                    'workflowQueue.WORKFLOW_QUEUE_CHECK_IMPLEMENTATION_PREFETCH',
+                                ) ?? 20,
+                            default: false,
+                        },
+                        'channel-feedback': {
+                            prefetchCount:
+                                configService.get<number>(
+                                    'workflowQueue.WORKFLOW_QUEUE_FEEDBACK_PREFETCH',
+                                ) ?? 20,
+                            default: false,
+                        },
+                    },
                 };
             },
             inject: [ConfigService],

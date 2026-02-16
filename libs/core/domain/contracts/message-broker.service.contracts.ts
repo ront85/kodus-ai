@@ -37,6 +37,8 @@ export type BrokerPublishOptions = {
 export const MESSAGE_BROKER_SERVICE_TOKEN = Symbol.for('MessageBrokerService');
 
 export interface IMessageBrokerService {
+    isConnected(): boolean;
+
     publishMessage(
         config: BrokerConfig,
         message: MessagePayload,
