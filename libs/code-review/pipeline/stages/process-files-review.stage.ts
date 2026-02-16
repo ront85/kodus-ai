@@ -363,6 +363,11 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
 
         const preparedFiles = await this.filterAndPrepareFiles(batch, context);
 
+        // Release AST formatted content — already consumed by getRelevantFileContent
+        for (const file of batch) {
+            delete file.astFormattedContent;
+        }
+
         const astFailed = preparedFiles.find((file) => {
             const task = file.fileContext.tasks?.astAnalysis;
             return task && task.status !== TaskStatus.TASK_STATUS_COMPLETED;
