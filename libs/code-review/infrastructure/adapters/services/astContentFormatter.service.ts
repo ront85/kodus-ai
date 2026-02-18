@@ -235,28 +235,45 @@ export class ASTContentFormatterService {
         taskId: string,
         context: AnalysisContext,
     ): Promise<GetContentFromDiffResponse | null> {
-        try {
-            const response =
-                await this.astAxios.get<GetContentFromDiffResponse>(
-                    `/api/ast/diff/content/result/${taskId}`,
-                    {
-                        headers: {
-                            'x-task-key':
-                                context.organizationAndTeamData?.organizationId,
-                        },
-                    },
-                );
+        const maxRetries = 3;
+        const retryDelayMs = 2_000;
 
-            return response;
-        } catch (error) {
-            this.logger.error({
-                message: `Failed to get AST diff content result for task ${taskId}`,
-                error,
-                context: ASTContentFormatterService.name,
-                metadata: { taskId },
-            });
-            return null;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response =
+                    await this.astAxios.get<GetContentFromDiffResponse>(
+                        `/api/ast/diff/content/result/${taskId}`,
+                        {
+                            headers: {
+                                'x-task-key':
+                                    context.organizationAndTeamData
+                                        ?.organizationId,
+                            },
+                        },
+                    );
+
+                return response;
+            } catch (error) {
+                const isLastAttempt = attempt === maxRetries;
+
+                this.logger.warn({
+                    message: `Failed to get AST diff content result for task ${taskId} (attempt ${attempt}/${maxRetries})`,
+                    error,
+                    context: ASTContentFormatterService.name,
+                    metadata: { taskId, attempt, maxRetries },
+                });
+
+                if (isLastAttempt) {
+                    return null;
+                }
+
+                await new Promise((resolve) =>
+                    setTimeout(resolve, retryDelayMs),
+                );
+            }
         }
+
+        return null;
     }
 
     /**
