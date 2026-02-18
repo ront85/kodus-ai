@@ -110,9 +110,11 @@ export interface InitializeContentFromDiffRequest {
 }
 
 export interface GetContentFromDiffResponse {
-    files: {
-        id: string;
-        content: string; // encrypted + gzipped
-        flag: FileContentFlag;
-    }[];
+    result: {
+        files: {
+            id: string;
+            content: string; // encrypted + gzipped
+            flag: FileContentFlag;
+        }[];
+    };
 }
