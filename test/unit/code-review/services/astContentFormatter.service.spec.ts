@@ -135,11 +135,11 @@ describe('ASTContentFormatterService', () => {
             mockPost.mockImplementation(async (_url, body) => {
                 // Configure GET to respond with the same IDs from POST
                 mockGet.mockResolvedValue({
-                    files: body.files.map((f: any) => ({
+                    result: { files: body.files.map((f: any) => ({
                         id: f.id,
                         content: encryptedResponse,
                         flag: FileContentFlag.DIFF,
-                    })),
+                    })) },
                 });
 
                 return { taskId: 'task-roundtrip' };
@@ -167,11 +167,11 @@ describe('ASTContentFormatterService', () => {
 
             mockPost.mockImplementation(async (_url, body) => {
                 mockGet.mockResolvedValue({
-                    files: body.files.map((f: any) => ({
+                    result: { files: body.files.map((f: any) => ({
                         id: f.id,
                         content: encryptedContent,
                         flag: FileContentFlag.FULL,
-                    })),
+                    })) },
                 });
                 return { taskId: 'task-filter' };
             });
@@ -228,7 +228,7 @@ describe('ASTContentFormatterService', () => {
 
             mockPost.mockImplementation(async (_url, body) => {
                 mockGet.mockResolvedValue({
-                    files: [
+                    result: { files: [
                         {
                             id: body.files[0].id,
                             content: formatted1,
@@ -239,7 +239,7 @@ describe('ASTContentFormatterService', () => {
                             content: formatted2,
                             flag: FileContentFlag.FULL,
                         },
-                    ],
+                    ] },
                 });
                 return { taskId: 'task-happy' };
             });
@@ -301,13 +301,13 @@ describe('ASTContentFormatterService', () => {
             mockPost.mockImplementation(async (_url, body) => {
                 // AST only returns content for file1, skips file2 and file3
                 mockGet.mockResolvedValue({
-                    files: [
+                    result: { files: [
                         {
                             id: body.files[0].id,
                             content: formatted1,
                             flag: FileContentFlag.SIMPLE,
                         },
-                    ],
+                    ] },
                 });
                 return { taskId: 'task-partial' };
             });
@@ -338,7 +338,7 @@ describe('ASTContentFormatterService', () => {
 
             mockPost.mockImplementation(async (_url, body) => {
                 mockGet.mockResolvedValue({
-                    files: [
+                    result: { files: [
                         {
                             id: body.files[0].id,
                             content: goodContent,
@@ -354,7 +354,7 @@ describe('ASTContentFormatterService', () => {
                             content: alsoGoodContent,
                             flag: FileContentFlag.FULL,
                         },
-                    ],
+                    ] },
                 });
                 return { taskId: 'task-corrupt' };
             });
