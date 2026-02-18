@@ -1,10 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { createLogger } from '@kodus/flow';
 import { promisify } from 'util';
 import { gzip, gunzip } from 'zlib';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
 
+import {
+    AST_ANALYSIS_SERVICE_TOKEN,
+    IASTAnalysisService,
+} from '@libs/code-review/domain/contracts/ASTAnalysisService.contract';
 import { AxiosASTService } from '@libs/core/infrastructure/config/axios/microservices/ast.axios';
 import { encrypt, decrypt } from '@libs/common/utils/crypto';
 import { SUPPORTED_LANGUAGES } from '@libs/code-review/domain/contracts/SupportedLanguages';
@@ -12,6 +16,7 @@ import {
     FileContentFlag,
     InitializeContentFromDiffRequest,
     GetContentFromDiffResponse,
+    TaskStatus,
 } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import {
     AnalysisContext,
@@ -21,18 +26,20 @@ import {
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
 
-const POLL_INTERVAL_MS = 2_000;
-const POLL_TIMEOUT_MS = 60_000;
-
 @Injectable()
 export class ASTContentFormatterService {
     private readonly logger = createLogger(ASTContentFormatterService.name);
     private readonly astAxios = new AxiosASTService();
 
+    constructor(
+        @Inject(AST_ANALYSIS_SERVICE_TOKEN)
+        private readonly astAnalysisService: IASTAnalysisService,
+    ) {}
+
     /**
      * Fetches AST-formatted content for a batch of files.
      * Filters by supported language, compresses + encrypts content,
-     * sends to the AST service, polls for the result, then decrypts + decompresses.
+     * sends to the AST service, awaits task completion, then decrypts + decompresses.
      *
      * Returns a Map<filename, { content, flag }> for files that were successfully processed.
      * Files not in the map should fall back to their original fileContent.
@@ -97,10 +104,31 @@ export class ASTContentFormatterService {
                 return emptyResult;
             }
 
-            // Poll for the result
-            const response = await this.pollForResult(taskId, context);
+            // Await task completion using shared awaitTask (backoff + timeout)
+            const taskRes = await this.astAnalysisService.awaitTask(
+                taskId,
+                context.organizationAndTeamData,
+                {
+                    timeout: 300_000,
+                    initialInterval: 2_000,
+                    maxInterval: 5_000,
+                    useExponentialBackoff: false,
+                },
+            );
 
-            if (!response?.files?.length) {
+            if (taskRes?.task?.status !== TaskStatus.TASK_STATUS_COMPLETED) {
+                this.logger.warn({
+                    message: `AST diff content task ${taskId} did not complete: ${taskRes?.task?.status}`,
+                    context: ASTContentFormatterService.name,
+                    metadata: { taskId, status: taskRes?.task?.status },
+                });
+                return emptyResult;
+            }
+
+            // GET the result
+            const response = await this.getResult(taskId, context);
+
+            if (!response?.result?.files?.length) {
                 return emptyResult;
             }
 
@@ -110,7 +138,7 @@ export class ASTContentFormatterService {
                 { content: string; flag: FileContentFlag }
             >();
 
-            for (const responseFile of response.files) {
+            for (const responseFile of response.result.files) {
                 const filename = idToFilename.get(responseFile.id);
                 if (!filename) {
                     continue;
@@ -169,7 +197,7 @@ export class ASTContentFormatterService {
     ): Promise<{ taskId: string }> {
         try {
             const response = await this.astAxios.post<{ taskId: string }>(
-                '/api/ast/diff/content',
+                '/api/ast/diff/content/initialize',
                 { files } as unknown as Record<string, unknown>,
                 {
                     headers: {
@@ -203,74 +231,31 @@ export class ASTContentFormatterService {
         }
     }
 
-    private async pollForResult(
+    private async getResult(
         taskId: string,
         context: AnalysisContext,
     ): Promise<GetContentFromDiffResponse | null> {
-        const startTime = Date.now();
-        let attempt = 0;
-
-        while (true) {
-            const elapsed = Date.now() - startTime;
-
-            if (elapsed > POLL_TIMEOUT_MS) {
-                this.logger.warn({
-                    message: `AST diff content task ${taskId} timed out after ${POLL_TIMEOUT_MS}ms`,
-                    context: ASTContentFormatterService.name,
-                    metadata: {
-                        taskId,
-                        attempts: attempt,
-                        timeout: POLL_TIMEOUT_MS,
+        try {
+            const response =
+                await this.astAxios.get<GetContentFromDiffResponse>(
+                    `/api/ast/diff/content/result/${taskId}`,
+                    {
+                        headers: {
+                            'x-task-key':
+                                context.organizationAndTeamData?.organizationId,
+                        },
                     },
-                });
-                return null;
-            }
+                );
 
-            try {
-                const response =
-                    await this.astAxios.get<GetContentFromDiffResponse>(
-                        `/api/ast/diff/content/retrieve/${taskId}`,
-                        {
-                            headers: {
-                                'x-task-key':
-                                    context.organizationAndTeamData
-                                        ?.organizationId,
-                            },
-                        },
-                    );
-
-                if (response?.files?.length > 0) {
-                    this.logger.log({
-                        message: `AST diff content task ${taskId} completed`,
-                        context: ASTContentFormatterService.name,
-                        metadata: {
-                            taskId,
-                            filesCount: response.files.length,
-                            attempts: attempt + 1,
-                            elapsedMs: elapsed,
-                        },
-                    });
-                    return response;
-                }
-            } catch (error) {
-                // 404 or pending — keep polling
-                if (error?.response?.status !== 404) {
-                    this.logger.warn({
-                        message: `Transient error polling AST diff content task ${taskId}`,
-                        error,
-                        context: ASTContentFormatterService.name,
-                        metadata: {
-                            taskId,
-                            attempt: attempt + 1,
-                        },
-                    });
-                }
-            }
-
-            await new Promise((resolve) =>
-                setTimeout(resolve, POLL_INTERVAL_MS),
-            );
-            attempt++;
+            return response;
+        } catch (error) {
+            this.logger.error({
+                message: `Failed to get AST diff content result for task ${taskId}`,
+                error,
+                context: ASTContentFormatterService.name,
+                metadata: { taskId },
+            });
+            return null;
         }
     }
 
