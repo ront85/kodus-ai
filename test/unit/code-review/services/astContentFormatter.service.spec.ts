@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ASTContentFormatterService } from '@/code-review/infrastructure/adapters/services/astContentFormatter.service';
-import { FileContentFlag } from '@/ee/kodyAST/interfaces/code-ast-analysis.interface';
+import { AST_ANALYSIS_SERVICE_TOKEN } from '@/code-review/domain/contracts/ASTAnalysisService.contract';
+import {
+    FileContentFlag,
+    TaskStatus,
+} from '@/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { encrypt } from '@/common/utils/crypto';
 import { promisify } from 'util';
 import { gzip } from 'zlib';
@@ -21,7 +25,7 @@ jest.mock('@kodus/flow', () => ({
     }),
 }));
 
-// Mock AxiosASTService — all HTTP calls go through this
+// Mock AxiosASTService — POST (initialize) and GET (result) go through this
 const mockPost = jest.fn();
 const mockGet = jest.fn();
 
@@ -83,18 +87,35 @@ function createContext(
     } as any;
 }
 
+const mockAwaitTask = jest.fn();
+
+const mockAstAnalysisService = {
+    awaitTask: mockAwaitTask,
+};
+
 describe('ASTContentFormatterService', () => {
     let service: ASTContentFormatterService;
 
     beforeEach(async () => {
         const module: TestingModule = await Test.createTestingModule({
-            providers: [ASTContentFormatterService],
+            providers: [
+                ASTContentFormatterService,
+                {
+                    provide: AST_ANALYSIS_SERVICE_TOKEN,
+                    useValue: mockAstAnalysisService,
+                },
+            ],
         }).compile();
 
         service = module.get<ASTContentFormatterService>(
             ASTContentFormatterService,
         );
         jest.clearAllMocks();
+
+        // Default: awaitTask returns COMPLETED
+        mockAwaitTask.mockResolvedValue({
+            task: { taskId: 'task-1', status: TaskStatus.TASK_STATUS_COMPLETED },
+        });
     });
 
     describe('round-trip compress + encrypt', () => {
@@ -103,8 +124,6 @@ describe('ASTContentFormatterService', () => {
             const formattedContent =
                 '// AST formatted\nfunction hello() {\n  return "world";\n}';
 
-            // Simulate: service compresses+encrypts the file, sends to AST
-            // AST responds with compressed+encrypted formatted content
             const encryptedResponse =
                 await compressAndEncrypt(formattedContent);
 
@@ -113,28 +132,8 @@ describe('ASTContentFormatterService', () => {
                 fileContent: originalContent,
             });
 
-            let capturedRequestFiles: any[] = [];
             mockPost.mockImplementation(async (_url, body) => {
-                capturedRequestFiles = body.files;
-                return { taskId: 'task-roundtrip' };
-            });
-
-            mockGet.mockResolvedValue({
-                files: capturedRequestFiles.length
-                    ? capturedRequestFiles.map((f) => ({
-                          id: f.id,
-                          content: encryptedResponse,
-                          flag: FileContentFlag.DIFF,
-                      }))
-                    : [],
-            });
-
-            // We need mockGet to use the IDs captured during POST
-            // Override mockGet dynamically after POST
-            mockPost.mockImplementation(async (_url, body) => {
-                capturedRequestFiles = body.files;
-
-                // Now configure GET to respond with those IDs
+                // Configure GET to respond with the same IDs from POST
                 mockGet.mockResolvedValue({
                     files: body.files.map((f: any) => ({
                         id: f.id,
@@ -287,7 +286,7 @@ describe('ASTContentFormatterService', () => {
             );
 
             expect(result.size).toBe(0);
-            expect(mockGet).not.toHaveBeenCalled();
+            expect(mockAwaitTask).not.toHaveBeenCalled();
         });
     });
 
@@ -375,35 +374,17 @@ describe('ASTContentFormatterService', () => {
         });
     });
 
-    describe('polling timeout', () => {
-        it('should return empty map when polling exceeds timeout', async () => {
+    describe('awaitTask failure (task not completed)', () => {
+        it('should return empty map when task fails', async () => {
             const file = createFileChange({ filename: 'src/app.ts' });
 
-            mockPost.mockResolvedValue({ taskId: 'task-slow' });
-
-            // Simulate: GET always throws 404 (task never completes)
-            mockGet.mockRejectedValue({
-                response: { status: 404 },
+            mockPost.mockResolvedValue({ taskId: 'task-fail' });
+            mockAwaitTask.mockResolvedValue({
+                task: {
+                    taskId: 'task-fail',
+                    status: TaskStatus.TASK_STATUS_FAILED,
+                },
             });
-
-            // Mock Date.now to simulate time jumping past timeout on the 2nd call
-            const startTime = Date.now();
-            let callCount = 0;
-            const dateNowSpy = jest
-                .spyOn(Date, 'now')
-                .mockImplementation(() => {
-                    callCount++;
-                    // 1st call = start, 2nd call = elapsed check in loop → past timeout
-                    if (callCount <= 1) return startTime;
-                    return startTime + 61_000; // 61s > 60s timeout
-                });
-
-            // Replace global setTimeout to resolve immediately (no real wait)
-            const origSetTimeout = global.setTimeout;
-            (global as any).setTimeout = (fn: Function) => {
-                fn();
-                return 0 as any;
-            };
 
             const result = await service.fetchFormattedContent(
                 [file],
@@ -411,10 +392,37 @@ describe('ASTContentFormatterService', () => {
             );
 
             expect(result.size).toBe(0);
+            expect(mockGet).not.toHaveBeenCalled();
+        });
 
-            // Restore
-            global.setTimeout = origSetTimeout;
-            dateNowSpy.mockRestore();
+        it('should return empty map when awaitTask throws (timeout)', async () => {
+            const file = createFileChange({ filename: 'src/app.ts' });
+
+            mockPost.mockResolvedValue({ taskId: 'task-timeout' });
+            mockAwaitTask.mockRejectedValue(
+                new Error('Task task-timeout timed out after 60000ms'),
+            );
+
+            const result = await service.fetchFormattedContent(
+                [file],
+                createContext(),
+            );
+
+            expect(result.size).toBe(0);
+        });
+
+        it('should return empty map when awaitTask returns null', async () => {
+            const file = createFileChange({ filename: 'src/app.ts' });
+
+            mockPost.mockResolvedValue({ taskId: 'task-null' });
+            mockAwaitTask.mockResolvedValue(null);
+
+            const result = await service.fetchFormattedContent(
+                [file],
+                createContext(),
+            );
+
+            expect(result.size).toBe(0);
         });
     });
 });
