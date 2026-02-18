@@ -351,22 +351,17 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             context,
         );
 
-        // Attach AST results to files before preparing contexts
-        if (astResults.size > 0) {
-            for (const file of batch) {
-                const astResult = astResults.get(file.filename);
-                if (astResult) {
-                    file.astFormattedContent = astResult.content;
-                }
-            }
-        }
+        // Create mutable copies with AST content attached (originals may be frozen by Immer)
+        const filesWithAst = astResults.size > 0
+            ? batch.map((file) => {
+                  const astResult = astResults.get(file.filename);
+                  return astResult
+                      ? { ...file, astFormattedContent: astResult.content }
+                      : file;
+              })
+            : batch;
 
-        const preparedFiles = await this.filterAndPrepareFiles(batch, context);
-
-        // Release AST formatted content — already consumed by getRelevantFileContent
-        for (const file of batch) {
-            delete file.astFormattedContent;
-        }
+        const preparedFiles = await this.filterAndPrepareFiles(filesWithAst, context);
 
         const astFailed = preparedFiles.find((file) => {
             const task = file.fileContext.tasks?.astAnalysis;
