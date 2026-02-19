@@ -14,6 +14,7 @@ import {
     CODE_REVIEW_EXECUTION_SERVICE,
     ICodeReviewExecutionService,
 } from '@libs/automation/domain/codeReviewExecutions/contracts/codeReviewExecution.service.contract';
+import { AutomationStatus } from '@libs/automation/domain/automation/enum/automation-status';
 import { CacheService } from '@libs/core/cache/cache.service';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
 
@@ -299,6 +300,22 @@ export class AutomationExecutionService implements IAutomationExecutionService {
         return this.codeReviewExecutionService.findLatestInProgress(
             executionId,
             stageName,
+        );
+    }
+
+    async hasStageWithStatus(
+        executionId: string,
+        stageNames: string[],
+        statuses: AutomationStatus[],
+    ): Promise<boolean> {
+        if (!executionId || stageNames.length === 0 || statuses.length === 0) {
+            return false;
+        }
+
+        return this.codeReviewExecutionService.existsByAutomationExecutionAndStageStatus(
+            executionId,
+            stageNames,
+            statuses,
         );
     }
 }

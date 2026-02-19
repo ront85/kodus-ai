@@ -119,12 +119,13 @@ export class CodeReviewPipelineObserver implements IPipelineObserver {
             const summaryParts: string[] = [];
             errorsByMessage.forEach((count, message) => {
                 const countStr = count > 1 ? ` (${count} files/stages)` : '';
-                summaryParts.push(`${message}${countStr}`);
+                summaryParts.push(`- ${message}${countStr}`);
             });
-            // Limit to top 2 distinct error messages to avoid huge titles
-            parts.push(...summaryParts.slice(0, 2));
-            if (summaryParts.length > 2) {
-                parts.push(`+${summaryParts.length - 2} more errors`);
+            // Limit to top 5 distinct error messages to avoid huge titles
+            const limit = 5;
+            parts.push(...summaryParts.slice(0, limit));
+            if (summaryParts.length > limit) {
+                parts.push(`- +${summaryParts.length - limit} more errors`);
             }
         }
 
@@ -132,7 +133,7 @@ export class CodeReviewPipelineObserver implements IPipelineObserver {
             return undefined;
         }
 
-        return parts.join(' | ');
+        return parts.join('\n');
     }
 
     async onStageStart(
@@ -227,15 +228,13 @@ export class CodeReviewPipelineObserver implements IPipelineObserver {
         if (errors.length > 0) {
             const uniqueMessages = [
                 ...new Set(
-                    errors.map(
-                        (e) => e.error?.message || String(e.error),
-                    ),
+                    errors.map((e) => e.error?.message || String(e.error)),
                 ),
             ];
             const displayMessages = uniqueMessages.slice(0, 3);
             const remaining = uniqueMessages.length - displayMessages.length;
 
-            message = `Error: ${displayMessages.join(' | ')}${remaining > 0 ? ` (+${remaining} more)` : ''}`;
+            message = `${displayMessages.join('\n')}${remaining > 0 ? `\n(+${remaining} more)` : ''}`;
         }
 
         await this.logStage(stageName, status, message, context, {

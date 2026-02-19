@@ -3,6 +3,7 @@ import { IAutomationExecutionRepository } from './automation-execution.repositor
 import { AutomationExecutionEntity } from '../entities/automation-execution.entity';
 import { IAutomationExecution } from '../interfaces/automation-execution.interface';
 import { CodeReviewExecution } from '../../codeReviewExecutions/interfaces/codeReviewExecution.interface';
+import { AutomationStatus } from '../../automation/enum/automation-status';
 
 export const AUTOMATION_EXECUTION_SERVICE_TOKEN = Symbol(
     'AutomationExecutionService',
@@ -57,4 +58,10 @@ export interface IAutomationExecutionService extends IAutomationExecutionReposit
         executionId: string,
         stageName: string,
     ): Promise<CodeReviewExecutionEntity<IAutomationExecution> | null>;
+
+    hasStageWithStatus(
+        executionId: string,
+        stageNames: string[],
+        statuses: AutomationStatus[],
+    ): Promise<boolean>;
 }

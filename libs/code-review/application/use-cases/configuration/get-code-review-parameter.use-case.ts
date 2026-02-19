@@ -177,94 +177,112 @@ export class GetCodeReviewParameterUseCase {
         const formattedRepositories = [];
 
         for (const repo of configValue.repositories || []) {
-            const repository = {
-                id: repo.id,
-                name: repo.name,
-            };
+            try {
+                const repository = {
+                    id: repo.id,
+                    name: repo.name,
+                };
 
-            const repoFile =
-                await this.codeBaseConfigService.getKodusConfigFile({
-                    organizationAndTeamData,
-                    repository,
-                    overrideConfig:
-                        repo.configs?.kodusConfigFileOverridesWebPreferences ??
-                        false,
-                });
-
-            const formattedRepoConfig = this.formatLevel(
-                formattedGlobalConfig,
-                repo.configs,
-                FormattedConfigLevel.REPOSITORY,
-            );
-
-            let formattedRepoFileConfig = this.formatLevel(
-                formattedRepoConfig,
-                repoFile,
-                FormattedConfigLevel.REPOSITORY_FILE,
-            );
-
-            // Buscar e adicionar referências externas do nível repositório
-            const repoConfigKey = this.promptReferenceManager.buildConfigKey(
-                organizationAndTeamData,
-                repo.id,
-            );
-            formattedRepoFileConfig =
-                await this.enrichConfigWithExternalReferences(
-                    formattedRepoFileConfig,
-                    repoConfigKey,
-                );
-
-            const formattedDirectories = [];
-
-            for (const dir of repo.directories || []) {
-                const directoryFile =
+                const repoFile =
                     await this.codeBaseConfigService.getKodusConfigFile({
                         organizationAndTeamData,
                         repository,
-                        directoryPath: dir.path,
                         overrideConfig:
-                            dir.configs
-                                ?.kodusConfigFileOverridesWebPreferences ??
                             repo.configs
                                 ?.kodusConfigFileOverridesWebPreferences ??
                             false,
                     });
 
-                const formattedDirConfig = this.formatLevel(
-                    formattedRepoFileConfig,
-                    dir.configs,
-                    FormattedConfigLevel.DIRECTORY,
+                const formattedRepoConfig = this.formatLevel(
+                    formattedGlobalConfig,
+                    repo.configs,
+                    FormattedConfigLevel.REPOSITORY,
                 );
 
-                let formattedDirFileConfig = this.formatLevel(
-                    formattedDirConfig,
-                    directoryFile,
-                    FormattedConfigLevel.DIRECTORY_FILE,
+                let formattedRepoFileConfig = this.formatLevel(
+                    formattedRepoConfig,
+                    repoFile,
+                    FormattedConfigLevel.REPOSITORY_FILE,
                 );
 
-                // Buscar e adicionar referências externas do nível diretório
-                const dirConfigKey = this.promptReferenceManager.buildConfigKey(
+                // Buscar e adicionar referências externas do nível repositório
+                const repoConfigKey = this.promptReferenceManager.buildConfigKey(
                     organizationAndTeamData,
                     repo.id,
-                    dir.id,
                 );
-                formattedDirFileConfig =
+                formattedRepoFileConfig =
                     await this.enrichConfigWithExternalReferences(
-                        formattedDirFileConfig,
-                        dirConfigKey,
+                        formattedRepoFileConfig,
+                        repoConfigKey,
                     );
 
-                formattedDirectories.push({
-                    ...dir,
-                    configs: formattedDirFileConfig,
-                });
-            }
+                const formattedDirectories = [];
 
-            formattedRepositories.push({
-                ...repo,
-                configs: formattedRepoFileConfig,
-                directories: formattedDirectories,
-            });
+                for (const dir of repo.directories || []) {
+                    const directoryFile =
+                        await this.codeBaseConfigService.getKodusConfigFile({
+                            organizationAndTeamData,
+                            repository,
+                            directoryPath: dir.path,
+                            overrideConfig:
+                                dir.configs
+                                    ?.kodusConfigFileOverridesWebPreferences ??
+                                repo.configs
+                                    ?.kodusConfigFileOverridesWebPreferences ??
+                                false,
+                        });
+
+                    const formattedDirConfig = this.formatLevel(
+                        formattedRepoFileConfig,
+                        dir.configs,
+                        FormattedConfigLevel.DIRECTORY,
+                    );
+
+                    let formattedDirFileConfig = this.formatLevel(
+                        formattedDirConfig,
+                        directoryFile,
+                        FormattedConfigLevel.DIRECTORY_FILE,
+                    );
+
+                    // Buscar e adicionar referências externas do nível diretório
+                    const dirConfigKey =
+                        this.promptReferenceManager.buildConfigKey(
+                            organizationAndTeamData,
+                            repo.id,
+                            dir.id,
+                        );
+                    formattedDirFileConfig =
+                        await this.enrichConfigWithExternalReferences(
+                            formattedDirFileConfig,
+                            dirConfigKey,
+                        );
+
+                    formattedDirectories.push({
+                        ...dir,
+                        configs: formattedDirFileConfig,
+                    });
+                }
+
+                formattedRepositories.push({
+                    ...repo,
+                    configs: formattedRepoFileConfig,
+                    directories: formattedDirectories,
+                });
+            } catch (error) {
+                this.logger.warn({
+                    message:
+                        'Skipping repository while formatting code review config due to repository-level error',
+                    context: GetCodeReviewParameterUseCase.name,
+                    error,
+                    metadata: {
+                        organizationId: organizationAndTeamData.organizationId,
+                        teamId: organizationAndTeamData.teamId,
+                        repositoryId: repo.id,
+                        repositoryName: repo.name,
+                    },
+                });
+                continue;
+            }
         }
 
         return {

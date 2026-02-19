@@ -1865,6 +1865,9 @@ export class GithubService
                 const octokit = new MyOctokit({
                     auth: installationAuthentication.token,
                     request: { retries: 2 },
+                    retry: {
+                        doNotRetry: [400, 401, 403, 404, 422, 451],
+                    },
                     throttle: {
                         onRateLimit: (
                             retryAfter: number,
@@ -1962,6 +1965,10 @@ export class GithubService
 
                 const octokit = new MyOctokit({
                     auth: decryptedPAT,
+                    request: { retries: 2 },
+                    retry: {
+                        doNotRetry: [400, 401, 403, 404, 422, 451],
+                    },
                     throttle: {
                         onRateLimit: (
                             _retryAfter,

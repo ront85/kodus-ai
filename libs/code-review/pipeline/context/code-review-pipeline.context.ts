@@ -89,6 +89,7 @@ export interface CodeReviewPipelineContext extends PipelineContext {
         lastExecution?: AutomationExecutionEntity;
         notificationHandled?: boolean;
         showStatusFeedback?: boolean;
+        forceFullRerun?: boolean;
     };
 
     initialCommentData?: {

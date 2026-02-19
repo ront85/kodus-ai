@@ -484,7 +484,7 @@ describe('CodeReviewPipelineObserver', () => {
             'stage-log-uuid',
             expect.objectContaining({
                 status: AutomationStatus.PARTIAL_ERROR,
-                message: 'Error: Partial error',
+                message: 'Partial error',
                 finishedAt: expect.any(Date),
                 metadata: expect.objectContaining({
                     partialErrors: expect.arrayContaining([
@@ -499,7 +499,8 @@ describe('CodeReviewPipelineObserver', () => {
 
     describe('error message propagation to code_review_execution', () => {
         it('should save actual error message for FileAnalysisStage (e.g. LLM rate limit)', async () => {
-            const llmError = '429 Insufficient balance or no resource package. Please recharge.';
+            const llmError =
+                '429 Insufficient balance or no resource package. Please recharge.';
             context.errors = [
                 {
                     stage: 'FileAnalysisStage',
@@ -528,7 +529,7 @@ describe('CodeReviewPipelineObserver', () => {
                 'stage-log-uuid',
                 expect.objectContaining({
                     status: AutomationStatus.ERROR,
-                    message: `Error: ${llmError}`,
+                    message: llmError,
                 }),
             );
         });
@@ -560,7 +561,7 @@ describe('CodeReviewPipelineObserver', () => {
                 'stage-log-uuid',
                 expect.objectContaining({
                     status: AutomationStatus.PARTIAL_ERROR,
-                    message: 'Error: Timeout waiting for LLM response',
+                    message: 'Timeout waiting for LLM response',
                 }),
             );
         });
@@ -592,13 +593,14 @@ describe('CodeReviewPipelineObserver', () => {
                 'stage-log-uuid',
                 expect.objectContaining({
                     status: AutomationStatus.PARTIAL_ERROR,
-                    message: 'Error: GitHub API rate limit exceeded',
+                    message: 'GitHub API rate limit exceeded',
                 }),
             );
         });
 
         it('should deduplicate repeated errors and show unique messages only', async () => {
-            const repeatedError = '429 Insufficient balance or no resource package. Please recharge.';
+            const repeatedError =
+                '429 Insufficient balance or no resource package. Please recharge.';
             context.errors = [
                 {
                     stage: 'FileAnalysisStage',
@@ -642,7 +644,7 @@ describe('CodeReviewPipelineObserver', () => {
             ).toHaveBeenCalledWith(
                 'stage-log-uuid',
                 expect.objectContaining({
-                    message: `Error: ${repeatedError}`,
+                    message: `${repeatedError}`,
                 }),
             );
         });
@@ -705,7 +707,8 @@ describe('CodeReviewPipelineObserver', () => {
             ).toHaveBeenCalledWith(
                 'stage-log-uuid',
                 expect.objectContaining({
-                    message: 'Error: Error type A | Error type B | Error type C (+2 more)',
+                    message:
+                        'Error type A\nError type B\nError type C\n(+2 more)',
                 }),
             );
         });
