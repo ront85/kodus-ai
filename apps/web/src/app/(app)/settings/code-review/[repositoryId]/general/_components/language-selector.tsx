@@ -175,9 +175,9 @@ export const LanguageSelector = () => {
                         Kody Language
                     </FormControl.Label>
 
-                    <FormControl.Description>
+                    <FormControl.Helper className="mb-3">
                         The language Kody will use in code review responses
-                    </FormControl.Description>
+                    </FormControl.Helper>
 
                     <FormControl.Input>
                         <Popover
