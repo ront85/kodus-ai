@@ -6,4 +6,6 @@ export interface IProfile<TUser = any> {
     status: boolean;
     position?: string;
     user?: Partial<TUser>;
+    referralSource?: string;
+    primaryGoal?: string;
 }
