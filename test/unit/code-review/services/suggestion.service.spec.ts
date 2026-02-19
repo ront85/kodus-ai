@@ -1,20 +1,20 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { SuggestionService } from '@/code-review/infrastructure/adapters/services/suggestion.service';
-import { LLM_ANALYSIS_SERVICE_TOKEN } from '@/code-review/infrastructure/adapters/services/llmAnalysis.service';
-import { PULL_REQUESTS_SERVICE_TOKEN } from '@/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
 import { COMMENT_MANAGER_SERVICE_TOKEN } from '@/code-review/domain/contracts/CommentManagerService.contract';
-import { CodeManagementService } from '@/platform/infrastructure/adapters/services/codeManagement.service';
-import { PriorityStatus } from '@/platformData/domain/pullRequests/enums/priorityStatus.enum';
-import { DeliveryStatus } from '@/platformData/domain/pullRequests/enums/deliveryStatus.enum';
-import { ImplementationStatus } from '@/platformData/domain/pullRequests/enums/implementationStatus.enum';
+import { LLM_ANALYSIS_SERVICE_TOKEN } from '@/code-review/infrastructure/adapters/services/llmAnalysis.service';
+import { SuggestionService } from '@/code-review/infrastructure/adapters/services/suggestion.service';
+import { SeverityLevel } from '@/common/utils/enums/severityLevel.enum';
 import {
-    LimitationType,
-    GroupingModeSuggestions,
     ClusteringType,
     CodeSuggestion,
     CommentResult,
+    GroupingModeSuggestions,
+    LimitationType,
 } from '@/core/infrastructure/config/types/general/codeReview.type';
-import { SeverityLevel } from '@/common/utils/enums/severityLevel.enum';
+import { CodeManagementService } from '@/platform/infrastructure/adapters/services/codeManagement.service';
+import { PULL_REQUESTS_SERVICE_TOKEN } from '@/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
+import { DeliveryStatus } from '@/platformData/domain/pullRequests/enums/deliveryStatus.enum';
+import { ImplementationStatus } from '@/platformData/domain/pullRequests/enums/implementationStatus.enum';
+import { PriorityStatus } from '@/platformData/domain/pullRequests/enums/priorityStatus.enum';
+import { Test, TestingModule } from '@nestjs/testing';
 
 describe('SuggestionService', () => {
     let service: SuggestionService;
@@ -941,35 +941,386 @@ __new hunk__
         });
     });
 
+    describe('prioritizeSuggestionsLegacy - Kody Rules deterministic grouping', () => {
+        it('should group same Kody Rule suggestions in FULL mode before LLM clustering', async () => {
+            mockCommentManagerService.repeatedCodeReviewSuggestionClustering.mockImplementation(
+                async (_org, _pr, _provider, inputSuggestions) =>
+                    inputSuggestions,
+            );
+
+            const suggestionControl = {
+                groupingMode: GroupingModeSuggestions.FULL,
+                limitationType: LimitationType.PR,
+                maxSuggestions: 0,
+                severityLevelFilter: SeverityLevel.LOW,
+                applyFiltersToKodyRules: false,
+            } as any;
+
+            const suggestions = [
+                {
+                    id: 'a2',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/a.ts',
+                    relevantLinesStart: 10,
+                    relevantLinesEnd: 10,
+                    suggestionContent: 'Rule A violation in file A',
+                    oneSentenceSummary: 'Fix rule A',
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 80,
+                },
+                {
+                    id: 'a1',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/b.tsx',
+                    relevantLinesStart: 20,
+                    relevantLinesEnd: 20,
+                    suggestionContent: 'Rule A violation in file B',
+                    oneSentenceSummary: 'Fix rule A',
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 90,
+                },
+                {
+                    id: 'b1',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/c.ts',
+                    relevantLinesStart: 30,
+                    relevantLinesEnd: 30,
+                    suggestionContent: 'Rule B violation',
+                    oneSentenceSummary: 'Fix rule B',
+                    brokenKodyRulesIds: ['rule-b'],
+                    rankScore: 70,
+                },
+            ];
+
+            const result = await service.prioritizeSuggestionsLegacy(
+                mockOrganizationAndTeamData as any,
+                suggestionControl,
+                123,
+                suggestions,
+            );
+
+            const parent = result.prioritizedSuggestions.find(
+                (s) =>
+                    s.clusteringInformation?.type === ClusteringType.PARENT &&
+                    s.brokenKodyRulesIds?.[0] === 'rule-a',
+            );
+            const related = result.prioritizedSuggestions.find(
+                (s) =>
+                    s.clusteringInformation?.type === ClusteringType.RELATED &&
+                    s.brokenKodyRulesIds?.[0] === 'rule-a',
+            );
+            const otherRule = result.prioritizedSuggestions.find(
+                (s) => s.id === 'b1',
+            );
+
+            expect(parent).toBeDefined();
+            expect(parent.id).toBe('a1');
+            expect(parent.clusteringInformation.relatedSuggestionsIds).toEqual([
+                'a2',
+            ]);
+
+            expect(related).toBeDefined();
+            expect(related.clusteringInformation.parentSuggestionId).toBe('a1');
+
+            expect(otherRule).toBeDefined();
+            expect(otherRule.clusteringInformation).toBeUndefined();
+
+            expect(
+                mockCommentManagerService.repeatedCodeReviewSuggestionClustering,
+            ).toHaveBeenCalledTimes(1);
+            expect(
+                mockCommentManagerService.repeatedCodeReviewSuggestionClustering
+                    .mock.calls[0][3],
+            ).toHaveLength(1);
+            expect(
+                mockCommentManagerService.repeatedCodeReviewSuggestionClustering
+                    .mock.calls[0][3][0].id,
+            ).toBe('b1');
+        });
+
+        it('should not apply deterministic grouping in MINIMAL mode', async () => {
+            const suggestionControl = {
+                groupingMode: GroupingModeSuggestions.MINIMAL,
+                limitationType: LimitationType.PR,
+                maxSuggestions: 0,
+                severityLevelFilter: SeverityLevel.LOW,
+                applyFiltersToKodyRules: false,
+            } as any;
+
+            const suggestions = [
+                {
+                    id: 'a1',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/a.ts',
+                    relevantLinesStart: 1,
+                    relevantLinesEnd: 1,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 90,
+                },
+                {
+                    id: 'a2',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/b.tsx',
+                    relevantLinesStart: 2,
+                    relevantLinesEnd: 2,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 80,
+                },
+            ];
+
+            const result = await service.prioritizeSuggestionsLegacy(
+                mockOrganizationAndTeamData as any,
+                suggestionControl,
+                123,
+                suggestions,
+            );
+
+            expect(result.prioritizedSuggestions).toHaveLength(2);
+            expect(
+                result.prioritizedSuggestions.every(
+                    (s) => !s.clusteringInformation,
+                ),
+            ).toBe(true);
+
+            expect(
+                mockCommentManagerService.repeatedCodeReviewSuggestionClustering,
+            ).not.toHaveBeenCalled();
+        });
+
+        it('should choose a parent with valid id when an id-less suggestion exists in the group', async () => {
+            mockCommentManagerService.repeatedCodeReviewSuggestionClustering.mockImplementation(
+                async (_org, _pr, _provider, inputSuggestions) =>
+                    inputSuggestions,
+            );
+
+            const suggestionControl = {
+                groupingMode: GroupingModeSuggestions.FULL,
+                limitationType: LimitationType.PR,
+                maxSuggestions: 0,
+                severityLevelFilter: SeverityLevel.LOW,
+                applyFiltersToKodyRules: false,
+            } as any;
+
+            const suggestions = [
+                {
+                    id: '',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/a.ts',
+                    relevantLinesStart: 10,
+                    relevantLinesEnd: 10,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 80,
+                },
+                {
+                    id: 'a1',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/b.tsx',
+                    relevantLinesStart: 20,
+                    relevantLinesEnd: 20,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 90,
+                },
+            ];
+
+            const result = await service.prioritizeSuggestionsLegacy(
+                mockOrganizationAndTeamData as any,
+                suggestionControl,
+                123,
+                suggestions,
+            );
+
+            const parent = result.prioritizedSuggestions.find(
+                (s) => s.clusteringInformation?.type === ClusteringType.PARENT,
+            );
+            const related = result.prioritizedSuggestions.find(
+                (s) => s.clusteringInformation?.type === ClusteringType.RELATED,
+            );
+
+            expect(parent).toBeDefined();
+            expect(parent.id).toBe('a1');
+
+            expect(related).toBeDefined();
+            expect(related.id).toBe('');
+            expect(related.clusteringInformation.parentSuggestionId).toBe('a1');
+        });
+
+        it('should not cluster a group when no suggestion has a valid id', async () => {
+            mockCommentManagerService.repeatedCodeReviewSuggestionClustering.mockImplementation(
+                async (_org, _pr, _provider, inputSuggestions) =>
+                    inputSuggestions,
+            );
+
+            const suggestionControl = {
+                groupingMode: GroupingModeSuggestions.FULL,
+                limitationType: LimitationType.PR,
+                maxSuggestions: 0,
+                severityLevelFilter: SeverityLevel.LOW,
+                applyFiltersToKodyRules: false,
+            } as any;
+
+            const suggestions = [
+                {
+                    id: '',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/a.ts',
+                    relevantLinesStart: 10,
+                    relevantLinesEnd: 10,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 80,
+                },
+                {
+                    id: '',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/b.tsx',
+                    relevantLinesStart: 20,
+                    relevantLinesEnd: 20,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 90,
+                },
+            ];
+
+            const result = await service.prioritizeSuggestionsLegacy(
+                mockOrganizationAndTeamData as any,
+                suggestionControl,
+                123,
+                suggestions,
+            );
+
+            expect(result.prioritizedSuggestions).toHaveLength(2);
+            expect(
+                result.prioritizedSuggestions.every(
+                    (s) => !s.clusteringInformation,
+                ),
+            ).toBe(true);
+        });
+    });
+
+    describe('prioritizeSuggestions - Kody Rules control branch', () => {
+        it('should group Kody Rules in FULL mode even when applyFiltersToKodyRules is false', async () => {
+            const suggestionControl = {
+                groupingMode: GroupingModeSuggestions.FULL,
+                limitationType: LimitationType.PR,
+                maxSuggestions: 0,
+                severityLevelFilter: SeverityLevel.LOW,
+                applyFiltersToKodyRules: false,
+            } as any;
+
+            const suggestions = [
+                {
+                    id: 'a2',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/a.ts',
+                    relevantLinesStart: 10,
+                    relevantLinesEnd: 10,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 80,
+                },
+                {
+                    id: 'a1',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/b.tsx',
+                    relevantLinesStart: 20,
+                    relevantLinesEnd: 20,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 90,
+                },
+            ];
+
+            const result = await service.prioritizeSuggestions(
+                mockOrganizationAndTeamData as any,
+                suggestionControl,
+                123,
+                suggestions,
+            );
+
+            const parent = result.prioritizedSuggestions.find(
+                (s) => s.clusteringInformation?.type === ClusteringType.PARENT,
+            );
+            const related = result.prioritizedSuggestions.find(
+                (s) => s.clusteringInformation?.type === ClusteringType.RELATED,
+            );
+
+            expect(parent).toBeDefined();
+            expect(parent.id).toBe('a1');
+            expect(related).toBeDefined();
+            expect(related.clusteringInformation.parentSuggestionId).toBe('a1');
+            expect(
+                result.discardedSuggestionsBySeverityOrQuantity,
+            ).toHaveLength(0);
+        });
+    });
+
     describe('extractRepriorizedSuggestions', () => {
         it('should extract repriorized suggestions from comment results', () => {
-            const suggestion1 = { id: 's1', priorityStatus: PriorityStatus.REPRIORIZED, label: 'security' };
-            const suggestion2 = { id: 's2', priorityStatus: PriorityStatus.PRIORITIZED, label: 'code_style' };
+            const suggestion1 = {
+                id: 's1',
+                priorityStatus: PriorityStatus.REPRIORIZED,
+                label: 'security',
+            };
+            const suggestion2 = {
+                id: 's2',
+                priorityStatus: PriorityStatus.PRIORITIZED,
+                label: 'code_style',
+            };
 
             const commentResults: CommentResult[] = [
                 {
                     comment: { suggestion: suggestion1 } as any,
                     deliveryStatus: DeliveryStatus.SENT,
-                    codeReviewFeedbackData: { commentId: 123, pullRequestReviewId: 456, suggestionId: 's1' },
+                    codeReviewFeedbackData: {
+                        commentId: 123,
+                        pullRequestReviewId: 456,
+                        suggestionId: 's1',
+                    },
                 },
                 {
                     comment: { suggestion: suggestion2 } as any,
                     deliveryStatus: DeliveryStatus.SENT,
-                    codeReviewFeedbackData: { commentId: 789, pullRequestReviewId: 456, suggestionId: 's2' },
+                    codeReviewFeedbackData: {
+                        commentId: 789,
+                        pullRequestReviewId: 456,
+                        suggestionId: 's2',
+                    },
                 },
             ];
 
             const discardedSuggestions = [
-                { id: 's1', priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY, label: 'security' },
-                { id: 's3', priorityStatus: PriorityStatus.DISCARDED_BY_SEVERITY, label: 'maintainability' },
+                {
+                    id: 's1',
+                    priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY,
+                    label: 'security',
+                },
+                {
+                    id: 's3',
+                    priorityStatus: PriorityStatus.DISCARDED_BY_SEVERITY,
+                    label: 'maintainability',
+                },
             ];
 
-            const result = service.extractRepriorizedSuggestions(commentResults, discardedSuggestions);
+            const result = service.extractRepriorizedSuggestions(
+                commentResults,
+                discardedSuggestions,
+            );
 
             expect(result.repriorizedSuggestions).toHaveLength(1);
             expect(result.repriorizedSuggestions[0].id).toBe('s1');
-            expect(result.repriorizedSuggestions[0].deliveryStatus).toBe(DeliveryStatus.SENT);
-            expect(result.repriorizedSuggestions[0].implementationStatus).toBe(ImplementationStatus.NOT_IMPLEMENTED);
+            expect(result.repriorizedSuggestions[0].deliveryStatus).toBe(
+                DeliveryStatus.SENT,
+            );
+            expect(result.repriorizedSuggestions[0].implementationStatus).toBe(
+                ImplementationStatus.NOT_IMPLEMENTED,
+            );
             expect(result.repriorizedSuggestions[0].comment).toEqual({
                 id: 123,
                 pullRequestReviewId: 456,
@@ -980,28 +1331,44 @@ __new hunk__
         });
 
         it('should return empty repriorized array when no repriorized suggestions exist', () => {
-            const suggestion1 = { id: 's1', priorityStatus: PriorityStatus.PRIORITIZED };
+            const suggestion1 = {
+                id: 's1',
+                priorityStatus: PriorityStatus.PRIORITIZED,
+            };
 
             const commentResults: CommentResult[] = [
                 {
                     comment: { suggestion: suggestion1 } as any,
                     deliveryStatus: DeliveryStatus.SENT,
-                    codeReviewFeedbackData: { commentId: 123, pullRequestReviewId: 456, suggestionId: 's1' },
+                    codeReviewFeedbackData: {
+                        commentId: 123,
+                        pullRequestReviewId: 456,
+                        suggestionId: 's1',
+                    },
                 },
             ];
 
             const discardedSuggestions = [
-                { id: 's2', priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY },
+                {
+                    id: 's2',
+                    priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY,
+                },
             ];
 
-            const result = service.extractRepriorizedSuggestions(commentResults, discardedSuggestions);
+            const result = service.extractRepriorizedSuggestions(
+                commentResults,
+                discardedSuggestions,
+            );
 
             expect(result.repriorizedSuggestions).toHaveLength(0);
             expect(result.filteredDiscardedSuggestions).toHaveLength(1);
         });
 
         it('should not extract repriorized suggestions that failed to send', () => {
-            const suggestion1 = { id: 's1', priorityStatus: PriorityStatus.REPRIORIZED };
+            const suggestion1 = {
+                id: 's1',
+                priorityStatus: PriorityStatus.REPRIORIZED,
+            };
 
             const commentResults: CommentResult[] = [
                 {
@@ -1011,10 +1378,16 @@ __new hunk__
             ];
 
             const discardedSuggestions = [
-                { id: 's1', priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY },
+                {
+                    id: 's1',
+                    priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY,
+                },
             ];
 
-            const result = service.extractRepriorizedSuggestions(commentResults, discardedSuggestions);
+            const result = service.extractRepriorizedSuggestions(
+                commentResults,
+                discardedSuggestions,
+            );
 
             expect(result.repriorizedSuggestions).toHaveLength(0);
             expect(result.filteredDiscardedSuggestions).toHaveLength(1);
@@ -1022,27 +1395,43 @@ __new hunk__
 
         it('should handle empty comment results', () => {
             const discardedSuggestions = [
-                { id: 's1', priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY },
+                {
+                    id: 's1',
+                    priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY,
+                },
             ];
 
-            const result = service.extractRepriorizedSuggestions([], discardedSuggestions);
+            const result = service.extractRepriorizedSuggestions(
+                [],
+                discardedSuggestions,
+            );
 
             expect(result.repriorizedSuggestions).toHaveLength(0);
             expect(result.filteredDiscardedSuggestions).toHaveLength(1);
         });
 
         it('should handle empty discarded suggestions', () => {
-            const suggestion1 = { id: 's1', priorityStatus: PriorityStatus.REPRIORIZED };
+            const suggestion1 = {
+                id: 's1',
+                priorityStatus: PriorityStatus.REPRIORIZED,
+            };
 
             const commentResults: CommentResult[] = [
                 {
                     comment: { suggestion: suggestion1 } as any,
                     deliveryStatus: DeliveryStatus.SENT,
-                    codeReviewFeedbackData: { commentId: 123, pullRequestReviewId: 456, suggestionId: 's1' },
+                    codeReviewFeedbackData: {
+                        commentId: 123,
+                        pullRequestReviewId: 456,
+                        suggestionId: 's1',
+                    },
                 },
             ];
 
-            const result = service.extractRepriorizedSuggestions(commentResults, []);
+            const result = service.extractRepriorizedSuggestions(
+                commentResults,
+                [],
+            );
 
             expect(result.repriorizedSuggestions).toHaveLength(1);
             expect(result.filteredDiscardedSuggestions).toHaveLength(0);
@@ -1059,11 +1448,18 @@ __new hunk__
                 {
                     comment: { suggestion: suggestion1 } as any,
                     deliveryStatus: DeliveryStatus.SENT,
-                    codeReviewFeedbackData: { commentId: 123, pullRequestReviewId: 456, suggestionId: 's1' },
+                    codeReviewFeedbackData: {
+                        commentId: 123,
+                        pullRequestReviewId: 456,
+                        suggestionId: 's1',
+                    },
                 },
             ];
 
-            const result = service.extractRepriorizedSuggestions(commentResults, []);
+            const result = service.extractRepriorizedSuggestions(
+                commentResults,
+                [],
+            );
 
             expect(result.repriorizedSuggestions[0].comment).toEqual({
                 existingField: 'value',
@@ -1087,36 +1483,67 @@ __new hunk__
                 },
             ];
 
-            const result = service.extractRepriorizedSuggestions(commentResults, []);
+            const result = service.extractRepriorizedSuggestions(
+                commentResults,
+                [],
+            );
 
             expect(result.repriorizedSuggestions).toHaveLength(1);
-            expect(result.repriorizedSuggestions[0].comment).toEqual({ originalId: 999 });
+            expect(result.repriorizedSuggestions[0].comment).toEqual({
+                originalId: 999,
+            });
         });
 
         it('should filter out multiple repriorized suggestions from discarded', () => {
-            const suggestion1 = { id: 's1', priorityStatus: PriorityStatus.REPRIORIZED };
-            const suggestion2 = { id: 's2', priorityStatus: PriorityStatus.REPRIORIZED };
+            const suggestion1 = {
+                id: 's1',
+                priorityStatus: PriorityStatus.REPRIORIZED,
+            };
+            const suggestion2 = {
+                id: 's2',
+                priorityStatus: PriorityStatus.REPRIORIZED,
+            };
 
             const commentResults: CommentResult[] = [
                 {
                     comment: { suggestion: suggestion1 } as any,
                     deliveryStatus: DeliveryStatus.SENT,
-                    codeReviewFeedbackData: { commentId: 1, pullRequestReviewId: 1, suggestionId: 's1' },
+                    codeReviewFeedbackData: {
+                        commentId: 1,
+                        pullRequestReviewId: 1,
+                        suggestionId: 's1',
+                    },
                 },
                 {
                     comment: { suggestion: suggestion2 } as any,
                     deliveryStatus: DeliveryStatus.SENT,
-                    codeReviewFeedbackData: { commentId: 2, pullRequestReviewId: 1, suggestionId: 's2' },
+                    codeReviewFeedbackData: {
+                        commentId: 2,
+                        pullRequestReviewId: 1,
+                        suggestionId: 's2',
+                    },
                 },
             ];
 
             const discardedSuggestions = [
-                { id: 's1', priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY },
-                { id: 's2', priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY },
-                { id: 's3', priorityStatus: PriorityStatus.DISCARDED_BY_SEVERITY },
+                {
+                    id: 's1',
+                    priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY,
+                },
+                {
+                    id: 's2',
+                    priorityStatus: PriorityStatus.DISCARDED_BY_QUANTITY,
+                },
+                {
+                    id: 's3',
+                    priorityStatus: PriorityStatus.DISCARDED_BY_SEVERITY,
+                },
             ];
 
-            const result = service.extractRepriorizedSuggestions(commentResults, discardedSuggestions);
+            const result = service.extractRepriorizedSuggestions(
+                commentResults,
+                discardedSuggestions,
+            );
 
             expect(result.repriorizedSuggestions).toHaveLength(2);
             expect(result.filteredDiscardedSuggestions).toHaveLength(1);
