@@ -557,13 +557,24 @@ describe('CliReviewController', () => {
                 expect(result.teamId).toBe(TEAM_ID);
             });
 
-            it('returns valid=false when no active team found', async () => {
+            it('returns valid=false when explicit teamId is not found and differs from orgId', async () => {
                 mockTeamService.findById.mockResolvedValue(null);
+
+                const result = await (
+                    controller as any
+                ).validateKeyInternal(undefined, BEARER_JWT, 'stale-team-uuid');
+
+                expect(result.valid).toBe(false);
+                expect(result.error).toContain('Team not found');
+                expect(mockTeamService.findFirstCreatedTeam).not.toHaveBeenCalled();
+            });
+
+            it('returns valid=false when no teamId provided and no team exists for org', async () => {
                 mockTeamService.findFirstCreatedTeam.mockResolvedValue(null);
 
                 const result = await (
                     controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, TEAM_ID);
+                ).validateKeyInternal(undefined, BEARER_JWT, undefined);
 
                 expect(result.valid).toBe(false);
             });

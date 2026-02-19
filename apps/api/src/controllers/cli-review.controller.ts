@@ -369,6 +369,14 @@ export class CliReviewController {
                 ? await this.teamService.findById(queryTeamId)
                 : null;
 
+            // queryTeamId was explicitly provided but is not a valid team
+            // and is not the orgId (CLI compat: CLI sends orgId as teamId)
+            if (!team && queryTeamId && queryTeamId !== jwtPayload.organizationId) {
+                return buildInvalidPayload(
+                    `Team not found for the provided teamId: ${queryTeamId}`,
+                );
+            }
+
             if (!team) {
                 team = await this.teamService.findFirstCreatedTeam(
                     jwtPayload.organizationId,
@@ -548,6 +556,14 @@ export class CliReviewController {
             let team = queryTeamId
                 ? await this.teamService.findById(queryTeamId)
                 : null;
+
+            // queryTeamId was explicitly provided but is not a valid team
+            // and is not the orgId (CLI compat: CLI sends orgId as teamId)
+            if (!team && queryTeamId && queryTeamId !== payload.organizationId) {
+                throw new UnauthorizedException(
+                    `Team not found for the provided teamId: ${queryTeamId}`,
+                );
+            }
 
             if (!team) {
                 team = await this.teamService.findFirstCreatedTeam(

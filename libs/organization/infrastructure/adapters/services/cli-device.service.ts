@@ -22,10 +22,9 @@ export class CliDeviceService implements ICliDeviceService {
         private readonly cliDeviceRepository: ICliDeviceRepository,
         private readonly configService: ConfigService,
     ) {
-        this.deviceLimit = parseInt(
-            this.configService.get<string>('CLI_DEVICE_LIMIT', '0'),
-            10,
-        );
+        const limitStr = this.configService.get<string>('CLI_DEVICE_LIMIT', '0');
+        const limitNum = parseInt(limitStr, 10);
+        this.deviceLimit = !isNaN(limitNum) ? limitNum : 0;
     }
 
     async validateOrRegisterDevice(params: {
