@@ -172,8 +172,12 @@ export const LanguageSelector = () => {
             render={({ field }) => (
                 <FormControl.Root>
                     <FormControl.Label htmlFor={field.name}>
-                        Language
+                        Kody Language
                     </FormControl.Label>
+
+                    <FormControl.Description>
+                        The language Kody will use in code review responses
+                    </FormControl.Description>
 
                     <FormControl.Input>
                         <Popover

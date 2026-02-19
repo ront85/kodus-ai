@@ -146,6 +146,7 @@ export class TeamDatabaseRepository implements ITeamRepository {
                 where: {
                     uuid,
                 },
+                relations: ['organization'],
             };
 
             const teamSelected =
