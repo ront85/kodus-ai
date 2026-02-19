@@ -129,7 +129,8 @@ describe('ProcessFilesReview', () => {
                 stage: 'FileAnalysisStage',
                 substage: 'test-file.ts',
                 error: expect.objectContaining({
-                    message: '[Check model config] Analysis failed',
+                    message:
+                        'File analysis failed: Analysis failed (Check model config)',
                 }),
                 metadata: {
                     filename: 'test-file.ts',
@@ -140,7 +141,10 @@ describe('ProcessFilesReview', () => {
 
     it('should keep non-blocking behavior and append pipeline error when batch analysis crashes', async () => {
         const error = new Error('Batch analysis crashed');
-        jest.spyOn(stage as any, 'analyzeChangedFilesInBatches').mockRejectedValue(error);
+        jest.spyOn(
+            stage as any,
+            'analyzeChangedFilesInBatches',
+        ).mockRejectedValue(error);
 
         const result = await stage.execute(context);
 

@@ -61,6 +61,10 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
 
         // Reutilizar arquivos do ResolveConfigStage se disponíveis, caso contrário buscar
         let filesToProcess = context.preliminaryFiles;
+        const forceFullRerun = Boolean(context.pipelineMetadata?.forceFullRerun);
+        const baseCommit = forceFullRerun
+            ? undefined
+            : context?.lastExecution?.lastAnalyzedCommit;
 
         if (!filesToProcess || filesToProcess.length === 0) {
             this.logger.log({
@@ -77,7 +81,7 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
                     context.organizationAndTeamData,
                     context.repository,
                     context.pullRequest,
-                    context?.lastExecution?.lastAnalyzedCommit,
+                    baseCommit,
                 );
         }
 
@@ -97,7 +101,7 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
         );
 
         if (!validation.canProceed) {
-            const { message, reasonCode, technicalReason, metadata } =
+            const { message, technicalReason, metadata } =
                 validation.details || {};
 
             this.logger.warn({

@@ -16,6 +16,7 @@ describe('ValidateNewCommitsStage', () => {
     beforeEach(async () => {
         mockAutomationExecutionService = {
             findLatestExecutionByFilters: jest.fn(),
+            hasStageWithStatus: jest.fn(),
         };
 
         mockPullRequestManagerService = {
@@ -66,6 +67,7 @@ describe('ValidateNewCommitsStage', () => {
         );
 
         expect(result.statusInfo.message).toBe(expectedMessage);
+        expect(result.pipelineMetadata?.forceFullRerun).toBe(false);
     });
 
     it('should skip if no NEW commits are found (using PipelineReasons)', async () => {
@@ -92,6 +94,7 @@ describe('ValidateNewCommitsStage', () => {
         );
 
         expect(result.statusInfo.message).toBe(expectedMessage);
+        expect(result.pipelineMetadata?.forceFullRerun).toBe(false);
     });
 
     it('should skip if only merge commits are found (using PipelineReasons)', async () => {
@@ -157,5 +160,32 @@ describe('ValidateNewCommitsStage', () => {
 
         const expectedMessage = `${PipelineReasons.COMMITS.ONLY_MERGE.message}`;
         expect(result.statusInfo.message).toContain(expectedMessage);
+    });
+
+    it('should force full rerun for manual command when previous execution had partial/error analysis', async () => {
+        context.origin = 'command';
+
+        mockAutomationExecutionService.findLatestExecutionByFilters.mockResolvedValue(
+            {
+                uuid: 'exec-1',
+                dataExecution: { lastAnalyzedCommit: 'sha-1' },
+            },
+        );
+        mockAutomationExecutionService.hasStageWithStatus.mockResolvedValue(true);
+
+        const oldCommit = { sha: 'sha-1' };
+        mockPullRequestManagerService.getNewCommitsSinceLastExecution.mockResolvedValue(
+            [oldCommit],
+        );
+
+        const result = await stage.execute(context);
+
+        expect(result.statusInfo?.status).not.toBe(AutomationStatus.SKIPPED);
+        expect(result.pipelineMetadata?.forceFullRerun).toBe(true);
+        expect(mockAutomationExecutionService.hasStageWithStatus).toHaveBeenCalledWith(
+            'exec-1',
+            ['PRLevelReviewStage', 'FileAnalysisStage'],
+            [AutomationStatus.PARTIAL_ERROR, AutomationStatus.ERROR],
+        );
     });
 });

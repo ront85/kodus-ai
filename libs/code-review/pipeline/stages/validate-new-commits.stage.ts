@@ -27,6 +27,14 @@ export class ValidateNewCommitsStage extends BasePipelineStage<CodeReviewPipelin
     readonly visibility = StageVisibility.PRIMARY;
 
     private readonly logger = createLogger(ValidateNewCommitsStage.name);
+    private readonly rerunEligibleStageNames = [
+        'PRLevelReviewStage',
+        'FileAnalysisStage',
+    ];
+    private readonly rerunEligibleStatuses = [
+        AutomationStatus.PARTIAL_ERROR,
+        AutomationStatus.ERROR,
+    ];
 
     constructor(
         @Inject(AUTOMATION_EXECUTION_SERVICE_TOKEN)
@@ -50,6 +58,7 @@ export class ValidateNewCommitsStage extends BasePipelineStage<CodeReviewPipelin
 
         let lastAnalyzedCommit: string | undefined;
         let lastExecutionResult: any;
+        let forceFullRerun = false;
 
         if (lastExecution?.dataExecution?.lastAnalyzedCommit) {
             lastAnalyzedCommit = lastExecution.dataExecution.lastAnalyzedCommit;
@@ -69,6 +78,11 @@ export class ValidateNewCommitsStage extends BasePipelineStage<CodeReviewPipelin
                     pullRequestNumber: context.pullRequest.number,
                 },
             });
+
+            forceFullRerun = await this.shouldForceFullRerun(
+                context,
+                lastExecution.uuid,
+            );
         } else {
             this.logger.log({
                 message: 'No last analyzed commit found, analyzing all commits',
@@ -144,6 +158,10 @@ export class ValidateNewCommitsStage extends BasePipelineStage<CodeReviewPipelin
                 if (lastExecutionResult) {
                     draft.lastExecution = lastExecutionResult;
                 }
+                draft.pipelineMetadata = {
+                    ...draft.pipelineMetadata,
+                    forceFullRerun: false,
+                };
             });
         }
 
@@ -163,7 +181,43 @@ export class ValidateNewCommitsStage extends BasePipelineStage<CodeReviewPipelin
             if (lastExecutionResult) {
                 draft.lastExecution = lastExecutionResult;
             }
+            draft.pipelineMetadata = {
+                ...draft.pipelineMetadata,
+                forceFullRerun,
+            };
         });
+    }
+
+    private async shouldForceFullRerun(
+        context: CodeReviewPipelineContext,
+        lastExecutionId: string,
+    ): Promise<boolean> {
+        if (context.origin !== 'command') {
+            return false;
+        }
+
+        const shouldForce =
+            await this.automationExecutionService.hasStageWithStatus(
+                lastExecutionId,
+                this.rerunEligibleStageNames,
+                this.rerunEligibleStatuses,
+            );
+
+        if (shouldForce) {
+            this.logger.log({
+                message: `Forcing full re-review for PR#${context.pullRequest.number} due to previous partial/error analysis`,
+                context: this.stageName,
+                metadata: {
+                    organizationAndTeamData: context.organizationAndTeamData,
+                    repository: context.repository.name,
+                    pullRequestNumber: context.pullRequest.number,
+                    lastExecutionId,
+                    stageNames: this.rerunEligibleStageNames,
+                },
+            });
+        }
+
+        return shouldForce;
     }
 
     private validateCommits(

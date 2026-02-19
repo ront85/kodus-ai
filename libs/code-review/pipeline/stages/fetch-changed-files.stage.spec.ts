@@ -118,4 +118,24 @@ describe('FetchChangedFilesStage', () => {
 
         expect(result.statusInfo.message).toBe(expectedMessage);
     });
+
+    it('should ignore lastAnalyzedCommit when forceFullRerun is enabled', async () => {
+        context.lastExecution = { lastAnalyzedCommit: 'sha-prev' };
+        context.pipelineMetadata = { forceFullRerun: true } as any;
+
+        mockPullRequestManagerService.getChangedFilesMetadata.mockResolvedValue(
+            [],
+        );
+
+        await stage.execute(context);
+
+        expect(
+            mockPullRequestManagerService.getChangedFilesMetadata,
+        ).toHaveBeenCalledWith(
+            context.organizationAndTeamData,
+            context.repository,
+            context.pullRequest,
+            undefined,
+        );
+    });
 });

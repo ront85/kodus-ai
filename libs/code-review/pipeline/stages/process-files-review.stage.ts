@@ -596,7 +596,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             const errorMessage =
                 error instanceof Error ? error.message : String(error);
             const enrichedError = new Error(
-                `[Check model config] ${errorMessage}`,
+                `File analysis failed: ${errorMessage} (Check model config)`,
             );
 
             return {
