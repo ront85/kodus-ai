@@ -219,48 +219,66 @@ export class GetCodeReviewParameterUseCase {
                 const formattedDirectories = [];
 
                 for (const dir of repo.directories || []) {
-                    const directoryFile =
-                        await this.codeBaseConfigService.getKodusConfigFile({
-                            organizationAndTeamData,
-                            repository,
-                            directoryPath: dir.path,
-                            overrideConfig:
-                                dir.configs
-                                    ?.kodusConfigFileOverridesWebPreferences ??
-                                repo.configs
-                                    ?.kodusConfigFileOverridesWebPreferences ??
-                                false,
+                    try {
+                        const directoryFile =
+                            await this.codeBaseConfigService.getKodusConfigFile({
+                                organizationAndTeamData,
+                                repository,
+                                directoryPath: dir.path,
+                                overrideConfig:
+                                    dir.configs
+                                        ?.kodusConfigFileOverridesWebPreferences ??
+                                    repo.configs
+                                        ?.kodusConfigFileOverridesWebPreferences ??
+                                    false,
+                            });
+
+                        const formattedDirConfig = this.formatLevel(
+                            formattedRepoFileConfig,
+                            dir.configs,
+                            FormattedConfigLevel.DIRECTORY,
+                        );
+
+                        let formattedDirFileConfig = this.formatLevel(
+                            formattedDirConfig,
+                            directoryFile,
+                            FormattedConfigLevel.DIRECTORY_FILE,
+                        );
+
+                        // Buscar e adicionar referências externas do nível diretório
+                        const dirConfigKey =
+                            this.promptReferenceManager.buildConfigKey(
+                                organizationAndTeamData,
+                                repo.id,
+                                dir.id,
+                            );
+                        formattedDirFileConfig =
+                            await this.enrichConfigWithExternalReferences(
+                                formattedDirFileConfig,
+                                dirConfigKey,
+                            );
+
+                        formattedDirectories.push({
+                            ...dir,
+                            configs: formattedDirFileConfig,
                         });
-
-                    const formattedDirConfig = this.formatLevel(
-                        formattedRepoFileConfig,
-                        dir.configs,
-                        FormattedConfigLevel.DIRECTORY,
-                    );
-
-                    let formattedDirFileConfig = this.formatLevel(
-                        formattedDirConfig,
-                        directoryFile,
-                        FormattedConfigLevel.DIRECTORY_FILE,
-                    );
-
-                    // Buscar e adicionar referências externas do nível diretório
-                    const dirConfigKey =
-                        this.promptReferenceManager.buildConfigKey(
-                            organizationAndTeamData,
-                            repo.id,
-                            dir.id,
-                        );
-                    formattedDirFileConfig =
-                        await this.enrichConfigWithExternalReferences(
-                            formattedDirFileConfig,
-                            dirConfigKey,
-                        );
-
-                    formattedDirectories.push({
-                        ...dir,
-                        configs: formattedDirFileConfig,
-                    });
+                    } catch (error) {
+                        this.logger.warn({
+                            message:
+                                'Skipping directory while formatting code review config due to directory-level error',
+                            context: GetCodeReviewParameterUseCase.name,
+                            error,
+                            metadata: {
+                                organizationId:
+                                    organizationAndTeamData.organizationId,
+                                teamId: organizationAndTeamData.teamId,
+                                repositoryId: repo.id,
+                                directoryId: dir.id,
+                                directoryPath: dir.path,
+                            },
+                        });
+                        continue;
+                    }
                 }
 
                 formattedRepositories.push({
