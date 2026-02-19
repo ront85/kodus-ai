@@ -20,6 +20,7 @@ import {
     NotFoundException,
     Post,
     Query,
+    Res,
     UnauthorizedException,
     UseGuards,
 } from '@nestjs/common';
@@ -151,6 +152,7 @@ export class PullRequestController {
         @Headers('x-kodus-device-id') deviceId?: string,
         @Headers('x-kodus-device-token') deviceToken?: string,
         @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
         return this.getSuggestionsWithTeamKey({
             prUrl,
@@ -164,6 +166,7 @@ export class PullRequestController {
             deviceId,
             deviceToken,
             userAgent,
+            res,
         });
     }
 
@@ -197,6 +200,7 @@ export class PullRequestController {
         @Headers('x-kodus-device-id') deviceId?: string,
         @Headers('x-kodus-device-token') deviceToken?: string,
         @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
         return this.getSuggestionsWithTeamKey({
             prUrl,
@@ -210,6 +214,7 @@ export class PullRequestController {
             deviceId,
             deviceToken,
             userAgent,
+            res,
         });
     }
 
@@ -243,6 +248,7 @@ export class PullRequestController {
         @Headers('x-kodus-device-id') deviceId?: string,
         @Headers('x-kodus-device-token') deviceToken?: string,
         @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
         return this.getSuggestionsWithTeamKey({
             prUrl,
@@ -256,6 +262,7 @@ export class PullRequestController {
             deviceId,
             deviceToken,
             userAgent,
+            res,
         });
     }
 
@@ -271,6 +278,7 @@ export class PullRequestController {
         deviceId?: string;
         deviceToken?: string;
         userAgent?: string;
+        res?: any;
     }) {
         const {
             prUrl,
@@ -284,6 +292,7 @@ export class PullRequestController {
             deviceId,
             deviceToken,
             userAgent,
+            res,
         } = params;
 
         const bearerToken = authHeader?.replace(/^Bearer\s+/i, '');
@@ -344,6 +353,12 @@ export class PullRequestController {
                     organizationId,
                     userAgent,
                 });
+            if (deviceResult?.deviceToken && res) {
+                res.setHeader(
+                    'x-kodus-device-token',
+                    deviceResult.deviceToken,
+                );
+            }
         }
 
         const prEntity = await this.findPrEntity({

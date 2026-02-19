@@ -142,6 +142,10 @@ export class CliReviewController {
                         userAgent,
                     });
                 if (deviceResult.deviceToken) {
+                    res.setHeader(
+                        'x-kodus-device-token',
+                        deviceResult.deviceToken,
+                    );
                     payload.deviceToken = deviceResult.deviceToken;
                     if (payload.data) {
                         payload.data.deviceToken = deviceResult.deviceToken;
@@ -220,6 +224,10 @@ export class CliReviewController {
                         userAgent,
                     });
                 if (deviceResult.deviceToken) {
+                    res.setHeader(
+                        'x-kodus-device-token',
+                        deviceResult.deviceToken,
+                    );
                     payload.deviceToken = deviceResult.deviceToken;
                     if (payload.data) {
                         payload.data.deviceToken = deviceResult.deviceToken;
@@ -456,6 +464,7 @@ export class CliReviewController {
         @Headers('x-kodus-device-id') deviceId?: string,
         @Headers('x-kodus-device-token') deviceToken?: string,
         @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
         const bearerToken = authHeader?.replace(/^Bearer\s+/i, '');
 
@@ -584,6 +593,12 @@ export class CliReviewController {
                     organizationId: organizationAndTeamData.organizationId,
                     userAgent,
                 });
+            if (deviceResult?.deviceToken && res) {
+                res.setHeader(
+                    'x-kodus-device-token',
+                    deviceResult.deviceToken,
+                );
+            }
         }
 
         // 4. Check rate limit for authenticated team
@@ -646,6 +661,55 @@ export class CliReviewController {
             ...(deviceResult?.deviceToken
                 ? { deviceToken: deviceResult.deviceToken }
                 : {}),
+        };
+    }
+
+    /**
+     * Trial status endpoint — returns current rate limit info without incrementing
+     */
+    @Get('trial/status')
+    @ApiOperation({
+        summary: 'Get trial rate limit status',
+        description:
+            'Returns current trial usage for the given fingerprint without consuming a review.',
+    })
+    @ApiOkResponse({
+        description: 'Trial status',
+        schema: {
+            type: 'object',
+            properties: {
+                fingerprint: { type: 'string' },
+                reviewsUsed: { type: 'number' },
+                reviewsLimit: { type: 'number' },
+                filesLimit: { type: 'number' },
+                linesLimit: { type: 'number' },
+                resetsAt: { type: 'string' },
+                isLimited: { type: 'boolean' },
+            },
+        },
+    })
+    async trialStatus(@Query('fingerprint') fingerprint: string) {
+        if (!fingerprint) {
+            throw new HttpException(
+                'fingerprint query parameter is required',
+                HttpStatus.BAD_REQUEST,
+            );
+        }
+
+        const status =
+            await this.trialRateLimiter.getRateLimitStatus(fingerprint);
+
+        const reviewsLimit = 2;
+        const reviewsUsed = reviewsLimit - status.remaining;
+
+        return {
+            fingerprint,
+            reviewsUsed,
+            reviewsLimit,
+            filesLimit: 10,
+            linesLimit: 500,
+            resetsAt: status.resetAt?.toISOString() ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            isLimited: !status.allowed,
         };
     }
 
