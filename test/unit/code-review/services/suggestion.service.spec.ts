@@ -1091,6 +1091,117 @@ __new hunk__
                 mockCommentManagerService.repeatedCodeReviewSuggestionClustering,
             ).not.toHaveBeenCalled();
         });
+
+        it('should choose a parent with valid id when an id-less suggestion exists in the group', async () => {
+            mockCommentManagerService.repeatedCodeReviewSuggestionClustering.mockImplementation(
+                async (_org, _pr, _provider, inputSuggestions) =>
+                    inputSuggestions,
+            );
+
+            const suggestionControl = {
+                groupingMode: GroupingModeSuggestions.FULL,
+                limitationType: LimitationType.PR,
+                maxSuggestions: 0,
+                severityLevelFilter: SeverityLevel.LOW,
+                applyFiltersToKodyRules: false,
+            } as any;
+
+            const suggestions = [
+                {
+                    id: '',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/a.ts',
+                    relevantLinesStart: 10,
+                    relevantLinesEnd: 10,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 80,
+                },
+                {
+                    id: 'a1',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/b.tsx',
+                    relevantLinesStart: 20,
+                    relevantLinesEnd: 20,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 90,
+                },
+            ];
+
+            const result = await service.prioritizeSuggestionsLegacy(
+                mockOrganizationAndTeamData as any,
+                suggestionControl,
+                123,
+                suggestions,
+            );
+
+            const parent = result.prioritizedSuggestions.find(
+                (s) => s.clusteringInformation?.type === ClusteringType.PARENT,
+            );
+            const related = result.prioritizedSuggestions.find(
+                (s) => s.clusteringInformation?.type === ClusteringType.RELATED,
+            );
+
+            expect(parent).toBeDefined();
+            expect(parent.id).toBe('a1');
+
+            expect(related).toBeDefined();
+            expect(related.id).toBe('');
+            expect(related.clusteringInformation.parentSuggestionId).toBe('a1');
+        });
+
+        it('should not cluster a group when no suggestion has a valid id', async () => {
+            mockCommentManagerService.repeatedCodeReviewSuggestionClustering.mockImplementation(
+                async (_org, _pr, _provider, inputSuggestions) =>
+                    inputSuggestions,
+            );
+
+            const suggestionControl = {
+                groupingMode: GroupingModeSuggestions.FULL,
+                limitationType: LimitationType.PR,
+                maxSuggestions: 0,
+                severityLevelFilter: SeverityLevel.LOW,
+                applyFiltersToKodyRules: false,
+            } as any;
+
+            const suggestions = [
+                {
+                    id: '',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/a.ts',
+                    relevantLinesStart: 10,
+                    relevantLinesEnd: 10,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 80,
+                },
+                {
+                    id: '',
+                    label: 'kody_rules',
+                    severity: 'high',
+                    relevantFile: 'src/b.tsx',
+                    relevantLinesStart: 20,
+                    relevantLinesEnd: 20,
+                    brokenKodyRulesIds: ['rule-a'],
+                    rankScore: 90,
+                },
+            ];
+
+            const result = await service.prioritizeSuggestionsLegacy(
+                mockOrganizationAndTeamData as any,
+                suggestionControl,
+                123,
+                suggestions,
+            );
+
+            expect(result.prioritizedSuggestions).toHaveLength(2);
+            expect(
+                result.prioritizedSuggestions.every(
+                    (s) => !s.clusteringInformation,
+                ),
+            ).toBe(true);
+        });
     });
 
     describe('prioritizeSuggestions - Kody Rules control branch', () => {

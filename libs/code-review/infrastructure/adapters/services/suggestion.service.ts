@@ -633,8 +633,16 @@ export class SuggestionService implements ISuggestionService {
                 String(a?.id || '').localeCompare(String(b?.id || '')),
             );
 
-            const parentSuggestion = sortedGroup[0];
-            const relatedSuggestions = sortedGroup.slice(1);
+            const parentSuggestion = sortedGroup.find((s) => s?.id);
+
+            if (!parentSuggestion) {
+                clusteredSuggestions.push(...groupedSuggestions);
+                continue;
+            }
+
+            const relatedSuggestions = sortedGroup.filter(
+                (s) => s !== parentSuggestion,
+            );
 
             const problemDescription =
                 parentSuggestion?.oneSentenceSummary ||
