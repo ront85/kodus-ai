@@ -88,6 +88,9 @@ COPY --chown=1000:1000 --from=build /usr/src/app/tsconfig-paths-bootstrap.js ./t
 
 COPY --chmod=0755 docker/prod-entrypoint.sh /usr/local/bin/prod-entrypoint
 
+# Give ownership of working directory to user 1000 so they can create files (like ormlogs.log)
+RUN chown 1000:1000 /usr/src/app
+
 USER 1000
 
 ENTRYPOINT ["/usr/local/bin/prod-entrypoint"]
