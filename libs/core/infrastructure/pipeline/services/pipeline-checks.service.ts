@@ -396,8 +396,14 @@ export class PipelineChecksService implements IPipelineChecksService {
             }
         }
 
-        if (stageName === CheckStageNames._pipelineEndFailure && !reason) {
-            summary = this.buildFailureSummaryFromContext(context) || summary;
+        if (stageName === CheckStageNames._pipelineEndFailure) {
+            const shouldBuildFailureSummaryFromContext =
+                !summary || this.isGenericFailureMessage(summary);
+
+            if (shouldBuildFailureSummaryFromContext) {
+                summary =
+                    this.buildFailureSummaryFromContext(context) || summary;
+            }
         }
 
         try {
