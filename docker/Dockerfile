@@ -87,6 +87,9 @@ COPY --chown=1000:1000 --from=build /usr/src/app/scripts ./scripts
 COPY --chown=1000:1000 --from=build /usr/src/app/tsconfig-paths-bootstrap.js ./tsconfig-paths-bootstrap.js
 
 COPY --chmod=0755 docker/prod-entrypoint.sh /usr/local/bin/prod-entrypoint
+
+USER 1000
+
 ENTRYPOINT ["/usr/local/bin/prod-entrypoint"]
 
 FROM runtime-common AS api
