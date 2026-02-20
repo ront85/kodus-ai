@@ -9,6 +9,7 @@ import {
 
 import { CliReviewController } from '@/core/infrastructure/http/controllers/cli-review.controller';
 import { ExecuteCliReviewUseCase } from '@libs/cli-review/application/use-cases/execute-cli-review.use-case';
+import { SubmitCliSessionCaptureUseCase } from '@libs/cli-review/application/use-cases/submit-cli-session-capture.use-case';
 import { AuthenticatedRateLimiterService } from '@libs/cli-review/infrastructure/services/authenticated-rate-limiter.service';
 import { TrialRateLimiterService } from '@libs/cli-review/infrastructure/services/trial-rate-limiter.service';
 import { TEAM_CLI_KEY_SERVICE_TOKEN } from '@libs/organization/domain/team-cli-key/contracts/team-cli-key.service.contract';
@@ -70,6 +71,30 @@ const MINIMAL_BODY: CliReviewRequestDto = {
     diff: 'diff --git a/x b/x\n+const x = 1;',
 };
 
+const SESSION_CAPTURE_BODY = {
+    branch: 'feat/auth',
+    sha: 'a1b2c3d4e5f6',
+    orgRepo: 'kodustech/cli',
+    agent: 'claude-code',
+    event: 'stop',
+    signals: {
+        sessionId: 'sess-abc',
+        turnId: 'turn-123',
+        prompt: 'Refactor auth to use JWT',
+        assistantMessage: 'I decided to use JWT for stateless authentication.',
+        modifiedFiles: ['src/auth/jwt.ts', 'src/auth/middleware.ts'],
+        toolUses: [
+            {
+                tool: 'Write',
+                filePath: 'src/auth/jwt.ts',
+                summary: 'Created JWT helper',
+            },
+        ],
+    },
+    summary: 'Refactored auth module',
+    capturedAt: '2025-06-01T10:30:00.000Z',
+};
+
 function makeRes() {
     const res: any = {
         status: jest.fn().mockReturnThis(),
@@ -107,6 +132,9 @@ const mockTrialRateLimiter = {
 const mockExecuteCliReview = {
     execute: jest.fn().mockResolvedValue({ suggestions: [] }),
 };
+const mockSubmitCliSessionCapture = {
+    execute: jest.fn().mockResolvedValue({ id: 'cap_abc123', accepted: true }),
+};
 const mockCliDeviceService = {
     validateOrRegisterDevice: jest.fn().mockResolvedValue({}),
 };
@@ -125,6 +153,10 @@ describe('CliReviewController', () => {
                 {
                     provide: ExecuteCliReviewUseCase,
                     useValue: mockExecuteCliReview,
+                },
+                {
+                    provide: SubmitCliSessionCaptureUseCase,
+                    useValue: mockSubmitCliSessionCapture,
                 },
                 {
                     provide: AuthenticatedRateLimiterService,
@@ -168,6 +200,10 @@ describe('CliReviewController', () => {
         });
         mockRateLimiter.checkRateLimit.mockResolvedValue({ allowed: true });
         mockExecuteCliReview.execute.mockResolvedValue({ suggestions: [] });
+        mockSubmitCliSessionCapture.execute.mockResolvedValue({
+            id: 'cap_abc123',
+            accepted: true,
+        });
         mockCliDeviceService.validateOrRegisterDevice.mockResolvedValue({});
     });
 
@@ -465,6 +501,104 @@ describe('CliReviewController', () => {
             } catch (error) {
                 expect(error.getStatus()).toBe(429);
             }
+        });
+    });
+
+    // =========================================================================
+    // POST /cli/memory/captures
+    // =========================================================================
+
+    describe('POST /cli/memory/captures', () => {
+        it('submits capture with valid x-team-key', async () => {
+            mockTeamCliKeyService.validateKey.mockResolvedValue(TEAM_KEY_DATA);
+
+            const result = await controller.submitSessionCapture(
+                SESSION_CAPTURE_BODY as any,
+                TEAM_KEY,
+                undefined,
+                undefined,
+            );
+
+            expect(mockTeamCliKeyService.validateKey).toHaveBeenCalledWith(
+                TEAM_KEY,
+            );
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    organizationAndTeamData: {
+                        organizationId: ORG_ID,
+                        teamId: TEAM_ID,
+                    },
+                    input: expect.objectContaining({
+                        branch: SESSION_CAPTURE_BODY.branch,
+                        orgRepo: SESSION_CAPTURE_BODY.orgRepo,
+                        event: 'stop',
+                    }),
+                }),
+            );
+            expect(result).toEqual({ id: 'cap_abc123', accepted: true });
+        });
+
+        it('submits capture with team key sent via Bearer kodus_ token', async () => {
+            mockTeamCliKeyService.validateKey.mockResolvedValue(TEAM_KEY_DATA);
+
+            await controller.submitSessionCapture(
+                SESSION_CAPTURE_BODY as any,
+                undefined,
+                BEARER_TEAM_KEY,
+                undefined,
+            );
+
+            expect(mockTeamCliKeyService.validateKey).toHaveBeenCalledWith(
+                TEAM_KEY,
+            );
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalled();
+        });
+
+        it('submits capture with JWT auth route', async () => {
+            mockTeamService.findById.mockResolvedValue(makeTeamEntity());
+
+            await controller.submitSessionCapture(
+                SESSION_CAPTURE_BODY as any,
+                undefined,
+                BEARER_JWT,
+                TEAM_ID,
+            );
+
+            expect(mockJwtService.verify).toHaveBeenCalledWith(VALID_JWT, {
+                secret: 'test-secret',
+            });
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    organizationAndTeamData: {
+                        organizationId: ORG_ID,
+                        teamId: TEAM_ID,
+                    },
+                }),
+            );
+        });
+
+        it('throws 401 when auth is missing', async () => {
+            await expect(
+                controller.submitSessionCapture(
+                    SESSION_CAPTURE_BODY as any,
+                    undefined,
+                    undefined,
+                    undefined,
+                ),
+            ).rejects.toThrow(UnauthorizedException);
+        });
+
+        it('throws 401 when team key is invalid', async () => {
+            mockTeamCliKeyService.validateKey.mockResolvedValue(null);
+
+            await expect(
+                controller.submitSessionCapture(
+                    SESSION_CAPTURE_BODY as any,
+                    TEAM_KEY,
+                    undefined,
+                    undefined,
+                ),
+            ).rejects.toThrow(UnauthorizedException);
         });
     });
 
