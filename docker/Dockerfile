@@ -78,15 +78,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates procps \
   && rm -rf /var/lib/apt/lists/*
 
-COPY --from=prod-deps /usr/src/app/node_modules ./node_modules
-COPY --from=build /usr/src/app/dist ./dist
-COPY --from=build /usr/src/app/package.json ./package.json
-COPY --from=build /usr/src/app/default-kodus-config.yml ./default-kodus-config.yml
-COPY --from=build /usr/src/app/kodus-config.yml ./kodus-config.yml
-COPY --from=build /usr/src/app/scripts ./scripts
-COPY --from=build /usr/src/app/tsconfig-paths-bootstrap.js ./tsconfig-paths-bootstrap.js
+COPY --chown=1000:1000 --from=prod-deps /usr/src/app/node_modules ./node_modules
+COPY --chown=1000:1000 --from=build /usr/src/app/dist ./dist
+COPY --chown=1000:1000 --from=build /usr/src/app/package.json ./package.json
+COPY --chown=1000:1000 --from=build /usr/src/app/default-kodus-config.yml ./default-kodus-config.yml
+COPY --chown=1000:1000 --from=build /usr/src/app/kodus-config.yml ./kodus-config.yml
+COPY --chown=1000:1000 --from=build /usr/src/app/scripts ./scripts
+COPY --chown=1000:1000 --from=build /usr/src/app/tsconfig-paths-bootstrap.js ./tsconfig-paths-bootstrap.js
 
 COPY --chmod=0755 docker/prod-entrypoint.sh /usr/local/bin/prod-entrypoint
+
+USER 1000
+
 ENTRYPOINT ["/usr/local/bin/prod-entrypoint"]
 
 FROM runtime-common AS api
