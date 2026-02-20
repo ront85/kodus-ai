@@ -11,6 +11,7 @@ import {
     mapSimpleModelToEntity,
 } from '@libs/core/infrastructure/repositories/mappers';
 import { createNestedConditions } from '@libs/core/infrastructure/repositories/model/filters';
+import { AutomationStatus } from '@libs/automation/domain/automation/enum/automation-status';
 
 import { CodeReviewExecutionModel } from './schemas/codeReviewExecution.model';
 
@@ -236,6 +237,48 @@ export class CodeReviewExecutionRepository<
                 metadata: { uuids },
             });
             return [];
+        }
+    }
+
+    async existsByAutomationExecutionAndStageStatus(
+        executionId: string,
+        stageNames: string[],
+        statuses: AutomationStatus[],
+    ): Promise<boolean> {
+        if (!executionId || stageNames.length === 0 || statuses.length === 0) {
+            return false;
+        }
+
+        try {
+            const found = await this.codeReviewExecutionRepository
+                .createQueryBuilder('codeReviewExecution')
+                .innerJoin(
+                    'codeReviewExecution.automationExecution',
+                    'automationExecution',
+                )
+                .select('1')
+                .where('automationExecution.uuid = :executionId', {
+                    executionId,
+                })
+                .andWhere('codeReviewExecution.stageName IN (:...stageNames)', {
+                    stageNames,
+                })
+                .andWhere('codeReviewExecution.status IN (:...statuses)', {
+                    statuses,
+                })
+                .limit(1)
+                .getRawOne();
+
+            return Boolean(found);
+        } catch (error) {
+            this.logger.error({
+                message:
+                    'Error checking code review execution stage status existence',
+                error,
+                context: CodeReviewExecutionRepository.name,
+                metadata: { executionId, stageNames, statuses },
+            });
+            return false;
         }
     }
 

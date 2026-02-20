@@ -100,4 +100,16 @@ export class CodeReviewExecutionService<
 
         return found[0];
     }
+
+    existsByAutomationExecutionAndStageStatus(
+        executionId: string,
+        stageNames: string[],
+        statuses: AutomationStatus[],
+    ): Promise<boolean> {
+        return this.codeReviewExecutionRepository.existsByAutomationExecutionAndStageStatus(
+            executionId,
+            stageNames,
+            statuses,
+        );
+    }
 }

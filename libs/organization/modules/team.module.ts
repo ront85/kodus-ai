@@ -23,6 +23,11 @@ import { TeamCliKeyService } from '../infrastructure/adapters/services/team-cli-
 import { TeamCliKeyDatabaseRepository } from '../infrastructure/adapters/repositories/team-cli-key.repository';
 import { TEAM_CLI_KEY_SERVICE_TOKEN } from '../domain/team-cli-key/contracts/team-cli-key.service.contract';
 import { TEAM_CLI_KEY_REPOSITORY_TOKEN } from '../domain/team-cli-key/contracts/team-cli-key.repository.contract';
+import { CliDeviceModel } from '../infrastructure/adapters/repositories/schemas/cli-device.model';
+import { CliDeviceDatabaseRepository } from '../infrastructure/adapters/repositories/cli-device.repository';
+import { CliDeviceService } from '../infrastructure/adapters/services/cli-device.service';
+import { CLI_DEVICE_SERVICE_TOKEN } from '../domain/cli-device/contracts/cli-device.service.contract';
+import { CLI_DEVICE_REPOSITORY_TOKEN } from '../domain/cli-device/contracts/cli-device.repository.contract';
 
 @Module({
     imports: [
@@ -30,6 +35,7 @@ import { TEAM_CLI_KEY_REPOSITORY_TOKEN } from '../domain/team-cli-key/contracts/
             TeamModel,
             TeamCliKeyModel,
             IntegrationModel,
+            CliDeviceModel,
         ]),
         forwardRef(() => ProfileConfigModule),
         forwardRef(() => UserModule),
@@ -58,12 +64,22 @@ import { TEAM_CLI_KEY_REPOSITORY_TOKEN } from '../domain/team-cli-key/contracts/
             provide: TEAM_CLI_KEY_REPOSITORY_TOKEN,
             useClass: TeamCliKeyDatabaseRepository,
         },
+        {
+            provide: CLI_DEVICE_SERVICE_TOKEN,
+            useClass: CliDeviceService,
+        },
+        {
+            provide: CLI_DEVICE_REPOSITORY_TOKEN,
+            useClass: CliDeviceDatabaseRepository,
+        },
     ],
     exports: [
         TEAM_SERVICE_TOKEN,
         TEAM_REPOSITORY_TOKEN,
         TEAM_CLI_KEY_SERVICE_TOKEN,
         TEAM_CLI_KEY_REPOSITORY_TOKEN,
+        CLI_DEVICE_SERVICE_TOKEN,
+        CLI_DEVICE_REPOSITORY_TOKEN,
         CreateTeamUseCase,
         ListTeamsUseCase,
         ListTeamsWithIntegrationsUseCase,

@@ -4,7 +4,7 @@ on:
     workflow_dispatch:
         inputs:
             version_type:
-                description: 'Release type (semver)'
+                description: 'Self-hosted release type (semver)'
                 required: true
                 default: 'patch'
                 type: choice
@@ -14,7 +14,7 @@ on:
                     - major
                     - custom
             custom_version:
-                description: 'Custom version (e.g. 2.1.0) - required if type is custom'
+                description: 'Custom self-hosted version (e.g. 0.12.0 or selfhosted-0.12.0) - required if type is custom'
                 required: false
 
 jobs:
@@ -22,7 +22,8 @@ jobs:
         name: Create Release and Tag
         runs-on: ubuntu-latest
         outputs:
-            new_version: ${{ steps.bump.outputs.new_version }}
+            release_tag: ${{ steps.bump.outputs.release_tag }}
+            release_version: ${{ steps.bump.outputs.release_version }}
         permissions:
             contents: write
         steps:
@@ -35,12 +36,12 @@ jobs:
               id: get_latest
               run: |
                   set -euo pipefail
-                  # Get latest semver tag (accepts legacy v-prefixed tags; ignores web-* tags)
-                  LATEST_TAG=$(git tag --sort=-v:refname | awk '!/web-/ && /^(v)?[0-9]+\.[0-9]+\.[0-9]+$/{print; exit}')
+                  # Get latest self-hosted semver tag
+                  LATEST_TAG=$(git tag --sort=-v:refname | awk '/^selfhosted-[0-9]+\.[0-9]+\.[0-9]+$/{print; exit}')
                   if [ -z "${LATEST_TAG}" ]; then
-                    LATEST_TAG="0.0.0"
+                    LATEST_TAG="selfhosted-0.0.0"
                   fi
-                  echo "Latest version: $LATEST_TAG"
+                  echo "Latest self-hosted tag: $LATEST_TAG"
                   echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
             - name: Bump Version
@@ -48,13 +49,12 @@ jobs:
               run: |
                   set -euo pipefail
                   LATEST="${{ steps.get_latest.outputs.latest_tag }}"
-                  if [[ ! "$LATEST" =~ ^(v)?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-                    echo "Invalid latest tag format: $LATEST (expected MAJOR.MINOR.PATCH)"
+                  if [[ ! "$LATEST" =~ ^selfhosted-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "Invalid latest tag format: $LATEST (expected selfhosted-MAJOR.MINOR.PATCH)"
                     exit 1
                   fi
 
-                  # Remove optional legacy 'v' prefix for calculation
-                  VERSION=${LATEST#v}
+                  VERSION=${LATEST#selfhosted-}
 
                   IFS='.' read -r -a parts <<< "$VERSION"
                   MAJOR=${parts[0]}
@@ -65,7 +65,12 @@ jobs:
 
                   if [ "$TYPE" == "custom" ]; then
                     NEW_VERSION="${{ github.event.inputs.custom_version }}"
-                    # Normalize to non-prefixed tags (2.0.16), even if user types v2.0.16
+                    if [ -z "$NEW_VERSION" ]; then
+                      echo "custom_version is required when version_type=custom"
+                      exit 1
+                    fi
+                    # Normalize accepted custom formats: selfhosted-x.y.z, vX.Y.Z or X.Y.Z
+                    NEW_VERSION=${NEW_VERSION#selfhosted-}
                     NEW_VERSION=${NEW_VERSION#v}
                     if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                       echo "Invalid custom version: $NEW_VERSION (expected MAJOR.MINOR.PATCH)"
@@ -85,23 +90,33 @@ jobs:
                     NEW_VERSION="$MAJOR.$MINOR.$PATCH"
                   fi
 
-                  echo "New version: $NEW_VERSION"
-                  echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+                  RELEASE_TAG="selfhosted-${NEW_VERSION}"
+                  echo "New self-hosted version: $NEW_VERSION"
+                  echo "New self-hosted tag: $RELEASE_TAG"
+                  echo "release_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+                  echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
-            - name: Create Git Tag
+            - name: Ensure Git Tag Exists
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: |
+                  set -euo pipefail
+                  TAG="${{ steps.bump.outputs.release_tag }}"
+                  if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" > /dev/null 2>&1; then
+                    echo "Tag ${TAG} already exists on origin. Skipping creation."
+                    exit 0
+                  fi
+
                   git config user.name "GitHub Actions"
                   git config user.email "actions@github.com"
-                  git tag ${{ steps.bump.outputs.new_version }}
-                  git push origin ${{ steps.bump.outputs.new_version }}
+                  git tag "${TAG}"
+                  git push origin "${TAG}"
 
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2.0.4
               with:
-                  tag_name: ${{ steps.bump.outputs.new_version }}
-                  name: 'Self-Hosted Release ${{ steps.bump.outputs.new_version }}'
+                  tag_name: ${{ steps.bump.outputs.release_tag }}
+                  name: 'Self-Hosted Release ${{ steps.bump.outputs.release_version }}'
                   generate_release_notes: true
                   prerelease: false
 
@@ -116,7 +131,7 @@ jobs:
             - name: Checkout Repository
               uses: actions/checkout@v4.2.2
               with:
-                  ref: ${{ needs.create-release.outputs.new_version }}
+                  ref: ${{ needs.create-release.outputs.release_tag }}
 
             - name: Set up QEMU
               uses: docker/setup-qemu-action@v3.2.0
@@ -135,11 +150,11 @@ jobs:
 
             - name: Build and Push Docker Images
               env:
-                  TAG: ${{ needs.create-release.outputs.new_version }}
-                  API_TAGS: ghcr.io/${{ github.repository_owner }}/kodus-ai-api:${{ needs.create-release.outputs.new_version }},ghcr.io/${{ github.repository_owner }}/kodus-ai-api:latest
-                  WEBHOOKS_TAGS: ghcr.io/${{ github.repository_owner }}/kodus-ai-webhook:${{ needs.create-release.outputs.new_version }},ghcr.io/${{ github.repository_owner }}/kodus-ai-webhook:latest
-                  WORKER_TAGS: ghcr.io/${{ github.repository_owner }}/kodus-ai-worker:${{ needs.create-release.outputs.new_version }},ghcr.io/${{ github.repository_owner }}/kodus-ai-worker:latest
-                  WEB_TAGS: ghcr.io/${{ github.repository_owner }}/kodus-ai-web:${{ needs.create-release.outputs.new_version }},ghcr.io/${{ github.repository_owner }}/kodus-ai-web:latest
+                  TAG: ${{ needs.create-release.outputs.release_version }}
+                  API_TAGS: ghcr.io/${{ github.repository_owner }}/kodus-ai-api:${{ needs.create-release.outputs.release_version }},ghcr.io/${{ github.repository_owner }}/kodus-ai-api:latest
+                  WEBHOOKS_TAGS: ghcr.io/${{ github.repository_owner }}/kodus-ai-webhook:${{ needs.create-release.outputs.release_version }},ghcr.io/${{ github.repository_owner }}/kodus-ai-webhook:latest
+                  WORKER_TAGS: ghcr.io/${{ github.repository_owner }}/kodus-ai-worker:${{ needs.create-release.outputs.release_version }},ghcr.io/${{ github.repository_owner }}/kodus-ai-worker:latest
+                  WEB_TAGS: ghcr.io/${{ github.repository_owner }}/kodus-ai-web:${{ needs.create-release.outputs.release_version }},ghcr.io/${{ github.repository_owner }}/kodus-ai-web:latest
               run: |
                   set -euo pipefail
 
@@ -156,9 +171,9 @@ jobs:
               uses: sarisia/actions-status-discord@v1.15.3
               with:
                   webhook: ${{ secrets.DISCORD_WEBHOOK }}
-                  content: ':tada: New Release `${{ needs.create-release.outputs.new_version }}` published!'
+                  content: ':tada: New Self-Hosted Release `${{ needs.create-release.outputs.release_tag }}` published!'
                   title: 'Self-Hosted Release'
-                  description: 'Docker images built and pushed to GHCR. Tag created on GitHub.'
+                  description: 'Docker images built and pushed to GHCR. Git tag ensured on GitHub.'
                   username: 'GitHub Actions'
                   color: 0x00FF00
 
@@ -167,7 +182,7 @@ jobs:
               uses: sarisia/actions-status-discord@v1.15.3
               with:
                   webhook: ${{ secrets.DISCORD_WEBHOOK }}
-                  content: ':x: Failed to publish release `${{ needs.create-release.outputs.new_version }}`.'
+                  content: ':x: Failed to publish self-hosted release `${{ needs.create-release.outputs.release_tag }}`.'
                   title: 'Self-Hosted Release Failed'
                   username: 'GitHub Actions'
                   color: 0xFF0000
