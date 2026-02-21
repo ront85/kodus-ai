@@ -1,4 +1,5 @@
 import { ExecuteCliReviewUseCase } from '@libs/cli-review/application/use-cases/execute-cli-review.use-case';
+import { SubmitCliSessionCaptureUseCase } from '@libs/cli-review/application/use-cases/submit-cli-session-capture.use-case';
 import { AuthenticatedRateLimiterService } from '@libs/cli-review/infrastructure/services/authenticated-rate-limiter.service';
 import { TrialRateLimiterService } from '@libs/cli-review/infrastructure/services/trial-rate-limiter.service';
 import {
@@ -57,6 +58,8 @@ import {
     CliValidateKeyResponseDto,
     TrialCliReviewResponseDto,
 } from '../dtos/cli-review.response.dto';
+import { CliSessionCaptureRequestDto } from '../dtos/cli-session-capture.dto';
+import { CliSessionCaptureResponseDto } from '../dtos/cli-session-capture.response.dto';
 
 /**
  * Controller for CLI code review endpoints
@@ -71,6 +74,7 @@ export class CliReviewController {
 
     constructor(
         private readonly executeCliReviewUseCase: ExecuteCliReviewUseCase,
+        private readonly submitCliSessionCaptureUseCase: SubmitCliSessionCaptureUseCase,
         private readonly trialRateLimiter: TrialRateLimiterService,
         private readonly authenticatedRateLimiter: AuthenticatedRateLimiterService,
         @Inject(TEAM_CLI_KEY_SERVICE_TOKEN)
@@ -678,6 +682,50 @@ export class CliReviewController {
                 ? { deviceToken: deviceResult.deviceToken }
                 : {}),
         };
+    }
+
+    @Post('memory/captures')
+    @ApiOperation({
+        summary: 'Submit CLI memory capture',
+        description:
+            'Stores a CLI session capture for asynchronous decision classification. Supports `x-team-key` and JWT `Authorization: Bearer`.',
+    })
+    @ApiHeader({
+        name: 'x-team-key',
+        required: false,
+        description: 'Team CLI key (alternative to Authorization: Bearer)',
+    })
+    @ApiOkResponse({ type: CliSessionCaptureResponseDto })
+    @ApiUnauthorizedResponse({
+        description: 'Invalid or missing authentication',
+        type: ApiErrorDto,
+    })
+    async captureMemory(
+        @Body() body: CliSessionCaptureRequestDto,
+        @Headers('x-team-key') teamKey?: string,
+        @Headers('authorization') authHeader?: string,
+        @Query('teamId') queryTeamId?: string,
+    ) {
+        const authResult = await this.validateKeyInternal(
+            teamKey,
+            authHeader,
+            queryTeamId,
+        );
+
+        if (!authResult.valid || !authResult.organizationId || !authResult.teamId) {
+            throw new UnauthorizedException(
+                authResult.error ||
+                    'Authentication required. Provide a team API key via X-Team-Key header, or a JWT via Authorization: Bearer header.',
+            );
+        }
+
+        return this.submitCliSessionCaptureUseCase.execute({
+            organizationAndTeamData: {
+                organizationId: authResult.organizationId,
+                teamId: authResult.teamId,
+            },
+            input: body,
+        });
     }
 
     /**

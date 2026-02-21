@@ -9,6 +9,7 @@ import {
 
 import { CliReviewController } from '@/core/infrastructure/http/controllers/cli-review.controller';
 import { ExecuteCliReviewUseCase } from '@libs/cli-review/application/use-cases/execute-cli-review.use-case';
+import { SubmitCliSessionCaptureUseCase } from '@libs/cli-review/application/use-cases/submit-cli-session-capture.use-case';
 import { AuthenticatedRateLimiterService } from '@libs/cli-review/infrastructure/services/authenticated-rate-limiter.service';
 import { TrialRateLimiterService } from '@libs/cli-review/infrastructure/services/trial-rate-limiter.service';
 import { TEAM_CLI_KEY_SERVICE_TOKEN } from '@libs/organization/domain/team-cli-key/contracts/team-cli-key.service.contract';
@@ -70,6 +71,23 @@ const MINIMAL_BODY: CliReviewRequestDto = {
     diff: 'diff --git a/x b/x\n+const x = 1;',
 };
 
+const MINIMAL_CAPTURE_BODY = {
+    branch: 'feat/auth',
+    sha: 'a1b2c3d4e5f6',
+    orgRepo: 'kodustech/cli',
+    agent: 'codex' as const,
+    event: 'stop' as const,
+    signals: {
+        sessionId: 'sess-123',
+        turnId: 'turn-456',
+        prompt: 'Refactor auth',
+        assistantMessage: 'I decided to centralize auth in middleware',
+        modifiedFiles: ['src/auth/middleware.ts'],
+        toolUses: [{ tool: 'Edit', filePath: 'src/auth/middleware.ts' }],
+    },
+    capturedAt: '2026-02-20T10:00:00.000Z',
+};
+
 function makeRes() {
     const res: any = {
         status: jest.fn().mockReturnThis(),
@@ -107,6 +125,9 @@ const mockTrialRateLimiter = {
 const mockExecuteCliReview = {
     execute: jest.fn().mockResolvedValue({ suggestions: [] }),
 };
+const mockSubmitCliSessionCapture = {
+    execute: jest.fn().mockResolvedValue({ id: 'cap_123', accepted: true }),
+};
 const mockCliDeviceService = {
     validateOrRegisterDevice: jest.fn().mockResolvedValue({}),
 };
@@ -125,6 +146,10 @@ describe('CliReviewController', () => {
                 {
                     provide: ExecuteCliReviewUseCase,
                     useValue: mockExecuteCliReview,
+                },
+                {
+                    provide: SubmitCliSessionCaptureUseCase,
+                    useValue: mockSubmitCliSessionCapture,
                 },
                 {
                     provide: AuthenticatedRateLimiterService,
@@ -168,6 +193,10 @@ describe('CliReviewController', () => {
         });
         mockRateLimiter.checkRateLimit.mockResolvedValue({ allowed: true });
         mockExecuteCliReview.execute.mockResolvedValue({ suggestions: [] });
+        mockSubmitCliSessionCapture.execute.mockResolvedValue({
+            id: 'cap_123',
+            accepted: true,
+        });
         mockCliDeviceService.validateOrRegisterDevice.mockResolvedValue({});
     });
 
@@ -1228,6 +1257,73 @@ describe('CliReviewController', () => {
             expect(mockRateLimiter.checkRateLimit).toHaveBeenCalledWith(
                 TEAM_ID,
             );
+        });
+    });
+
+    // =========================================================================
+    // POST /cli/memory/captures
+    // =========================================================================
+
+    describe('POST /cli/memory/captures', () => {
+        it('submits memory capture with team key auth', async () => {
+            mockTeamCliKeyService.validateKey.mockResolvedValue(TEAM_KEY_DATA);
+
+            const result = await controller.captureMemory(
+                MINIMAL_CAPTURE_BODY,
+                TEAM_KEY,
+            );
+
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalledWith({
+                organizationAndTeamData: {
+                    organizationId: ORG_ID,
+                    teamId: TEAM_ID,
+                },
+                input: MINIMAL_CAPTURE_BODY,
+            });
+            expect(result).toEqual({ id: 'cap_123', accepted: true });
+        });
+
+        it('submits memory capture with JWT auth', async () => {
+            mockTeamService.findFirstCreatedTeam.mockResolvedValue(
+                makeTeamEntity(),
+            );
+
+            await controller.captureMemory(
+                MINIMAL_CAPTURE_BODY,
+                undefined,
+                BEARER_JWT,
+            );
+
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalledWith({
+                organizationAndTeamData: {
+                    organizationId: ORG_ID,
+                    teamId: TEAM_ID,
+                },
+                input: MINIMAL_CAPTURE_BODY,
+            });
+        });
+
+        it('supports team key sent in Authorization header', async () => {
+            mockTeamCliKeyService.validateKey.mockResolvedValue(TEAM_KEY_DATA);
+
+            await controller.captureMemory(
+                MINIMAL_CAPTURE_BODY,
+                undefined,
+                BEARER_TEAM_KEY,
+            );
+
+            expect(mockTeamCliKeyService.validateKey).toHaveBeenCalledWith(
+                TEAM_KEY,
+            );
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalled();
+        });
+
+        it('throws 401 when authentication is missing', async () => {
+            await expect(
+                controller.captureMemory(MINIMAL_CAPTURE_BODY),
+            ).rejects.toThrow(UnauthorizedException);
+
+            expect(mockSubmitCliSessionCapture.execute).not.toHaveBeenCalled();
         });
     });
 
