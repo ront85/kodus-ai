@@ -83,8 +83,27 @@ export class SubmitCliSessionCaptureUseCase implements IUseCase {
                         dedupKey,
                     );
 
+                if (!existing?.captureId) {
+                    this.logger.warn({
+                        message:
+                            'Duplicate CLI session capture detected but existing record could not be resolved',
+                        context: SubmitCliSessionCaptureUseCase.name,
+                        metadata: {
+                            dedupKey,
+                            organizationId: organizationAndTeamData.organizationId,
+                            teamId: organizationAndTeamData.teamId,
+                            branch: input.branch,
+                            orgRepo: input.orgRepo,
+                        },
+                    });
+
+                    throw new Error(
+                        'Duplicate CLI session capture detected but existing capture could not be resolved',
+                    );
+                }
+
                 return {
-                    id: existing?.captureId || captureId,
+                    id: existing.captureId,
                     accepted: false,
                 };
             }

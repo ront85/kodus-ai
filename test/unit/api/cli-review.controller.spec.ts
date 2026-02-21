@@ -573,6 +573,11 @@ describe('CliReviewController', () => {
                         organizationId: ORG_ID,
                         teamId: TEAM_ID,
                     },
+                    input: expect.objectContaining({
+                        branch: SESSION_CAPTURE_BODY.branch,
+                        orgRepo: SESSION_CAPTURE_BODY.orgRepo,
+                        event: 'stop',
+                    }),
                 }),
             );
         });

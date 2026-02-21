@@ -7,6 +7,12 @@ import {
 } from './schemas/cli-session-capture.model';
 import { CliSessionClassifiedDecision } from '@libs/cli-review/domain/types/cli-session-capture.types';
 
+type CliSessionCaptureDedupLookup = Pick<CliSessionCaptureModel, 'captureId'>;
+type CliSessionCaptureForClassification = Pick<
+    CliSessionCaptureModel,
+    'captureId' | 'event' | 'summary' | 'signals'
+>;
+
 @Injectable()
 export class CliSessionCaptureRepository {
     constructor(
@@ -20,14 +26,28 @@ export class CliSessionCaptureRepository {
 
     async findByDedupKey(
         dedupKey: string,
-    ): Promise<CliSessionCaptureModel | null> {
-        return this.cliSessionCaptureModel.findOne({ dedupKey }).exec();
+    ): Promise<CliSessionCaptureDedupLookup | null> {
+        return this.cliSessionCaptureModel
+            .findOne({ dedupKey })
+            .select({ captureId: 1, _id: 0 })
+            .lean<CliSessionCaptureDedupLookup>()
+            .exec();
     }
 
     async findByCaptureId(
         captureId: string,
-    ): Promise<CliSessionCaptureModel | null> {
-        return this.cliSessionCaptureModel.findOne({ captureId }).exec();
+    ): Promise<CliSessionCaptureForClassification | null> {
+        return this.cliSessionCaptureModel
+            .findOne({ captureId })
+            .select({
+                captureId: 1,
+                event: 1,
+                summary: 1,
+                signals: 1,
+                _id: 0,
+            })
+            .lean<CliSessionCaptureForClassification>()
+            .exec();
     }
 
     async markProcessing(captureId: string): Promise<void> {

@@ -115,17 +115,20 @@ describe('SubmitCliSessionCaptureUseCase', () => {
         expect(mockClassifyUseCase.execute).not.toHaveBeenCalled();
     });
 
-    it('returns accepted=false for duplicate key when existing capture is missing', async () => {
+    it('throws when duplicate key occurs and existing capture cannot be resolved', async () => {
         mockRepository.create.mockRejectedValue({ code: 11000 });
         mockRepository.findByDedupKey.mockResolvedValue(null);
 
-        const result = await useCase.execute({
-            organizationAndTeamData,
-            input: captureInput,
-        });
+        await expect(
+            useCase.execute({
+                organizationAndTeamData,
+                input: captureInput,
+            }),
+        ).rejects.toThrow(
+            'Duplicate CLI session capture detected but existing capture could not be resolved',
+        );
 
-        expect(result.accepted).toBe(false);
-        expect(result.id).toMatch(/^cap_[a-z0-9]{18}$/);
+        expect(mockRepository.findByDedupKey).toHaveBeenCalledTimes(1);
         expect(mockClassifyUseCase.execute).not.toHaveBeenCalled();
     });
 
