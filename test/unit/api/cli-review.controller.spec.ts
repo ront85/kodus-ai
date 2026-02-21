@@ -1366,6 +1366,73 @@ describe('CliReviewController', () => {
     });
 
     // =========================================================================
+    // POST /cli/memory/captures
+    // =========================================================================
+
+    describe('POST /cli/memory/captures', () => {
+        it('submits memory capture with team key auth', async () => {
+            mockTeamCliKeyService.validateKey.mockResolvedValue(TEAM_KEY_DATA);
+
+            const result = await controller.captureMemory(
+                MINIMAL_CAPTURE_BODY,
+                TEAM_KEY,
+            );
+
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalledWith({
+                organizationAndTeamData: {
+                    organizationId: ORG_ID,
+                    teamId: TEAM_ID,
+                },
+                input: MINIMAL_CAPTURE_BODY,
+            });
+            expect(result).toEqual({ id: 'cap_123', accepted: true });
+        });
+
+        it('submits memory capture with JWT auth', async () => {
+            mockTeamService.findFirstCreatedTeam.mockResolvedValue(
+                makeTeamEntity(),
+            );
+
+            await controller.captureMemory(
+                MINIMAL_CAPTURE_BODY,
+                undefined,
+                BEARER_JWT,
+            );
+
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalledWith({
+                organizationAndTeamData: {
+                    organizationId: ORG_ID,
+                    teamId: TEAM_ID,
+                },
+                input: MINIMAL_CAPTURE_BODY,
+            });
+        });
+
+        it('supports team key sent in Authorization header', async () => {
+            mockTeamCliKeyService.validateKey.mockResolvedValue(TEAM_KEY_DATA);
+
+            await controller.captureMemory(
+                MINIMAL_CAPTURE_BODY,
+                undefined,
+                BEARER_TEAM_KEY,
+            );
+
+            expect(mockTeamCliKeyService.validateKey).toHaveBeenCalledWith(
+                TEAM_KEY,
+            );
+            expect(mockSubmitCliSessionCapture.execute).toHaveBeenCalled();
+        });
+
+        it('throws 401 when authentication is missing', async () => {
+            await expect(
+                controller.captureMemory(MINIMAL_CAPTURE_BODY),
+            ).rejects.toThrow(UnauthorizedException);
+
+            expect(mockSubmitCliSessionCapture.execute).not.toHaveBeenCalled();
+        });
+    });
+
+    // =========================================================================
     // POST /cli/trial/review
     // =========================================================================
 
