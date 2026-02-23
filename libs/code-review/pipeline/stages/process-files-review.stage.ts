@@ -117,8 +117,12 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                     draft.errors.push(...errors);
                 }
 
-                // Release cross-file context data no longer needed by subsequent stages
+                // Release data no longer needed by subsequent stages
                 draft.crossFileContexts = undefined;
+
+                for (const file of draft.changedFiles) {
+                    delete file.patchWithLinesStr;
+                }
             });
         } catch (error) {
             this.logger.error({
@@ -308,11 +312,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 });
             }
 
-            // Release heavy per-file data already consumed by this batch
             for (const file of batch) {
                 processedFiles.add(file.filename);
-                delete file.astFormattedContent;
-                delete file.patchWithLinesStr;
             }
 
             // Prune fully-consumed cross-file snippets between batches
