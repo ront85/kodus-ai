@@ -119,10 +119,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                     draft.errors.push(...errors);
                 }
 
-                // Release heavy data no longer needed by subsequent stages
-                for (const file of draft.changedFiles) {
-                    delete file.patchWithLinesStr;
-                }
+                // Release cross-file context data no longer needed by subsequent stages
+                draft.crossFileContexts = undefined;
             });
         } catch (error) {
             this.logger.error({
@@ -312,10 +310,14 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 });
             }
 
-            // Prune fully-consumed cross-file snippets between batches
+            // Release heavy per-file data already consumed by this batch
             for (const file of batch) {
                 processedFiles.add(file.filename);
+                delete file.astFormattedContent;
+                delete file.patchWithLinesStr;
             }
+
+            // Prune fully-consumed cross-file snippets between batches
             if (context.crossFileSnippets?.length) {
                 const before = context.crossFileSnippets.length;
                 context.crossFileSnippets = context.crossFileSnippets.filter(
@@ -335,6 +337,9 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 }
             }
         }
+
+        // Release any remaining cross-file snippets that weren't pruned during batch processing
+        context.crossFileSnippets = [];
     }
 
     private async processSingleBatch(
