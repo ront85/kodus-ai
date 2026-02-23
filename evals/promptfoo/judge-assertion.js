@@ -94,9 +94,9 @@ function extractScores(text) {
 function buildJudgePrompt(referenceSuggestions, modelOutput, refCount) {
     const divider = refCount === 0 ? '1' : 'total_reference_bugs';
 
-    return `You are a harsh, skeptical judge evaluating code review suggestions. Your job is to REJECT anything that is not a clear, provable bug.
+    return `You are a harsh, skeptical judge evaluating code review suggestions. Your job is to REJECT anything that is not a clear, provable issue — whether it is a bug, a performance problem, or a security vulnerability.
 
-## Reference bugs (ground truth):
+## Reference issues (ground truth):
 ${referenceSuggestions}
 
 ## Model output to evaluate:
@@ -107,25 +107,30 @@ ${modelOutput}
 For EVERY suggestion the model made, you MUST write this exact structure:
 
 ### Suggestion N: [one-line summary]
-- Concrete failing input: [specific input that triggers the bug, or "NONE - cannot construct one"]
-- Expected output: [what should happen]
-- Actual output: [what actually happens due to the bug]
+- Category: BUG | PERFORMANCE | SECURITY
+- Concrete scenario: [specific scenario that proves the issue — see criteria below]
+- Expected behavior: [what should happen]
+- Actual behavior: [what actually happens due to the issue]
 - Verdict: VALID or INVALID
 - Reason: [why]
 
-A suggestion is VALID ONLY if you can fill in ALL three fields (failing input, expected output, actual output) with concrete values. If you cannot construct a specific failing scenario, it is INVALID.
+A suggestion is VALID ONLY if you can demonstrate a concrete scenario that proves the issue exists:
+- **Bug**: Provide a specific input that triggers wrong behavior — what the output should be vs. what it actually is.
+- **Performance**: Describe a realistic workload where the code causes measurable degradation (e.g., O(n²) with large dataset, unbounded memory growth, blocking I/O on hot path, N+1 queries). The degradation must be demonstrable with concrete numbers or data sizes.
+- **Security**: Describe a realistic attack vector that an external user or attacker could exploit (e.g., path traversal, injection, timing attack, SSRF) and the concrete consequence (data leak, unauthorized access, etc.).
+
+If you cannot construct a specific, concrete scenario for any of these categories, the suggestion is INVALID.
 
 ### What counts as INVALID (reject aggressively):
-- You cannot provide a concrete failing input/output pair
-- The "bug" is about code style, naming, or formatting
-- The issue is about performance, not correctness (e.g., "O(n^2) could be O(n)")
+- You cannot demonstrate a concrete scenario proving the issue
+- The issue is about code style, naming, or formatting
 - The suggestion is about missing validation for inputs the API is not designed to handle
-- The suggestion describes a "best practice" violation, not a bug
-- The bug requires deliberately malicious or absurd inputs to trigger
+- The suggestion describes a "best practice" violation without a concrete negative consequence
+- The scenario requires absurd or impossible inputs that would never occur in practice (note: for security issues, realistic attack vectors from external users ARE valid — only reject truly impossible scenarios)
 - The description is vague ("could cause issues", "might fail", "potential problem")
 - It is defensive programming ("missing null check") without proving null is reachable through normal code paths
 - It is about missing features or unused options
-- It is about error handling that "could be better" without showing a crash
+- It is about error handling that "could be better" without showing a concrete failure
 - It is about resource leaks that only matter in theory (e.g., "timer not cleared" but the object is garbage collected anyway)
 - It duplicates another suggestion about the same underlying issue
 
@@ -133,8 +138,8 @@ When in doubt, mark INVALID. A suggestion must pass a high bar to be VALID.
 
 ## Step 2: Coverage
 
-Which reference bugs were found by at least one VALID suggestion?
-- List each reference bug and whether it was FOUND or MISSED
+Which reference issues were found by at least one VALID suggestion?
+- List each reference issue and whether it was FOUND or MISSED
 - coverage_score = found_count / ${divider}
 
 ## Step 3: Validity

@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const path = require('path');
+const { loadResults } = require('./load-results');
+const { results: allResults, loadedFiles } = loadResults();
 
-const data = JSON.parse(fs.readFileSync(path.join(__dirname, 'results', 'output.json'), 'utf-8'));
+if (allResults.length === 0) {
+    console.error('No result files found in results/. Run eval first.');
+    process.exit(1);
+}
+console.log(`Loaded: ${loadedFiles.join(', ')}\n`);
 
 // Model stats aggregator
 const modelStats = {};
 
-// The actual results array is at data.results.results
-const results = data.results.results;
+const results = allResults;
 
 // Parse JUDGE_METRICS from judge-assertion.js reason string
 // Format: JUDGE_METRICS sonnet_score=0.83 gpt_score=0.75 sonnet_coverage=1.0 ...
@@ -86,7 +89,6 @@ results.forEach(result => {
     const judgeAssertion = components.find(
         c => c.reason && c.reason.includes('JUDGE_METRICS')
     );
-
     if (judgeAssertion) {
         const metrics = parseJudgeMetrics(judgeAssertion.reason);
         if (metrics) {
@@ -230,6 +232,7 @@ sorted.forEach(([model, stats], index) => {
         if (stats.judgeFailsGpt > 0) parts.push(`${stats.judgeFailsGpt} judge-gpt`);
         console.log(`   ├─ Errors:    ${errorTotal + judgeFails}/${totalTests} (${parts.join(', ')})`);
     }
+
     console.log(`   ├─ Passed:    ${passCount}/${totalTests} (threshold 0.7)`);
     console.log(`   ├─ Coverage:  ${fmtPct(combinedCov)} (Sonnet: ${fmtPct(sonnetCov)} | GPT: ${fmtPct(gptCov)})`);
     console.log(`   ├─ Validity:  ${fmtPct(combinedVal)} (Sonnet: ${fmtPct(sonnetVal)} | GPT: ${fmtPct(gptVal)})`);
@@ -253,6 +256,7 @@ sorted.forEach(([model, stats], index) => {
 
 console.log('─────────────────────────────────────────────────────────────────');
 console.log('Score    = avg(Judge Sonnet score, Judge GPT score)');
+
 console.log('Coverage = % of known bugs that were found');
 console.log('Validity = % of suggestions that are real bugs');
 console.log('Line Acc = avg IoU of lines (unfound bugs count as 0)');
