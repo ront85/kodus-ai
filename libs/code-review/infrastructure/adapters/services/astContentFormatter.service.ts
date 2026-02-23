@@ -108,12 +108,6 @@ export class ASTContentFormatterService {
             const taskRes = await this.astAnalysisService.awaitTask(
                 taskId,
                 context.organizationAndTeamData,
-                {
-                    timeout: 300_000,
-                    initialInterval: 2_000,
-                    maxInterval: 5_000,
-                    useExponentialBackoff: false,
-                },
             );
 
             if (taskRes?.task?.status !== TaskStatus.TASK_STATUS_COMPLETED) {
