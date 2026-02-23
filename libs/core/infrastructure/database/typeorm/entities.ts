@@ -24,6 +24,7 @@ import { OrganizationModel } from '../../../../organization/infrastructure/adapt
 import { OrganizationParametersModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/organizationParameters.model';
 import { ParametersModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/parameters.model';
 import { TeamCliKeyModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/team-cli-key.model';
+import { CliDeviceModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/cli-device.model';
 import { TeamModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/team.model';
 import { TeamMemberModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/teamMember.model';
 import { PullRequestsModel } from '../../../../platformData/infrastructure/adapters/repositories/schemas/pullRequests.model';
@@ -64,4 +65,5 @@ export const ENTITIES = [
     ProfileModel,
     CodeReviewExecutionModel,
     InteractionModel,
+    CliDeviceModel,
 ];

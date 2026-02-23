@@ -16,6 +16,8 @@ interface ExceptionResponse {
     message?: string | string[];
     error?: string;
     error_key?: string;
+    code?: string;
+    details?: unknown;
 }
 
 @Catch()
@@ -59,6 +61,8 @@ export class ExceptionsFilter implements ExceptionFilter {
             exception instanceof HttpException ? exception.getResponse() : {};
         let message = 'An unexpected error occurred';
         let error_key: string | undefined;
+        let code: string | undefined;
+        let details: unknown | undefined;
         if (typeof errorResponse === 'string') {
             message = errorResponse;
         } else if (
@@ -72,6 +76,8 @@ export class ExceptionsFilter implements ExceptionFilter {
                 : typedErrorResponse.message || message;
 
             error_key = typedErrorResponse?.error_key;
+            code = typedErrorResponse?.code;
+            details = typedErrorResponse?.details;
         }
 
         const error =
@@ -110,6 +116,8 @@ export class ExceptionsFilter implements ExceptionFilter {
             error,
             message,
             ...(error_key ? { error_key } : {}),
+            ...(code ? { code } : {}),
+            ...(details ? { details } : {}),
         });
     }
 }

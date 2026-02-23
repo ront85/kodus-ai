@@ -7,6 +7,7 @@ import { PROFILE_SERVICE_TOKEN } from '../domain/profile/contracts/profile.servi
 import { PROFILE_REPOSITORY_TOKEN } from '../domain/profile/contracts/profile.repository.contract';
 import { CreateProfileUseCase } from '../application/use-cases/profile/create.use-case';
 import { UpdateProfileUseCase } from '../application/use-cases/profile/update.use-case';
+import { SaveMarketingSurveyUseCase } from '../application/use-cases/profile/save-marketing-survey.use-case';
 import { ProfileDatabaseRepository } from '../infrastructure/adapters/repositories/profile.repository';
 
 @Module({
@@ -27,6 +28,7 @@ import { ProfileDatabaseRepository } from '../infrastructure/adapters/repositori
         PROFILE_REPOSITORY_TOKEN,
         CreateProfileUseCase,
         UpdateProfileUseCase,
+        SaveMarketingSurveyUseCase,
     ],
     controllers: [],
 })

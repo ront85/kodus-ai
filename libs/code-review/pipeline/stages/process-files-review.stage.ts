@@ -88,6 +88,26 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         super();
     }
 
+    private toError(error: unknown): Error {
+        return error instanceof Error ? error : new Error(String(error));
+    }
+
+    private buildPipelineError(
+        substage: string,
+        error: unknown,
+        metadata?: Record<string, unknown>,
+    ): PipelineError {
+        return {
+            stage: this.stageName,
+            substage,
+            error: this.toError(error),
+            metadata: {
+                nonBlocking: true,
+                ...(metadata || {}),
+            },
+        };
+    }
+
     protected async executeStage(
         context: CodeReviewPipelineContext,
     ): Promise<CodeReviewPipelineContext> {
@@ -141,6 +161,12 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 draft.validSuggestions = [];
                 draft.discardedSuggestions = [];
                 draft.fileMetadata = new Map();
+                draft.errors.push(
+                    this.buildPipelineError('executeStage', error, {
+                        pullRequestNumber: context.pullRequest.number,
+                        repositoryName: context.repository.name,
+                    }),
+                );
             });
         }
     }
@@ -170,29 +196,32 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 },
             });
 
-            const batches = this.createBatches(changedFiles);
+            const batches = this.createOptimizedBatches(changedFiles);
 
-            // Create collections upfront — results are collected inline per batch
+            const {
+                results,
+                tasks,
+                errors: batchErrors,
+            } = await this.runBatches(batches, analysisContext);
+
+            // Create collections
             const validSuggestions: Partial<CodeSuggestion>[] = [];
             const discardedSuggestions: Partial<CodeSuggestion>[] = [];
             const fileMetadata = new Map<string, any>();
-            const errors: PipelineError[] = [];
+            const errors: PipelineError[] = [...batchErrors];
 
-            const tasks: AnalysisContext['tasks'] = {
-                astAnalysis: {
-                    ...analysisContext.tasks.astAnalysis,
-                },
-            };
-
-            await this.processBatchesSequentially(
-                batches,
-                analysisContext,
-                tasks,
-                validSuggestions,
-                discardedSuggestions,
-                fileMetadata,
-                errors,
-            );
+            // Process results
+            results.forEach((result) => {
+                if (result.error) {
+                    errors.push(result.error);
+                }
+                this.collectFileProcessingResult(
+                    result,
+                    validSuggestions,
+                    discardedSuggestions,
+                    fileMetadata,
+                );
+            });
 
             this.logger.log({
                 message: `Finished all batches - Analysis complete for PR#${pullRequest.number}`,
@@ -226,7 +255,18 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 fileMetadata: new Map(),
                 validCrossFileSuggestions: [],
                 tasks: { ...context.tasks },
-                errors: [],
+                errors: [
+                    this.buildPipelineError(
+                        'AnalyzeChangedFilesInBatches',
+                        error,
+                        {
+                            organizationId:
+                                organizationAndTeamData.organizationId,
+                            teamId: organizationAndTeamData.teamId,
+                            pullRequestNumber: pullRequest.number,
+                        },
+                    ),
+                ],
             };
         }
     }
@@ -254,7 +294,34 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         });
     }
 
-    private createBatches(files: FileChange[]): FileChange[][] {
+    private async runBatches(
+        batches: FileChange[][],
+        context: AnalysisContext,
+    ): Promise<{
+        results: FileProcessingResult[];
+        tasks: AnalysisContext['tasks'];
+        errors: PipelineError[];
+    }> {
+        const tasks: AnalysisContext['tasks'] = {
+            astAnalysis: {
+                ...context.tasks.astAnalysis,
+            },
+        };
+
+        const { results, errors } = await this.processBatchesSequentially(
+            batches,
+            context,
+            tasks,
+        );
+
+        return {
+            results,
+            tasks,
+            errors,
+        };
+    }
+
+    private createOptimizedBatches(files: FileChange[]): FileChange[][] {
         return createOptimizedBatches(files, {
             minBatchSize: this.MIN_BATCH_SIZE,
             maxBatchSize: this.MAX_BATCH_SIZE,
@@ -265,11 +332,12 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         batches: FileChange[][],
         context: AnalysisContext,
         tasks: AnalysisContext['tasks'],
-        validSuggestions: Partial<CodeSuggestion>[],
-        discardedSuggestions: Partial<CodeSuggestion>[],
-        fileMetadata: Map<string, any>,
-        errors: PipelineError[],
-    ): Promise<void> {
+    ): Promise<{
+        results: FileProcessingResult[];
+        errors: PipelineError[];
+    }> {
+        const allResults: FileProcessingResult[] = [];
+        const errors: PipelineError[] = [];
         const processedFiles = new Set<string>();
 
         for (const [index, batch] of batches.entries()) {
@@ -286,19 +354,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                     tasks,
                 );
 
-                // Collect immediately — no accumulation of intermediate array
-                for (const result of batchResults) {
-                    if (result.error) {
-                        errors.push(result.error);
-                    }
-                    this.collectFileProcessingResult(
-                        result,
-                        validSuggestions,
-                        discardedSuggestions,
-                        fileMetadata,
-                    );
-                }
-                // batchResults goes out of scope here → GC can reclaim
+                allResults.push(...batchResults);
             } catch (error) {
                 this.logger.error({
                     message: `Error processing batch ${index + 1}`,
@@ -310,6 +366,14 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                         pullRequestNumber: context.pullRequest.number,
                     },
                 });
+
+                errors.push(
+                    this.buildPipelineError(`batch-${index + 1}`, error, {
+                        batchIndex: index,
+                        batchSize: batch.length,
+                        pullRequestNumber: context.pullRequest.number,
+                    }),
+                );
             }
 
             for (const file of batch) {
@@ -339,6 +403,11 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
 
         // Release any remaining cross-file snippets that weren't pruned during batch processing
         context.crossFileSnippets = [];
+
+        return {
+            results: allResults,
+            errors,
+        };
     }
 
     private async processSingleBatch(
@@ -665,6 +734,12 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 },
             });
 
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+            const enrichedError = new Error(
+                `File analysis failed: ${errorMessage} (Check model config)`,
+            );
+
             return {
                 validSuggestionsToAnalyze: [],
                 discardedSuggestionsBySafeGuard: [],
@@ -672,10 +747,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 error: {
                     stage: this.stageName,
                     substage: file.filename,
-                    error:
-                        error instanceof Error
-                            ? error
-                            : new Error(String(error)),
+                    error: enrichedError,
                     metadata: {
                         filename: file.filename,
                     },

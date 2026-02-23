@@ -104,6 +104,7 @@ describe('ProcessFilesReview', () => {
 
     it('should capture errors in executeFileAnalysis', async () => {
         const error = new Error('Analysis failed');
+        // Ensure error gets prefixed with config hint
         (
             codeAnalysisOrchestrator.executeStandardAnalysis as jest.Mock
         ).mockRejectedValue(error);
@@ -134,10 +135,35 @@ describe('ProcessFilesReview', () => {
             expect.objectContaining({
                 stage: 'FileAnalysisStage',
                 substage: 'test-file.ts',
-                error: error,
+                error: expect.objectContaining({
+                    message:
+                        'File analysis failed: Analysis failed (Check model config)',
+                }),
                 metadata: {
                     filename: 'test-file.ts',
                 },
+            }),
+        );
+    });
+
+    it('should keep non-blocking behavior and append pipeline error when batch analysis crashes', async () => {
+        const error = new Error('Batch analysis crashed');
+        jest.spyOn(
+            stage as any,
+            'analyzeChangedFilesInBatches',
+        ).mockRejectedValue(error);
+
+        const result = await stage.execute(context);
+
+        expect(result.validSuggestions).toEqual([]);
+        expect(result.discardedSuggestions).toEqual([]);
+        expect(result.fileMetadata).toBeInstanceOf(Map);
+        expect(result.errors).toHaveLength(1);
+        expect(result.errors[0]).toEqual(
+            expect.objectContaining({
+                stage: 'FileAnalysisStage',
+                substage: 'executeStage',
+                error,
             }),
         );
     });

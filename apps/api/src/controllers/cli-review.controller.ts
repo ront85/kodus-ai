@@ -1,4 +1,5 @@
 import { ExecuteCliReviewUseCase } from '@libs/cli-review/application/use-cases/execute-cli-review.use-case';
+import { SubmitCliSessionCaptureUseCase } from '@libs/cli-review/application/use-cases/submit-cli-session-capture.use-case';
 import { AuthenticatedRateLimiterService } from '@libs/cli-review/infrastructure/services/authenticated-rate-limiter.service';
 import { TrialRateLimiterService } from '@libs/cli-review/infrastructure/services/trial-rate-limiter.service';
 import {
@@ -10,7 +11,6 @@ import {
     TEAM_SERVICE_TOKEN,
 } from '@libs/organization/domain/team/contracts/team.service.contract';
 import {
-    BadRequestException,
     Body,
     Controller,
     ForbiddenException,
@@ -34,6 +34,7 @@ import {
 } from '@libs/identity/domain/auth/contracts/auth.service.contracts';
 import {
     ApiBadRequestResponse,
+    ApiCreatedResponse,
     ApiHeader,
     ApiOkResponse,
     ApiOperation,
@@ -41,6 +42,10 @@ import {
     ApiTooManyRequestsResponse,
     ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import {
+    CLI_DEVICE_SERVICE_TOKEN,
+    ICliDeviceService,
+} from '@libs/organization/domain/cli-device/contracts/cli-device.service.contract';
 import { Public } from '@libs/identity/infrastructure/adapters/services/auth/public.decorator';
 import { ApiStandardResponses } from '../docs/api-standard-responses.decorator';
 import { ApiErrorDto } from '../dtos/api-error.dto';
@@ -48,6 +53,8 @@ import {
     CliReviewRequestDto,
     TrialCliReviewRequestDto,
 } from '../dtos/cli-review.dto';
+import { CliSessionCaptureRequestDto } from '../dtos/cli-session-capture.dto';
+import { CliSessionCaptureResponseDto } from '../dtos/cli-session-capture.response.dto';
 import {
     CliReviewRateLimitErrorDto,
     CliReviewResponseDto,
@@ -68,6 +75,7 @@ export class CliReviewController {
 
     constructor(
         private readonly executeCliReviewUseCase: ExecuteCliReviewUseCase,
+        private readonly submitCliSessionCaptureUseCase: SubmitCliSessionCaptureUseCase,
         private readonly trialRateLimiter: TrialRateLimiterService,
         private readonly authenticatedRateLimiter: AuthenticatedRateLimiterService,
         @Inject(TEAM_CLI_KEY_SERVICE_TOKEN)
@@ -76,6 +84,8 @@ export class CliReviewController {
         private readonly teamService: ITeamService,
         @Inject(AUTH_SERVICE_TOKEN)
         private readonly authService: IAuthService,
+        @Inject(CLI_DEVICE_SERVICE_TOKEN)
+        private readonly cliDeviceService: ICliDeviceService,
         private readonly jwtService: JwtService,
         private readonly configService: ConfigService,
     ) {
@@ -101,10 +111,23 @@ export class CliReviewController {
         description: 'Invalid or missing team CLI key',
         type: CliValidateKeyResponseDto,
     })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
     async validateKey(
         @Headers('x-team-key') teamKey: string,
         @Headers('authorization') authHeader: string,
         @Query('teamId') queryTeamId: string,
+        @Headers('x-kodus-device-id') deviceId: string,
+        @Headers('x-kodus-device-token') deviceToken: string,
+        @Headers('user-agent') userAgent: string,
         @Res() res,
     ) {
         const payload = await this.validateKeyInternal(
@@ -112,6 +135,42 @@ export class CliReviewController {
             authHeader,
             queryTeamId,
         );
+
+        // Device tracking (opt-in)
+        if (deviceId && payload.valid && payload.organizationId) {
+            try {
+                const deviceResult =
+                    await this.cliDeviceService.validateOrRegisterDevice({
+                        deviceId,
+                        deviceToken,
+                        organizationId: payload.organizationId,
+                        userAgent,
+                    });
+                if (deviceResult.deviceToken) {
+                    res.setHeader(
+                        'x-kodus-device-token',
+                        deviceResult.deviceToken,
+                    );
+                    payload.deviceToken = deviceResult.deviceToken;
+                    if (payload.data) {
+                        payload.data.deviceToken = deviceResult.deviceToken;
+                    }
+                }
+            } catch (error) {
+                return res.status(error.getStatus?.() ?? 401).json({
+                    ...payload,
+                    valid: false,
+                    error: error.message,
+                    ...(error.getResponse?.()?.code
+                        ? { code: error.getResponse().code }
+                        : {}),
+                    ...(error.getResponse?.()?.details
+                        ? { details: error.getResponse().details }
+                        : {}),
+                });
+            }
+        }
+
         return res.status(payload.valid ? 200 : 401).json(payload);
     }
 
@@ -134,10 +193,23 @@ export class CliReviewController {
         description: 'Invalid or missing team CLI key',
         type: CliValidateKeyResponseDto,
     })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
     async validateKeyPost(
         @Headers('x-team-key') teamKey: string,
         @Headers('authorization') authHeader: string,
         @Query('teamId') queryTeamId: string,
+        @Headers('x-kodus-device-id') deviceId: string,
+        @Headers('x-kodus-device-token') deviceToken: string,
+        @Headers('user-agent') userAgent: string,
         @Res() res,
     ) {
         const payload = await this.validateKeyInternal(
@@ -145,6 +217,42 @@ export class CliReviewController {
             authHeader,
             queryTeamId,
         );
+
+        // Device tracking (opt-in)
+        if (deviceId && payload.valid && payload.organizationId) {
+            try {
+                const deviceResult =
+                    await this.cliDeviceService.validateOrRegisterDevice({
+                        deviceId,
+                        deviceToken,
+                        organizationId: payload.organizationId,
+                        userAgent,
+                    });
+                if (deviceResult.deviceToken) {
+                    res.setHeader(
+                        'x-kodus-device-token',
+                        deviceResult.deviceToken,
+                    );
+                    payload.deviceToken = deviceResult.deviceToken;
+                    if (payload.data) {
+                        payload.data.deviceToken = deviceResult.deviceToken;
+                    }
+                }
+            } catch (error) {
+                return res.status(error.getStatus?.() ?? 401).json({
+                    ...payload,
+                    valid: false,
+                    error: error.message,
+                    ...(error.getResponse?.()?.code
+                        ? { code: error.getResponse().code }
+                        : {}),
+                    ...(error.getResponse?.()?.details
+                        ? { details: error.getResponse().details }
+                        : {}),
+                });
+            }
+        }
+
         return res.status(payload.valid ? 200 : 401).json(payload);
     }
 
@@ -260,17 +368,29 @@ export class CliReviewController {
                 );
             }
 
-            if (!queryTeamId) {
+            // Resolve team: prefer queryTeamId lookup, fall back to first team
+            // for the organization (handles CLI sending organizationId as teamId)
+            let team = queryTeamId
+                ? await this.teamService.findById(queryTeamId)
+                : null;
+
+            // queryTeamId was explicitly provided but is not a valid team
+            // and is not the orgId (CLI compat: CLI sends orgId as teamId)
+            if (!team && queryTeamId && queryTeamId !== jwtPayload.organizationId) {
                 return buildInvalidPayload(
-                    'teamId query parameter is required when using JWT authentication',
+                    `Team not found for the provided teamId: ${queryTeamId}`,
                 );
             }
 
-            const team = await this.teamService.findById(queryTeamId);
+            if (!team) {
+                team = await this.teamService.findFirstCreatedTeam(
+                    jwtPayload.organizationId,
+                );
+            }
 
             if (!team) {
                 return buildInvalidPayload(
-                    'Team not found for the provided teamId',
+                    'No active team found for the authenticated user',
                 );
             }
 
@@ -336,11 +456,28 @@ export class CliReviewController {
         description: 'Rate limit exceeded',
         type: CliReviewRateLimitErrorDto,
     })
+    @ApiUnauthorizedResponse({
+        description: 'Device limit reached',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
     async review(
         @Body() body: CliReviewRequestDto,
         @Headers('x-team-key') teamKey?: string,
         @Headers('authorization') authHeader?: string,
         @Query('teamId') queryTeamId?: string,
+        @Headers('x-kodus-device-id') deviceId?: string,
+        @Headers('x-kodus-device-token') deviceToken?: string,
+        @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
         const bearerToken = authHeader?.replace(/^Bearer\s+/i, '');
 
@@ -419,17 +556,29 @@ export class CliReviewController {
                 );
             }
 
-            if (!queryTeamId) {
-                throw new BadRequestException(
-                    'teamId query parameter is required when using JWT authentication',
+            // Resolve team: prefer queryTeamId lookup, fall back to first team
+            // for the organization (handles CLI sending organizationId as teamId)
+            let team = queryTeamId
+                ? await this.teamService.findById(queryTeamId)
+                : null;
+
+            // queryTeamId was explicitly provided but is not a valid team
+            // and is not the orgId (CLI compat: CLI sends orgId as teamId)
+            if (!team && queryTeamId && queryTeamId !== payload.organizationId) {
+                throw new UnauthorizedException(
+                    `Team not found for the provided teamId: ${queryTeamId}`,
                 );
             }
 
-            const team = await this.teamService.findById(queryTeamId);
+            if (!team) {
+                team = await this.teamService.findFirstCreatedTeam(
+                    payload.organizationId,
+                );
+            }
 
             if (!team) {
                 throw new UnauthorizedException(
-                    'Team not found for the provided teamId',
+                    'No active team found for the authenticated user',
                 );
             }
 
@@ -455,7 +604,25 @@ export class CliReviewController {
             );
         }
 
-        // 3. Check rate limit for authenticated team
+        // 3. Device tracking (opt-in)
+        let deviceResult: { deviceToken?: string } | undefined;
+        if (deviceId) {
+            deviceResult =
+                await this.cliDeviceService.validateOrRegisterDevice({
+                    deviceId,
+                    deviceToken,
+                    organizationId: organizationAndTeamData.organizationId,
+                    userAgent,
+                });
+            if (deviceResult?.deviceToken && res) {
+                res.setHeader(
+                    'x-kodus-device-token',
+                    deviceResult.deviceToken,
+                );
+            }
+        }
+
+        // 4. Check rate limit for authenticated team
         const rateLimitResult =
             await this.authenticatedRateLimiter.checkRateLimit(
                 teamForRateLimit.uuid,
@@ -474,7 +641,7 @@ export class CliReviewController {
             );
         }
 
-        // 4. Validate domain of email (if configured)
+        // 5. Validate domain of email (if configured)
         if (body.userEmail) {
             const allowedDomains =
                 teamForRateLimit.cliConfig?.allowedDomains || [];
@@ -492,8 +659,8 @@ export class CliReviewController {
             }
         }
 
-        // 5. Execute review
-        return this.executeCliReviewUseCase.execute({
+        // 6. Execute review
+        const reviewResult = await this.executeCliReviewUseCase.execute({
             organizationAndTeamData,
             input: {
                 diff: body.diff,
@@ -509,6 +676,137 @@ export class CliReviewController {
                 cliVersion: body.cliVersion,
             },
         });
+
+        return {
+            ...reviewResult,
+            ...(deviceResult?.deviceToken
+                ? { deviceToken: deviceResult.deviceToken }
+                : {}),
+        };
+    }
+
+    /**
+     * CLI memory capture ingestion endpoint
+     * Accepts fire-and-forget capture payloads generated by coding agents
+     */
+    @Post('memory/captures')
+    @ApiOperation({
+        summary: 'Submit CLI memory capture',
+        description:
+            'Receives a memory capture and enqueues async classification. Accepts Team API key via `x-team-key` or JWT via `Authorization: Bearer`.',
+    })
+    @ApiHeader({
+        name: 'x-team-key',
+        required: false,
+        description: 'Team CLI key (alternative to Authorization: Bearer)',
+    })
+    @ApiCreatedResponse({ type: CliSessionCaptureResponseDto })
+    @ApiUnauthorizedResponse({
+        description: 'Invalid or missing authentication',
+        type: ApiErrorDto,
+    })
+    @ApiBadRequestResponse({
+        description: 'Invalid payload',
+        type: ApiErrorDto,
+    })
+    async submitSessionCapture(
+        @Body() body: CliSessionCaptureRequestDto,
+        @Headers('x-team-key') teamKey?: string,
+        @Headers('authorization') authHeader?: string,
+        @Query('teamId') queryTeamId?: string,
+        @Res({ passthrough: true }) res?: any,
+    ) {
+        const auth = await this.validateKeyInternal(
+            teamKey,
+            authHeader,
+            queryTeamId,
+        );
+
+        if (!auth.valid || !auth.organizationId || !auth.teamId) {
+            throw new UnauthorizedException(
+                auth.error ||
+                    'Authentication required. Provide a team API key via X-Team-Key header, or a JWT via Authorization: Bearer header.',
+            );
+        }
+
+        const result = await this.submitCliSessionCaptureUseCase.execute({
+            organizationAndTeamData: {
+                organizationId: auth.organizationId,
+                teamId: auth.teamId,
+            },
+            input: {
+                branch: body.branch,
+                sha: body.sha,
+                orgRepo: body.orgRepo,
+                agent: body.agent,
+                event: body.event,
+                signals: {
+                    sessionId: body.signals.sessionId,
+                    turnId: body.signals.turnId,
+                    prompt: body.signals.prompt,
+                    assistantMessage: body.signals.assistantMessage,
+                    modifiedFiles: body.signals.modifiedFiles || [],
+                    toolUses: body.signals.toolUses || [],
+                },
+                summary: body.summary,
+                capturedAt: body.capturedAt,
+            },
+        });
+
+        if (!result.accepted && res) {
+            res.status(HttpStatus.OK);
+        }
+
+        return result;
+    }
+
+    /**
+     * Trial status endpoint — returns current rate limit info without incrementing
+     */
+    @Get('trial/status')
+    @ApiOperation({
+        summary: 'Get trial rate limit status',
+        description:
+            'Returns current trial usage for the given fingerprint without consuming a review.',
+    })
+    @ApiOkResponse({
+        description: 'Trial status',
+        schema: {
+            type: 'object',
+            properties: {
+                fingerprint: { type: 'string' },
+                reviewsUsed: { type: 'number' },
+                reviewsLimit: { type: 'number' },
+                filesLimit: { type: 'number' },
+                linesLimit: { type: 'number' },
+                resetsAt: { type: 'string' },
+                isLimited: { type: 'boolean' },
+            },
+        },
+    })
+    async trialStatus(@Query('fingerprint') fingerprint: string) {
+        if (!fingerprint) {
+            throw new HttpException(
+                'fingerprint query parameter is required',
+                HttpStatus.BAD_REQUEST,
+            );
+        }
+
+        const status =
+            await this.trialRateLimiter.getRateLimitStatus(fingerprint);
+
+        const reviewsLimit = 2;
+        const reviewsUsed = reviewsLimit - status.remaining;
+
+        return {
+            fingerprint,
+            reviewsUsed,
+            reviewsLimit,
+            filesLimit: 10,
+            linesLimit: 500,
+            resetsAt: status.resetAt?.toISOString() ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            isLimited: !status.allowed,
+        };
     }
 
     /**

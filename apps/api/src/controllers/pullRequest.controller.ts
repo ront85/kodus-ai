@@ -1,4 +1,10 @@
 import { UserRequest } from '@libs/core/infrastructure/config/types/http/user-request.type';
+import { JWT } from '@libs/core/infrastructure/config/types/jwt/jwt';
+import { STATUS } from '@libs/core/infrastructure/config/types/database/status.type';
+import {
+    AUTH_SERVICE_TOKEN,
+    IAuthService,
+} from '@libs/identity/domain/auth/contracts/auth.service.contracts';
 import { BackfillHistoricalPRsUseCase } from '@libs/platformData/application/use-cases/pullRequests/backfill-historical-prs.use-case';
 import { GetEnrichedPullRequestsUseCase } from '@libs/code-review/application/use-cases/dashboard/get-enriched-pull-requests.use-case';
 import {
@@ -14,10 +20,13 @@ import {
     NotFoundException,
     Post,
     Query,
+    Res,
     UnauthorizedException,
     UseGuards,
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { BackfillPRsDto } from '../dtos/backfill-prs.dto';
 import { EnrichedPullRequestsQueryDto } from '@libs/code-review/dtos/dashboard/enriched-pull-requests-query.dto';
 import { PaginatedEnrichedPullRequestsResponse } from '@libs/code-review/dtos/dashboard/paginated-enriched-pull-requests.dto';
@@ -36,14 +45,20 @@ import { DeliveryStatus } from '@libs/platformData/domain/pullRequests/enums/del
 import {
     ApiBearerAuth,
     ApiCreatedResponse,
+    ApiHeader,
     ApiOkResponse,
     ApiOperation,
     ApiTags,
+    ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import {
     ITeamCliKeyService,
     TEAM_CLI_KEY_SERVICE_TOKEN,
 } from '@libs/organization/domain/team-cli-key/contracts/team-cli-key.service.contract';
+import {
+    CLI_DEVICE_SERVICE_TOKEN,
+    ICliDeviceService,
+} from '@libs/organization/domain/cli-device/contracts/cli-device.service.contract';
 import {
     IAutomationExecutionService,
     AUTOMATION_EXECUTION_SERVICE_TOKEN,
@@ -62,6 +77,8 @@ import {
 @ApiStandardResponses()
 @Controller('pull-requests')
 export class PullRequestController {
+    private readonly jwtConfig: JWT;
+
     constructor(
         private readonly getEnrichedPullRequestsUseCase: GetEnrichedPullRequestsUseCase,
         private readonly codeManagementService: CodeManagementService,
@@ -74,7 +91,15 @@ export class PullRequestController {
         private readonly teamCliKeyService: ITeamCliKeyService,
         @Inject(AUTOMATION_EXECUTION_SERVICE_TOKEN)
         private readonly automationExecutionService: IAutomationExecutionService,
-    ) {}
+        @Inject(AUTH_SERVICE_TOKEN)
+        private readonly authService: IAuthService,
+        @Inject(CLI_DEVICE_SERVICE_TOKEN)
+        private readonly cliDeviceService: ICliDeviceService,
+        private readonly jwtService: JwtService,
+        private readonly configService: ConfigService,
+    ) {
+        this.jwtConfig = this.configService.get<JWT>('jwtConfig');
+    }
 
     @Get('/executions')
     @ApiBearerAuth('jwt')
@@ -104,6 +129,17 @@ export class PullRequestController {
             'Returns suggestions for a PR. Requires `x-team-key` when not authenticated. `format=markdown` returns `{ markdown }`.',
     })
     @ApiOkResponse({ type: PullRequestSuggestionsResponseDto })
+    @ApiUnauthorizedResponse({ description: 'Device limit reached' })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
     public async getSuggestionsByPullRequest(
         @Query('prUrl') prUrl?: string,
         @Query('repositoryId') repositoryId?: string,
@@ -113,41 +149,24 @@ export class PullRequestController {
         @Query('category') category?: string,
         @Headers('x-team-key') teamKey?: string,
         @Headers('authorization') authHeader?: string,
+        @Headers('x-kodus-device-id') deviceId?: string,
+        @Headers('x-kodus-device-token') deviceToken?: string,
+        @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
-        const key = teamKey || authHeader?.replace(/^Bearer\s+/i, '');
-        let organizationId = this.request.user?.organization?.uuid;
-
-        if (!organizationId) {
-            if (!key) {
-                throw new UnauthorizedException('Team API key required');
-            }
-            const teamData = await this.teamCliKeyService.validateKey(key);
-            if (!teamData?.organization?.uuid) {
-                throw new UnauthorizedException(
-                    'Invalid or revoked team API key',
-                );
-            }
-            organizationId = teamData.organization.uuid;
-        }
-
-        const prEntity = await this.findPrEntity({
+        return this.getSuggestionsWithTeamKey({
             prUrl,
             repositoryId,
             prNumber,
-            organizationId,
-        });
-
-        if (!prEntity) {
-            throw new NotFoundException('Pull request not found');
-        }
-
-        const pr = prEntity.toObject();
-        return this.buildSuggestionsResponse({
-            pr,
             format,
             severity,
             category,
-            organizationId,
+            teamKey,
+            authHeader,
+            deviceId,
+            deviceToken,
+            userAgent,
+            res,
         });
     }
 
@@ -159,6 +178,16 @@ export class PullRequestController {
             'Returns suggestions for a PR via CLI key. `format=markdown` returns `{ markdown }`.',
     })
     @ApiCreatedResponse({ type: PullRequestSuggestionsResponseDto })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
     public async getSuggestionsByPullRequestWithKey(
         @Body('prUrl') prUrl?: string,
         @Body('repositoryId') repositoryId?: string,
@@ -168,6 +197,10 @@ export class PullRequestController {
         @Body('category') category?: string,
         @Headers('x-team-key') teamKey?: string,
         @Headers('authorization') authHeader?: string,
+        @Headers('x-kodus-device-id') deviceId?: string,
+        @Headers('x-kodus-device-token') deviceToken?: string,
+        @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
         return this.getSuggestionsWithTeamKey({
             prUrl,
@@ -178,6 +211,10 @@ export class PullRequestController {
             category,
             teamKey,
             authHeader,
+            deviceId,
+            deviceToken,
+            userAgent,
+            res,
         });
     }
 
@@ -189,6 +226,16 @@ export class PullRequestController {
             'Returns suggestions for a PR via CLI key. `format=markdown` returns `{ markdown }`.',
     })
     @ApiOkResponse({ type: PullRequestSuggestionsResponseDto })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
     public async getSuggestionsByPullRequestWithKeyGet(
         @Query('prUrl') prUrl?: string,
         @Query('repositoryId') repositoryId?: string,
@@ -198,6 +245,10 @@ export class PullRequestController {
         @Query('category') category?: string,
         @Headers('x-team-key') teamKey?: string,
         @Headers('authorization') authHeader?: string,
+        @Headers('x-kodus-device-id') deviceId?: string,
+        @Headers('x-kodus-device-token') deviceToken?: string,
+        @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
         return this.getSuggestionsWithTeamKey({
             prUrl,
@@ -208,6 +259,10 @@ export class PullRequestController {
             category,
             teamKey,
             authHeader,
+            deviceId,
+            deviceToken,
+            userAgent,
+            res,
         });
     }
 
@@ -220,6 +275,10 @@ export class PullRequestController {
         category?: string;
         teamKey?: string;
         authHeader?: string;
+        deviceId?: string;
+        deviceToken?: string;
+        userAgent?: string;
+        res?: any;
     }) {
         const {
             prUrl,
@@ -230,23 +289,83 @@ export class PullRequestController {
             category,
             teamKey,
             authHeader,
+            deviceId,
+            deviceToken,
+            userAgent,
+            res,
         } = params;
 
-        const key = teamKey || authHeader?.replace(/^Bearer\s+/i, '');
-        if (!key) {
-            throw new UnauthorizedException('Team API key required');
+        const bearerToken = authHeader?.replace(/^Bearer\s+/i, '');
+        let organizationId: string | undefined;
+
+        // Route 1: Team CLI key (via x-team-key or Bearer kodus_...)
+        if (teamKey || bearerToken?.startsWith('kodus_')) {
+            const key = teamKey || bearerToken;
+            const teamData = await this.teamCliKeyService.validateKey(key);
+            if (!teamData?.organization?.uuid) {
+                throw new UnauthorizedException(
+                    'Invalid or revoked team API key',
+                );
+            }
+            organizationId = teamData.organization.uuid;
+        }
+        // Route 2: JWT Bearer token
+        else if (bearerToken) {
+            let jwtPayload: any;
+            try {
+                jwtPayload = this.jwtService.verify(bearerToken, {
+                    secret: this.jwtConfig.secret,
+                });
+            } catch {
+                throw new UnauthorizedException('Invalid or expired JWT token');
+            }
+
+            const user = await this.authService.validateUser({
+                email: jwtPayload.email,
+            });
+
+            if (
+                !user ||
+                user.role !== jwtPayload.role ||
+                user.status !== jwtPayload.status ||
+                user.status === STATUS.REMOVED
+            ) {
+                throw new UnauthorizedException(
+                    'User account is inactive or removed',
+                );
+            }
+
+            organizationId = jwtPayload.organizationId;
+            if (!organizationId) {
+                throw new UnauthorizedException('Invalid JWT payload');
+            }
+        } else {
+            throw new UnauthorizedException('Team API key or JWT required');
         }
 
-        const teamData = await this.teamCliKeyService.validateKey(key);
-        if (!teamData?.organization?.uuid) {
-            throw new UnauthorizedException('Invalid or revoked team API key');
+        // Device tracking (opt-in)
+        let deviceResult: { deviceToken?: string } | undefined;
+        if (deviceId && organizationId) {
+            deviceResult =
+                await this.cliDeviceService.validateOrRegisterDevice({
+                    deviceId,
+                    deviceToken,
+                    organizationId,
+                    userAgent,
+                });
+            if (deviceResult?.deviceToken && res) {
+                res.setHeader(
+                    'x-kodus-device-token',
+                    deviceResult.deviceToken,
+                );
+            }
         }
 
         const prEntity = await this.findPrEntity({
             prUrl,
             repositoryId,
             prNumber,
-            organizationId: teamData.organization.uuid,
+            organizationId,
         });
 
         if (!prEntity) {
@@ -254,13 +373,19 @@ export class PullRequestController {
         }
 
         const pr = prEntity.toObject();
-        return this.buildSuggestionsResponse({
+        const response = this.buildSuggestionsResponse({
             pr,
             format,
             severity,
             category,
-            organizationId: teamData.organization.uuid,
+            organizationId,
         });
+
+        if (deviceResult?.deviceToken) {
+            return { ...response, deviceToken: deviceResult.deviceToken };
+        }
+
+        return response;
     }
 
     private async findPrEntity(params: {

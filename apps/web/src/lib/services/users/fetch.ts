@@ -27,3 +27,10 @@ export const updateUser = async (
 
     return response;
 };
+
+export const saveMarketingSurvey = async (data: {
+    referralSource?: string;
+    primaryGoal?: string;
+}) => {
+    await axiosAuthorized.patch(USERS_PATHS.MARKETING_SURVEY, data);
+};
