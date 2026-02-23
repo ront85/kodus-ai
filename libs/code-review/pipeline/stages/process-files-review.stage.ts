@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
-import pLimit from 'p-limit';
 import { BasePipelineStage } from '@libs/core/infrastructure/pipeline/abstracts/base-stage.abstract';
 import { PipelineError } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-context.interface';
 import { StageVisibility } from '@libs/core/infrastructure/pipeline/enums/stage-visibility.enum';
@@ -64,7 +63,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
 
     private readonly MIN_BATCH_SIZE = 20;
     private readonly MAX_BATCH_SIZE = 30;
-    private readonly concurrencyLimit = 30;
     private readonly logger = createLogger(ProcessFilesReview.name);
 
     constructor(
@@ -552,44 +550,40 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         batch: FileChange[],
         context: AnalysisContext,
     ): Promise<Array<{ fileContext: AnalysisContext }>> {
-        const limit = pLimit(this.concurrencyLimit);
-
         const settledResults = await Promise.allSettled(
-            batch.map((file) =>
-                limit(() => {
-                    const filteredSnippets = this.filterSnippetsForFile(
-                        context.crossFileSnippets,
-                        file,
-                    );
+            batch.map((file) => {
+                const filteredSnippets = this.filterSnippetsForFile(
+                    context.crossFileSnippets,
+                    file,
+                );
 
-                    if (context.crossFileSnippets?.length) {
-                        this.logger.log({
-                            message: `Cross-file snippets for ${file.filename}: ${filteredSnippets.length}/${context.crossFileSnippets.length} passed filter`,
-                            context: ProcessFilesReview.name,
-                            metadata: {
-                                filename: file.filename,
-                                totalSnippets: context.crossFileSnippets.length,
-                                filteredSnippets: filteredSnippets.length,
-                                matchedSymbols: filteredSnippets
-                                    .filter((s) => s.relatedSymbol)
-                                    .map((s) => s.relatedSymbol),
-                            },
-                        });
-                    }
+                if (context.crossFileSnippets?.length) {
+                    this.logger.log({
+                        message: `Cross-file snippets for ${file.filename}: ${filteredSnippets.length}/${context.crossFileSnippets.length} passed filter`,
+                        context: ProcessFilesReview.name,
+                        metadata: {
+                            filename: file.filename,
+                            totalSnippets: context.crossFileSnippets.length,
+                            filteredSnippets: filteredSnippets.length,
+                            matchedSymbols: filteredSnippets
+                                .filter((s) => s.relatedSymbol)
+                                .map((s) => s.relatedSymbol),
+                        },
+                    });
+                }
 
-                    const perFileContext: AnalysisContext = {
-                        ...context,
-                        fileAugmentations:
-                            context.augmentationsByFile?.[file.filename] ?? {},
-                        crossFileSnippets: filteredSnippets,
-                    };
+                const perFileContext: AnalysisContext = {
+                    ...context,
+                    fileAugmentations:
+                        context.augmentationsByFile?.[file.filename] ?? {},
+                    crossFileSnippets: filteredSnippets,
+                };
 
-                    return this.fileReviewContextPreparation.prepareFileContext(
-                        file,
-                        perFileContext,
-                    );
-                }),
-            ),
+                return this.fileReviewContextPreparation.prepareFileContext(
+                    file,
+                    perFileContext,
+                );
+            }),
         );
 
         settledResults?.forEach((res, index) => {
