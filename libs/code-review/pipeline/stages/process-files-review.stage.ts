@@ -401,9 +401,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             }
         }
 
-        // Release any remaining cross-file snippets that weren't pruned during batch processing
-        context.crossFileSnippets = [];
-
         return {
             results: allResults,
             errors,

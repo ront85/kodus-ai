@@ -303,10 +303,6 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
             return (stage as any).processBatchesSequentially(
                 batches,
                 context,
-                { astAnalysis: {} },
-                [],
-                [],
-                new Map(),
                 [],
             );
         };
