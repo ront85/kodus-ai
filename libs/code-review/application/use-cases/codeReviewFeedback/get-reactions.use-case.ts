@@ -59,7 +59,7 @@ export class GetReactionsUseCase implements IUseCase {
                 await this.codeManagementService.getPullRequestReviewComment({
                     organizationAndTeamData,
                     filters: {
-                        repository: pr.repository.name,
+                        repository: pr.repository,
                         pullRequestNumber: pr.number,
                     },
                 });
@@ -81,7 +81,7 @@ export class GetReactionsUseCase implements IUseCase {
                     comments: commentsLinkedToSuggestions,
                     pr: {
                         pull_number: pr.number,
-                        repository: pr.repository.name,
+                        repository: pr.repository,
                     },
                 });
 
@@ -112,10 +112,10 @@ export class GetReactionsUseCase implements IUseCase {
                             repository: {
                                 id:
                                     reaction?.pullRequest?.repository?.id ||
-                                    pr.repository.id,
+                                    pr?.repository?.id,
                                 fullName:
                                     reaction?.pullRequest?.repository
-                                        ?.fullName || pr.repository.name,
+                                        ?.fullName || pr?.repository?.name,
                             },
                         },
                         organizationId: organizationAndTeamData.organizationId,
@@ -144,7 +144,7 @@ export class GetReactionsUseCase implements IUseCase {
                     prsWithoutReactionsDetails: prsWithoutReactions.map(
                         (pr) => ({
                             prNumber: pr.number,
-                            repository: pr.repository.name,
+                            repository: pr?.repository?.name,
                             suggestionsCount: pr.suggestions?.length || 0,
                         }),
                     ),
