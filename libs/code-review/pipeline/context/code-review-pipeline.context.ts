@@ -90,6 +90,15 @@ export interface CodeReviewPipelineContext extends PipelineContext {
         notificationHandled?: boolean;
         showStatusFeedback?: boolean;
         forceFullRerun?: boolean;
+        fileSampling?: {
+            enabled: boolean;
+            minFiles: number;
+            maxFiles: number;
+            targetFiles: number;
+            originalFilteredCount: number;
+            selectedCount: number;
+            sampledOutCount: number;
+        };
     };
 
     initialCommentData?: {
@@ -123,6 +132,9 @@ export interface CodeReviewPipelineContext extends PipelineContext {
 
     validSuggestionsByPR?: ISuggestionByPR[];
     validCrossFileSuggestions?: CodeSuggestion[];
+
+    /** Business logic validation results — merged into PR-level comments by CreatePrLevelCommentsStage. */
+    businessLogicResults?: ISuggestionByPR[];
 
     lineComments?: CommentResult[];
 

@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 
 // Stages
+import { BusinessLogicValidationStage } from './stages/business-logic-validation.stage';
 import { AggregateResultsStage } from './stages/aggregate-result.stage';
 import { CreateFileCommentsStage } from './stages/create-file-comments.stage';
 import { CreatePrLevelCommentsStage } from './stages/create-pr-level-comments.stage';
@@ -20,6 +21,7 @@ import { ValidatePrerequisitesStage } from './stages/validate-prerequisites.stag
 // EE Stages
 
 // Interfaces
+import { AgentsModule } from '@libs/agents/modules/agents.module';
 import { AIEngineModule } from '@libs/ai-engine/modules/ai-engine.module';
 import { AutomationModule } from '@libs/automation/modules/automation.module';
 import { PIPELINE_CHECKS_SERVICE_TOKEN } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-checks-service.interface';
@@ -61,6 +63,7 @@ import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.stra
         forwardRef(() => PullRequestsModule),
         forwardRef(() => ParametersModule),
         forwardRef(() => OrganizationParametersModule),
+        forwardRef(() => AgentsModule),
         forwardRef(() => AIEngineModule),
         forwardRef(() => PlatformModule),
         forwardRef(() => KodyFineTuningContextModule),
@@ -101,6 +104,7 @@ import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.stra
         AggregateResultsStage,
         UpdateCommentsAndGenerateSummaryStage,
         RequestChangesOrApproveStage,
+        BusinessLogicValidationStage,
         ValidateSuggestionsStage,
 
         // EE Stages

@@ -58,11 +58,14 @@ export type ConfigValueMap = {
     [ParametersKey.CODE_REVIEW_CONFIG]: CodeReviewParameter;
     [ParametersKey.LANGUAGE_CONFIG]: LanguageValue;
     [ParametersKey.PLATFORM_CONFIGS]: PlatformConfigValue;
+    /** Per-team SKILL.md instruction override for business-rules-validation skill */
+    [ParametersKey.SKILL_BUSINESS_RULES_VALIDATION]: { content: string };
 } & {
     [K in Exclude<
         ParametersKey,
         | ParametersKey.CODE_REVIEW_CONFIG
         | ParametersKey.LANGUAGE_CONFIG
         | ParametersKey.PLATFORM_CONFIGS
+        | ParametersKey.SKILL_BUSINESS_RULES_VALIDATION
     >]?: any;
 };

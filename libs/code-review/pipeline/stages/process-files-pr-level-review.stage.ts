@@ -19,6 +19,7 @@ import {
 } from '@libs/ee/codeBase/kodyRulesPrLevelAnalysis.service';
 import { KodyRulesScope } from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
 import { CodeReviewPipelineContext } from '../context/code-review-pipeline.context';
+import { BusinessLogicValidationStage } from './business-logic-validation.stage';
 
 @Injectable()
 export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReviewPipelineContext> {
@@ -33,6 +34,8 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
 
         @Inject(CROSS_FILE_ANALYSIS_SERVICE_TOKEN)
         private readonly crossFileAnalysisService: CrossFileAnalysisService,
+
+        private readonly businessLogicValidationStage: BusinessLogicValidationStage,
     ) {
         super();
     }
@@ -84,40 +87,70 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
             return context;
         }
 
-        const kodyRulesResult = await this.runKodyRulesAnalysis(context);
-        const crossFileResult = await this.runCrossFileAnalysis(context);
+        const [kodyRulesSettled, crossFileSettled, businessLogicSettled] =
+            await Promise.allSettled([
+                this.runKodyRulesAnalysis(context),
+                this.runCrossFileAnalysis(context),
+                this.runBusinessLogicValidation(context),
+            ]);
 
-        return this.updateContext(context, (draft) => {
-            // Kody Rules Results
-            if (kodyRulesResult?.suggestions?.length > 0) {
-                if (!draft.validSuggestionsByPR) {
-                    draft.validSuggestionsByPR = [];
+        const kodyRulesResult =
+            kodyRulesSettled.status === 'fulfilled'
+                ? kodyRulesSettled.value
+                : { suggestions: [], error: this.settledError(kodyRulesSettled, 'KodyRulesAnalysis', context) };
+
+        const crossFileResult =
+            crossFileSettled.status === 'fulfilled'
+                ? crossFileSettled.value
+                : { suggestions: [], error: this.settledError(crossFileSettled, 'CrossFileAnalysis', context) };
+
+        const businessLogicContext =
+            businessLogicSettled.status === 'fulfilled'
+                ? businessLogicSettled.value
+                : null;
+
+        if (businessLogicSettled.status === 'rejected') {
+            this.logger.error({
+                message: `BusinessLogicValidation settled as rejected for PR#${context.pullRequest.number}`,
+                context: this.stageName,
+                error: businessLogicSettled.reason,
+            });
+        }
+
+        return this.updateContext(
+            businessLogicContext ?? context,
+            (draft) => {
+                // Kody Rules Results
+                if (kodyRulesResult?.suggestions?.length > 0) {
+                    if (!draft.validSuggestionsByPR) {
+                        draft.validSuggestionsByPR = [];
+                    }
+                    draft.validSuggestionsByPR.push(...kodyRulesResult.suggestions);
                 }
-                draft.validSuggestionsByPR.push(...kodyRulesResult.suggestions);
-            }
 
-            // Cross File Results
-            if (crossFileResult?.suggestions?.length > 0) {
-                if (!draft.prAnalysisResults) {
-                    draft.prAnalysisResults = {};
+                // Cross File Results
+                if (crossFileResult?.suggestions?.length > 0) {
+                    if (!draft.prAnalysisResults) {
+                        draft.prAnalysisResults = {};
+                    }
+                    if (!draft.prAnalysisResults.validCrossFileSuggestions) {
+                        draft.prAnalysisResults.validCrossFileSuggestions = [];
+                    }
+                    draft.prAnalysisResults.validCrossFileSuggestions.push(
+                        ...crossFileResult.suggestions,
+                    );
                 }
-                if (!draft.prAnalysisResults.validCrossFileSuggestions) {
-                    draft.prAnalysisResults.validCrossFileSuggestions = [];
+
+                // Aggregate Errors
+                if (kodyRulesResult?.error) {
+                    draft.errors.push(kodyRulesResult.error);
                 }
-                draft.prAnalysisResults.validCrossFileSuggestions.push(
-                    ...crossFileResult.suggestions,
-                );
-            }
 
-            // Aggregate Errors
-            if (kodyRulesResult?.error) {
-                draft.errors.push(kodyRulesResult.error);
-            }
-
-            if (crossFileResult?.error) {
-                draft.errors.push(crossFileResult.error);
-            }
-        });
+                if (crossFileResult?.error) {
+                    draft.errors.push(crossFileResult.error);
+                }
+            },
+        );
     }
 
     private async runKodyRulesAnalysis(
@@ -277,5 +310,27 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                 },
             };
         }
+    }
+
+    private async runBusinessLogicValidation(
+        context: CodeReviewPipelineContext,
+    ): Promise<CodeReviewPipelineContext> {
+        return this.businessLogicValidationStage.execute(context);
+    }
+
+    private settledError(
+        settled: PromiseRejectedResult,
+        substage: string,
+        context: CodeReviewPipelineContext,
+    ): PipelineError {
+        return {
+            stage: this.stageName,
+            substage,
+            error:
+                settled.reason instanceof Error
+                    ? settled.reason
+                    : new Error(String(settled.reason)),
+            metadata: { prNumber: context.pullRequest.number },
+        };
     }
 }

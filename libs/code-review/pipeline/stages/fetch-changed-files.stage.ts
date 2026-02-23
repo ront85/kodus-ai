@@ -30,6 +30,12 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
 
     private readonly logger = createLogger(FetchChangedFilesStage.name);
     private maxFilesToAnalyze = 500;
+    private readonly randomFileSamplingEnabled =
+        process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_ENABLED === 'true';
+    private readonly randomFileSamplingMin =
+        this.getPositiveIntFromEnv('CODE_REVIEW_RANDOM_FILE_SAMPLE_MIN', 10);
+    private readonly randomFileSamplingMax =
+        this.getPositiveIntFromEnv('CODE_REVIEW_RANDOM_FILE_SAMPLE_MAX', 120);
 
     constructor(
         @Inject(PULL_REQUEST_MANAGER_SERVICE_TOKEN)
@@ -87,16 +93,23 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
 
         // Aplicar filtro ignorePaths
         const ignorePaths = context.codeReviewConfig.ignorePaths || [];
-        const filteredFiles = filesToProcess?.filter(
-            (file) => !isFileMatchingGlob(file.filename, ignorePaths),
-        );
-        const ignoredList = filesToProcess?.filter((file) =>
+        const filteredFiles =
+            filesToProcess?.filter(
+                (file) => !isFileMatchingGlob(file.filename, ignorePaths),
+            ) || [];
+        const ignoredList =
+            filesToProcess?.filter((file) =>
             isFileMatchingGlob(file.filename, ignorePaths),
-        );
+        ) || [];
+        const {
+            filesToAnalyze,
+            sampledOutFiles,
+            samplingMetadata,
+        } = this.getRandomFilesForAnalysis(filteredFiles);
 
         const validation = this.validateFiles(
             filesToProcess,
-            filteredFiles,
+            filesToAnalyze,
             ignorePaths,
         );
 
@@ -109,10 +122,11 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
                 context: FetchChangedFilesStage.name,
                 metadata: {
                     organizationAndTeamData: context?.organizationAndTeamData,
-                    filesCount: filteredFiles?.length || 0,
+                    filesCount: filesToAnalyze?.length || 0,
                     totalFilesBeforeFilter: filesToProcess?.length || 0,
                     ignorePaths,
                     technicalReason,
+                    sampledOutFilesCount: sampledOutFiles.length,
                     ...metadata,
                 },
             });
@@ -127,16 +141,19 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
         }
 
         this.logger.log({
-            message: `Found ${filteredFiles.length} files to analyze for PR#${context.pullRequest.number} (${filesToProcess?.length || 0} total, ${(filesToProcess?.length || 0) - filteredFiles.length} ignored)`,
+            message: `Found ${filesToAnalyze.length} files to analyze for PR#${context.pullRequest.number} (${filesToProcess?.length || 0} total, ${(filesToProcess?.length || 0) - filteredFiles.length} ignored, ${sampledOutFiles.length} sampled out)`,
             context: this.stageName,
             metadata: {
                 organizationAndTeamData: context.organizationAndTeamData,
                 repository: context.repository.name,
                 pullRequestNumber: context.pullRequest.number,
-                filesCount: filteredFiles.length,
+                filesCount: filesToAnalyze.length,
                 totalFilesBeforeFilter: filesToProcess?.length || 0,
                 ignoredFilesCount:
                     (filesToProcess?.length || 0) - filteredFiles.length,
+                sampledOutFilesCount: sampledOutFiles.length,
+                samplingEnabled: this.randomFileSamplingEnabled,
+                samplingTarget: samplingMetadata?.targetFiles,
             },
         });
 
@@ -146,7 +163,7 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
                 context.organizationAndTeamData,
                 context.repository,
                 context.pullRequest,
-                filteredFiles,
+                filesToAnalyze,
             );
 
         const filesWithLineNumbers =
@@ -158,6 +175,9 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
             draft.changedFiles = filesWithLineNumbers;
             draft.pipelineMetadata = {
                 ...draft.pipelineMetadata,
+                ...(samplingMetadata
+                    ? { fileSampling: samplingMetadata }
+                    : {}),
             };
             draft.pullRequest.stats = stats;
             draft.ignoredFiles = ignoredList?.map((f) => f.filename) || [];
@@ -282,5 +302,92 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
             total_files: files.length,
             total_lines_changed: totalAdditions + totalDeletions,
         };
+    }
+
+    private getRandomFilesForAnalysis(filteredFiles: FileChange[]): {
+        filesToAnalyze: FileChange[];
+        sampledOutFiles: string[];
+        samplingMetadata?: NonNullable<
+            CodeReviewPipelineContext['pipelineMetadata']
+        >['fileSampling'];
+    } {
+        if (!filteredFiles?.length) {
+            return { filesToAnalyze: [], sampledOutFiles: [] };
+        }
+
+        if (!this.randomFileSamplingEnabled) {
+            return { filesToAnalyze: filteredFiles, sampledOutFiles: [] };
+        }
+
+        const minFiles = Math.min(
+            this.randomFileSamplingMin,
+            this.randomFileSamplingMax,
+        );
+        const maxFiles = Math.max(
+            this.randomFileSamplingMin,
+            this.randomFileSamplingMax,
+        );
+        const targetFiles = this.getRandomIntInclusive(minFiles, maxFiles);
+        const sampleSize = Math.min(filteredFiles.length, targetFiles);
+
+        if (sampleSize >= filteredFiles.length) {
+            return {
+                filesToAnalyze: filteredFiles,
+                sampledOutFiles: [],
+                samplingMetadata: {
+                    enabled: true,
+                    minFiles,
+                    maxFiles,
+                    targetFiles,
+                    originalFilteredCount: filteredFiles.length,
+                    selectedCount: filteredFiles.length,
+                    sampledOutCount: 0,
+                },
+            };
+        }
+
+        const shuffledIndexes = filteredFiles.map((_, index) => index);
+        for (let index = shuffledIndexes.length - 1; index > 0; index--) {
+            const randomIndex = this.getRandomIntInclusive(0, index);
+            const current = shuffledIndexes[index];
+            shuffledIndexes[index] = shuffledIndexes[randomIndex];
+            shuffledIndexes[randomIndex] = current;
+        }
+
+        const selectedIndexes = new Set(shuffledIndexes.slice(0, sampleSize));
+        const filesToAnalyze = filteredFiles.filter((_, index) =>
+            selectedIndexes.has(index),
+        );
+        const sampledOutFiles = filteredFiles
+            .filter((_, index) => !selectedIndexes.has(index))
+            .map((file) => file.filename);
+
+        return {
+            filesToAnalyze,
+            sampledOutFiles,
+            samplingMetadata: {
+                enabled: true,
+                minFiles,
+                maxFiles,
+                targetFiles,
+                originalFilteredCount: filteredFiles.length,
+                selectedCount: filesToAnalyze.length,
+                sampledOutCount: sampledOutFiles.length,
+            },
+        };
+    }
+
+    private getPositiveIntFromEnv(key: string, fallback: number): number {
+        const value = Number.parseInt(process.env[key] || '', 10);
+
+        if (!Number.isFinite(value) || value <= 0) {
+            return fallback;
+        }
+
+        return value;
+    }
+
+    private getRandomIntInclusive(min: number, max: number): number {
+        return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 }

@@ -10,8 +10,16 @@ describe('FetchChangedFilesStage', () => {
     let stage: FetchChangedFilesStage;
     let mockPullRequestManagerService: any;
     let context: CodeReviewPipelineContext;
+    const originalSamplingEnabled =
+        process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_ENABLED;
+    const originalSamplingMin = process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MIN;
+    const originalSamplingMax = process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MAX;
 
     beforeEach(async () => {
+        delete process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_ENABLED;
+        delete process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MIN;
+        delete process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MAX;
+
         mockPullRequestManagerService = {
             getChangedFilesMetadata: jest.fn(),
             enrichFilesWithContent: jest.fn(),
@@ -36,6 +44,27 @@ describe('FetchChangedFilesStage', () => {
             codeReviewConfig: { ignorePaths: [] },
             pipelineMetadata: {},
         } as CodeReviewPipelineContext;
+    });
+
+    afterAll(() => {
+        if (originalSamplingEnabled !== undefined) {
+            process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_ENABLED =
+                originalSamplingEnabled;
+        } else {
+            delete process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_ENABLED;
+        }
+
+        if (originalSamplingMin !== undefined) {
+            process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MIN = originalSamplingMin;
+        } else {
+            delete process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MIN;
+        }
+
+        if (originalSamplingMax !== undefined) {
+            process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MAX = originalSamplingMax;
+        } else {
+            delete process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MAX;
+        }
     });
 
     it('should skip if no files changed (using PipelineReasons)', async () => {
@@ -137,5 +166,96 @@ describe('FetchChangedFilesStage', () => {
             context.pullRequest,
             undefined,
         );
+    });
+
+    it('should randomly sample files when random sampling is enabled', async () => {
+        process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_ENABLED = 'true';
+        process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MIN = '10';
+        process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MAX = '10';
+
+        const module: TestingModule = await Test.createTestingModule({
+            providers: [
+                FetchChangedFilesStage,
+                {
+                    provide: PULL_REQUEST_MANAGER_SERVICE_TOKEN,
+                    useValue: mockPullRequestManagerService,
+                },
+            ],
+        }).compile();
+
+        stage = module.get<FetchChangedFilesStage>(FetchChangedFilesStage);
+
+        const files = Array(50)
+            .fill(null)
+            .map((_, index) => ({
+                filename: `file${index}.ts`,
+                patch: 'some patch',
+                status: 'modified',
+            }));
+
+        mockPullRequestManagerService.getChangedFilesMetadata.mockResolvedValue(
+            files,
+        );
+        mockPullRequestManagerService.enrichFilesWithContent.mockImplementation(
+            async (
+                _organizationAndTeamData: any,
+                _repository: any,
+                _pullRequest: any,
+                selectedFiles: any[],
+            ) => selectedFiles,
+        );
+
+        const result = await stage.execute(context);
+
+        expect(result.changedFiles).toHaveLength(10);
+        expect(
+            result.pipelineMetadata?.fileSampling?.originalFilteredCount,
+        ).toBe(50);
+        expect(result.pipelineMetadata?.fileSampling?.selectedCount).toBe(10);
+        expect(result.pipelineMetadata?.fileSampling?.sampledOutCount).toBe(40);
+    });
+
+    it('should not skip when file count is high if random sampling is enabled', async () => {
+        process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_ENABLED = 'true';
+        process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MIN = '120';
+        process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_MAX = '120';
+
+        const module: TestingModule = await Test.createTestingModule({
+            providers: [
+                FetchChangedFilesStage,
+                {
+                    provide: PULL_REQUEST_MANAGER_SERVICE_TOKEN,
+                    useValue: mockPullRequestManagerService,
+                },
+            ],
+        }).compile();
+
+        stage = module.get<FetchChangedFilesStage>(FetchChangedFilesStage);
+
+        const files = Array(600)
+            .fill(null)
+            .map((_, index) => ({
+                filename: `file${index}.ts`,
+                patch: 'some patch',
+                status: 'modified',
+            }));
+
+        mockPullRequestManagerService.getChangedFilesMetadata.mockResolvedValue(
+            files,
+        );
+        mockPullRequestManagerService.enrichFilesWithContent.mockImplementation(
+            async (
+                _organizationAndTeamData: any,
+                _repository: any,
+                _pullRequest: any,
+                selectedFiles: any[],
+            ) => selectedFiles,
+        );
+
+        const result = await stage.execute(context);
+
+        expect(result.statusInfo).toBeUndefined();
+        expect(result.changedFiles).toHaveLength(120);
+        expect(result.pipelineMetadata?.fileSampling?.selectedCount).toBe(120);
     });
 });

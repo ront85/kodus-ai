@@ -10,6 +10,8 @@ import { ContextEvidenceAgentProvider } from '../infrastructure/services/kodus-f
 import { BusinessRulesValidationAgentProvider } from '../infrastructure/services/kodus-flow/businessRulesValidationAgent';
 import { ConversationAgentProvider } from '../infrastructure/services/kodus-flow/conversationAgent';
 import { LLMModule } from '@kodus/kodus-common/llm';
+import { SkillLoaderService } from '../skills/skill-loader.service';
+import { SkillRunnerService } from '../infrastructure/services/skill-runner.service';
 
 @Module({
     imports: [
@@ -25,6 +27,8 @@ import { LLMModule } from '@kodus/kodus-common/llm';
         ContextEvidenceAgentProvider,
         BusinessRulesValidationAgentProvider,
         ConversationAgentProvider,
+        SkillLoaderService,
+        SkillRunnerService,
     ],
     exports: [
         BusinessRulesValidationAgentUseCase,
@@ -32,6 +36,8 @@ import { LLMModule } from '@kodus/kodus-common/llm';
         ContextEvidenceAgentProvider,
         BusinessRulesValidationAgentProvider,
         ConversationAgentProvider,
+        SkillLoaderService,
+        SkillRunnerService,
     ],
 })
 export class AgentsModule {}
