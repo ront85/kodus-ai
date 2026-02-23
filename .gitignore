@@ -116,6 +116,10 @@ specs
 .claude
 .codex
 
+# Eval results
+evals/promptfoo/results/
+evals/promptfoo-safeguard/results/
+
 # ESLint Cache
 .eslintcache
 
