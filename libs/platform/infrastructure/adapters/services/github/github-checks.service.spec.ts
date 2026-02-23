@@ -2,6 +2,7 @@ import {
     CheckConclusion,
     CheckStatus,
 } from '@libs/core/infrastructure/pipeline/interfaces/checks-adapter.interface';
+import { AuthMode } from '@libs/platform/domain/platformIntegrations/enums/codeManagement/authMode.enum';
 import { Test, TestingModule } from '@nestjs/testing';
 import { GithubChecksService } from './github-checks.service';
 import { GithubService } from './github.service';
@@ -30,6 +31,9 @@ describe('GithubChecksService', () => {
         };
 
         mockGithubService = {
+            getGithubAuthDetails: jest
+                .fn()
+                .mockResolvedValue({ authMode: AuthMode.OAUTH }),
             getAuthenticatedOctokit: jest.fn().mockResolvedValue(mockOctokit),
         } as any;
 

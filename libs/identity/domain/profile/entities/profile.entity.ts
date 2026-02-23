@@ -11,6 +11,8 @@ export class ProfileEntity implements Entity<IProfile> {
     private _position?: string;
     private _user?: Partial<IUser>;
     private _status: boolean;
+    private _referralSource?: string;
+    private _primaryGoal?: string;
 
     constructor(profile: IProfile) {
         this._uuid = profile.uuid;
@@ -20,6 +22,8 @@ export class ProfileEntity implements Entity<IProfile> {
         this._position = profile.position;
         this._user = profile?.user;
         this._status = profile.status;
+        this._referralSource = profile.referralSource;
+        this._primaryGoal = profile.primaryGoal;
     }
 
     public static create(profile: IProfile) {
@@ -54,6 +58,14 @@ export class ProfileEntity implements Entity<IProfile> {
         return this._status;
     }
 
+    public get referralSource() {
+        return this._referralSource;
+    }
+
+    public get primaryGoal() {
+        return this._primaryGoal;
+    }
+
     public toObject(): IProfile {
         return {
             uuid: this._uuid,
@@ -62,6 +74,8 @@ export class ProfileEntity implements Entity<IProfile> {
             img: this._img,
             position: this._position,
             status: this._status,
+            referralSource: this._referralSource,
+            primaryGoal: this._primaryGoal,
         };
     }
 
@@ -73,6 +87,8 @@ export class ProfileEntity implements Entity<IProfile> {
             img: this._img,
             position: this._position,
             status: this._status,
+            referralSource: this._referralSource,
+            primaryGoal: this._primaryGoal,
         };
     }
 }

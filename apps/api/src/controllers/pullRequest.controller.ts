@@ -1,4 +1,10 @@
 import { UserRequest } from '@libs/core/infrastructure/config/types/http/user-request.type';
+import { JWT } from '@libs/core/infrastructure/config/types/jwt/jwt';
+import { STATUS } from '@libs/core/infrastructure/config/types/database/status.type';
+import {
+    AUTH_SERVICE_TOKEN,
+    IAuthService,
+} from '@libs/identity/domain/auth/contracts/auth.service.contracts';
 import { BackfillHistoricalPRsUseCase } from '@libs/platformData/application/use-cases/pullRequests/backfill-historical-prs.use-case';
 import { GetEnrichedPullRequestsUseCase } from '@libs/code-review/application/use-cases/dashboard/get-enriched-pull-requests.use-case';
 import {
@@ -14,10 +20,13 @@ import {
     NotFoundException,
     Post,
     Query,
+    Res,
     UnauthorizedException,
     UseGuards,
 } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { BackfillPRsDto } from '../dtos/backfill-prs.dto';
 import { EnrichedPullRequestsQueryDto } from '@libs/code-review/dtos/dashboard/enriched-pull-requests-query.dto';
 import { PaginatedEnrichedPullRequestsResponse } from '@libs/code-review/dtos/dashboard/paginated-enriched-pull-requests.dto';
@@ -36,14 +45,25 @@ import { DeliveryStatus } from '@libs/platformData/domain/pullRequests/enums/del
 import {
     ApiBearerAuth,
     ApiCreatedResponse,
+    ApiHeader,
     ApiOkResponse,
     ApiOperation,
     ApiTags,
+    ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import {
     ITeamCliKeyService,
     TEAM_CLI_KEY_SERVICE_TOKEN,
 } from '@libs/organization/domain/team-cli-key/contracts/team-cli-key.service.contract';
+import {
+    CLI_DEVICE_SERVICE_TOKEN,
+    ICliDeviceService,
+} from '@libs/organization/domain/cli-device/contracts/cli-device.service.contract';
+import {
+    IAutomationExecutionService,
+    AUTOMATION_EXECUTION_SERVICE_TOKEN,
+} from '@libs/automation/domain/automationExecution/contracts/automation-execution.service';
+import { AutomationStatus } from '@libs/automation/domain/automation/enum/automation-status';
 import { Public } from '@libs/identity/infrastructure/adapters/services/auth/public.decorator';
 import { ApiStandardResponses } from '../docs/api-standard-responses.decorator';
 import { PullRequestSuggestionsResponseDto } from '../dtos/pull-request-suggestions-response.dto';
@@ -57,6 +77,8 @@ import {
 @ApiStandardResponses()
 @Controller('pull-requests')
 export class PullRequestController {
+    private readonly jwtConfig: JWT;
+
     constructor(
         private readonly getEnrichedPullRequestsUseCase: GetEnrichedPullRequestsUseCase,
         private readonly codeManagementService: CodeManagementService,
@@ -67,7 +89,17 @@ export class PullRequestController {
         private readonly pullRequestsService: IPullRequestsService,
         @Inject(TEAM_CLI_KEY_SERVICE_TOKEN)
         private readonly teamCliKeyService: ITeamCliKeyService,
-    ) {}
+        @Inject(AUTOMATION_EXECUTION_SERVICE_TOKEN)
+        private readonly automationExecutionService: IAutomationExecutionService,
+        @Inject(AUTH_SERVICE_TOKEN)
+        private readonly authService: IAuthService,
+        @Inject(CLI_DEVICE_SERVICE_TOKEN)
+        private readonly cliDeviceService: ICliDeviceService,
+        private readonly jwtService: JwtService,
+        private readonly configService: ConfigService,
+    ) {
+        this.jwtConfig = this.configService.get<JWT>('jwtConfig');
+    }
 
     @Get('/executions')
     @ApiBearerAuth('jwt')
@@ -97,6 +129,17 @@ export class PullRequestController {
             'Returns suggestions for a PR. Requires `x-team-key` when not authenticated. `format=markdown` returns `{ markdown }`.',
     })
     @ApiOkResponse({ type: PullRequestSuggestionsResponseDto })
+    @ApiUnauthorizedResponse({ description: 'Device limit reached' })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
     public async getSuggestionsByPullRequest(
         @Query('prUrl') prUrl?: string,
         @Query('repositoryId') repositoryId?: string,
@@ -106,14 +149,158 @@ export class PullRequestController {
         @Query('category') category?: string,
         @Headers('x-team-key') teamKey?: string,
         @Headers('authorization') authHeader?: string,
+        @Headers('x-kodus-device-id') deviceId?: string,
+        @Headers('x-kodus-device-token') deviceToken?: string,
+        @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
     ) {
-        const key = teamKey || authHeader?.replace(/^Bearer\s+/i, '');
-        let organizationId = this.request.user?.organization?.uuid;
+        return this.getSuggestionsWithTeamKey({
+            prUrl,
+            repositoryId,
+            prNumber,
+            format,
+            severity,
+            category,
+            teamKey,
+            authHeader,
+            deviceId,
+            deviceToken,
+            userAgent,
+            res,
+        });
+    }
 
-        if (!organizationId) {
-            if (!key) {
-                throw new UnauthorizedException('Team API key required');
-            }
+    @Post('/cli/suggestions')
+    @Public()
+    @ApiOperation({
+        summary: 'Get PR suggestions (CLI)',
+        description:
+            'Returns suggestions for a PR via CLI key. `format=markdown` returns `{ markdown }`.',
+    })
+    @ApiCreatedResponse({ type: PullRequestSuggestionsResponseDto })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
+    public async getSuggestionsByPullRequestWithKey(
+        @Body('prUrl') prUrl?: string,
+        @Body('repositoryId') repositoryId?: string,
+        @Body('prNumber') prNumber?: string,
+        @Body('format') format: 'json' | 'markdown' = 'json',
+        @Body('severity') severity?: string,
+        @Body('category') category?: string,
+        @Headers('x-team-key') teamKey?: string,
+        @Headers('authorization') authHeader?: string,
+        @Headers('x-kodus-device-id') deviceId?: string,
+        @Headers('x-kodus-device-token') deviceToken?: string,
+        @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
+    ) {
+        return this.getSuggestionsWithTeamKey({
+            prUrl,
+            repositoryId,
+            prNumber,
+            format,
+            severity,
+            category,
+            teamKey,
+            authHeader,
+            deviceId,
+            deviceToken,
+            userAgent,
+            res,
+        });
+    }
+
+    @Get('/cli/suggestions')
+    @Public()
+    @ApiOperation({
+        summary: 'Get PR suggestions (CLI) via GET',
+        description:
+            'Returns suggestions for a PR via CLI key. `format=markdown` returns `{ markdown }`.',
+    })
+    @ApiOkResponse({ type: PullRequestSuggestionsResponseDto })
+    @ApiHeader({
+        name: 'x-kodus-device-id',
+        required: false,
+        description: 'Unique device identifier for device tracking',
+    })
+    @ApiHeader({
+        name: 'x-kodus-device-token',
+        required: false,
+        description: 'Device token returned on first registration',
+    })
+    public async getSuggestionsByPullRequestWithKeyGet(
+        @Query('prUrl') prUrl?: string,
+        @Query('repositoryId') repositoryId?: string,
+        @Query('prNumber') prNumber?: string,
+        @Query('format') format: 'json' | 'markdown' = 'json',
+        @Query('severity') severity?: string,
+        @Query('category') category?: string,
+        @Headers('x-team-key') teamKey?: string,
+        @Headers('authorization') authHeader?: string,
+        @Headers('x-kodus-device-id') deviceId?: string,
+        @Headers('x-kodus-device-token') deviceToken?: string,
+        @Headers('user-agent') userAgent?: string,
+        @Res({ passthrough: true }) res?: any,
+    ) {
+        return this.getSuggestionsWithTeamKey({
+            prUrl,
+            repositoryId,
+            prNumber,
+            format,
+            severity,
+            category,
+            teamKey,
+            authHeader,
+            deviceId,
+            deviceToken,
+            userAgent,
+            res,
+        });
+    }
+
+    private async getSuggestionsWithTeamKey(params: {
+        prUrl?: string;
+        repositoryId?: string;
+        prNumber?: string;
+        format?: 'json' | 'markdown';
+        severity?: string;
+        category?: string;
+        teamKey?: string;
+        authHeader?: string;
+        deviceId?: string;
+        deviceToken?: string;
+        userAgent?: string;
+        res?: any;
+    }) {
+        const {
+            prUrl,
+            repositoryId,
+            prNumber,
+            format = 'json',
+            severity,
+            category,
+            teamKey,
+            authHeader,
+            deviceId,
+            deviceToken,
+            userAgent,
+            res,
+        } = params;
+
+        const bearerToken = authHeader?.replace(/^Bearer\s+/i, '');
+        let organizationId: string | undefined;
+
+        // Route 1: Team CLI key (via x-team-key or Bearer kodus_...)
+        if (teamKey || bearerToken?.startsWith('kodus_')) {
+            const key = teamKey || bearerToken;
             const teamData = await this.teamCliKeyService.validateKey(key);
             if (!teamData?.organization?.uuid) {
                 throw new UnauthorizedException(
@@ -121,6 +308,57 @@ export class PullRequestController {
                 );
             }
             organizationId = teamData.organization.uuid;
+        }
+        // Route 2: JWT Bearer token
+        else if (bearerToken) {
+            let jwtPayload: any;
+            try {
+                jwtPayload = this.jwtService.verify(bearerToken, {
+                    secret: this.jwtConfig.secret,
+                });
+            } catch {
+                throw new UnauthorizedException('Invalid or expired JWT token');
+            }
+
+            const user = await this.authService.validateUser({
+                email: jwtPayload.email,
+            });
+
+            if (
+                !user ||
+                user.role !== jwtPayload.role ||
+                user.status !== jwtPayload.status ||
+                user.status === STATUS.REMOVED
+            ) {
+                throw new UnauthorizedException(
+                    'User account is inactive or removed',
+                );
+            }
+
+            organizationId = jwtPayload.organizationId;
+            if (!organizationId) {
+                throw new UnauthorizedException('Invalid JWT payload');
+            }
+        } else {
+            throw new UnauthorizedException('Team API key or JWT required');
+        }
+
+        // Device tracking (opt-in)
+        let deviceResult: { deviceToken?: string } | undefined;
+        if (deviceId && organizationId) {
+            deviceResult =
+                await this.cliDeviceService.validateOrRegisterDevice({
+                    deviceId,
+                    deviceToken,
+                    organizationId,
+                    userAgent,
+                });
+            if (deviceResult?.deviceToken && res) {
+                res.setHeader(
+                    'x-kodus-device-token',
+                    deviceResult.deviceToken,
+                );
+            }
         }
 
         const prEntity = await this.findPrEntity({
@@ -135,123 +373,19 @@ export class PullRequestController {
         }
 
         const pr = prEntity.toObject();
-        return this.buildSuggestionsResponse({
+        const response = this.buildSuggestionsResponse({
             pr,
             format,
             severity,
             category,
+            organizationId,
         });
-    }
 
-    @Post('/cli/suggestions')
-    @Public()
-    @ApiOperation({
-        summary: 'Get PR suggestions (CLI)',
-        description:
-            'Returns suggestions for a PR via CLI key. `format=markdown` returns `{ markdown }`.',
-    })
-    @ApiCreatedResponse({ type: PullRequestSuggestionsResponseDto })
-    public async getSuggestionsByPullRequestWithKey(
-        @Body('prUrl') prUrl?: string,
-        @Body('repositoryId') repositoryId?: string,
-        @Body('prNumber') prNumber?: string,
-        @Body('format') format: 'json' | 'markdown' = 'json',
-        @Body('severity') severity?: string,
-        @Body('category') category?: string,
-        @Headers('x-team-key') teamKey?: string,
-        @Headers('authorization') authHeader?: string,
-    ) {
-        return this.getSuggestionsWithTeamKey({
-            prUrl,
-            repositoryId,
-            prNumber,
-            format,
-            severity,
-            category,
-            teamKey,
-            authHeader,
-        });
-    }
-
-    @Get('/cli/suggestions')
-    @Public()
-    @ApiOperation({
-        summary: 'Get PR suggestions (CLI) via GET',
-        description:
-            'Returns suggestions for a PR via CLI key. `format=markdown` returns `{ markdown }`.',
-    })
-    @ApiOkResponse({ type: PullRequestSuggestionsResponseDto })
-    public async getSuggestionsByPullRequestWithKeyGet(
-        @Query('prUrl') prUrl?: string,
-        @Query('repositoryId') repositoryId?: string,
-        @Query('prNumber') prNumber?: string,
-        @Query('format') format: 'json' | 'markdown' = 'json',
-        @Query('severity') severity?: string,
-        @Query('category') category?: string,
-        @Headers('x-team-key') teamKey?: string,
-        @Headers('authorization') authHeader?: string,
-    ) {
-        return this.getSuggestionsWithTeamKey({
-            prUrl,
-            repositoryId,
-            prNumber,
-            format,
-            severity,
-            category,
-            teamKey,
-            authHeader,
-        });
-    }
-
-    private async getSuggestionsWithTeamKey(params: {
-        prUrl?: string;
-        repositoryId?: string;
-        prNumber?: string;
-        format?: 'json' | 'markdown';
-        severity?: string;
-        category?: string;
-        teamKey?: string;
-        authHeader?: string;
-    }) {
-        const {
-            prUrl,
-            repositoryId,
-            prNumber,
-            format = 'json',
-            severity,
-            category,
-            teamKey,
-            authHeader,
-        } = params;
-
-        const key = teamKey || authHeader?.replace(/^Bearer\s+/i, '');
-        if (!key) {
-            throw new UnauthorizedException('Team API key required');
+        if (deviceResult?.deviceToken) {
+            return { ...response, deviceToken: deviceResult.deviceToken };
         }
 
-        const teamData = await this.teamCliKeyService.validateKey(key);
-        if (!teamData?.organization?.uuid) {
-            throw new UnauthorizedException('Invalid or revoked team API key');
-        }
-
-        const prEntity = await this.findPrEntity({
-            prUrl,
-            repositoryId,
-            prNumber,
-            organizationId: teamData.organization.uuid,
-        });
-
-        if (!prEntity) {
-            throw new NotFoundException('Pull request not found');
-        }
-
-        const pr = prEntity.toObject();
-        return this.buildSuggestionsResponse({
-            pr,
-            format,
-            severity,
-            category,
-        });
+        return response;
     }
 
     private async findPrEntity(params: {
@@ -313,13 +447,34 @@ export class PullRequestController {
         return null;
     }
 
+    private trackSuggestionsFetch(params: {
+        organizationId: string;
+        prNumber: number;
+        repositoryFullName?: string;
+        format: string;
+        suggestionsCount: number;
+        filters?: { severity?: string; category?: string };
+    }): void {
+        this.automationExecutionService
+            .create({
+                status: AutomationStatus.SUCCESS,
+                origin: 'cli-suggestions',
+                dataExecution: {
+                    type: 'CLI_PR_SUGGESTIONS',
+                    ...params,
+                },
+            })
+            .catch(() => {}); // fire-and-forget
+    }
+
     private buildSuggestionsResponse(params: {
         pr: any;
         format: 'json' | 'markdown';
         severity?: string;
         category?: string;
+        organizationId: string;
     }) {
-        const { pr, format, severity, category } = params;
+        const { pr, format, severity, category, organizationId } = params;
 
         const severityFilter = severity
             ? new Set(
@@ -363,6 +518,17 @@ export class PullRequestController {
             (s) =>
                 s.deliveryStatus === DeliveryStatus.SENT && matchesFilters(s),
         );
+
+        this.trackSuggestionsFetch({
+            organizationId,
+            prNumber: pr.number,
+            repositoryFullName: pr.repository?.fullName,
+            format,
+            suggestionsCount:
+                fileSuggestions.length + prLevelSuggestions.length,
+            filters:
+                severity || category ? { severity, category } : undefined,
+        });
 
         const payload = {
             prNumber: pr.number,

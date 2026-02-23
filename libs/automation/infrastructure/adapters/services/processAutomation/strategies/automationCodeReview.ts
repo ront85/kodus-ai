@@ -387,7 +387,7 @@ export class AutomationCodeReviewService implements Omit<
         await this.updateAutomationExecution(
             execution,
             finalStatus,
-            'Process completed',
+            finalMessage,
             newData,
             'Kody Review Finished',
         );

@@ -22,6 +22,12 @@ export class ProfileModel extends CoreModel {
     @Column({ default: true })
     public status: boolean;
 
+    @Column({ nullable: true })
+    referralSource: string;
+
+    @Column({ nullable: true })
+    primaryGoal: string;
+
     @OneToOne('UserModel', 'profile')
     @JoinColumn({ name: 'user_id', referencedColumnName: 'uuid' })
     user: UserModel;

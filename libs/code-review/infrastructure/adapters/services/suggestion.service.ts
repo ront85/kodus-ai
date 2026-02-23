@@ -1,6 +1,6 @@
 import { createLogger } from '@kodus/flow';
 import { BYOKConfig, LLMModelProvider } from '@kodus/kodus-common/llm';
-import { Injectable, Inject } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 
 import { IAIAnalysisService } from '@libs/code-review/domain/contracts/AIAnalysisService.contract';
 import {
@@ -9,6 +9,20 @@ import {
 } from '@libs/code-review/domain/contracts/CommentManagerService.contract';
 import { ISuggestionService } from '@libs/code-review/domain/contracts/SuggestionService.contract';
 import {
+    ClusteringType,
+    CodeReviewConfig,
+    CodeReviewVersion,
+    CodeSuggestion,
+    CommentResult,
+    GroupingModeSuggestions,
+    ImplementedSuggestionsToAnalyze,
+    LimitationType,
+    ReviewModeResponse,
+    ReviewOptions,
+    SuggestionControlConfig,
+} from '@libs/core/infrastructure/config/types/general/codeReview.type';
+import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
+import {
     IPullRequestsService,
     PULL_REQUESTS_SERVICE_TOKEN,
 } from '@libs/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
@@ -16,32 +30,18 @@ import { DeliveryStatus } from '@libs/platformData/domain/pullRequests/enums/del
 import { ImplementationStatus } from '@libs/platformData/domain/pullRequests/enums/implementationStatus.enum';
 import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import { ISuggestionByPR } from '@libs/platformData/domain/pullRequests/interfaces/pullRequests.interface';
-import {
-    CodeSuggestion,
-    SuggestionControlConfig,
-    LimitationType,
-    GroupingModeSuggestions,
-    ReviewOptions,
-    ReviewModeResponse,
-    ImplementedSuggestionsToAnalyze,
-    ClusteringType,
-    CodeReviewConfig,
-    CommentResult,
-    CodeReviewVersion,
-} from '@libs/core/infrastructure/config/types/general/codeReview.type';
-import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
 
-import { LLM_ANALYSIS_SERVICE_TOKEN } from './llmAnalysis.service';
-import { extractLinesFromDiffHunk } from '@libs/common/utils/patch';
-import { SeverityLevel } from '@libs/common/utils/enums/severityLevel.enum';
 import { LabelType } from '@libs/common/utils/codeManagement/labels';
+import { SeverityLevel } from '@libs/common/utils/enums/severityLevel.enum';
+import { extractLinesFromDiffHunk } from '@libs/common/utils/patch';
+import { LLM_ANALYSIS_SERVICE_TOKEN } from './llmAnalysis.service';
 
-import { CodeManagementService } from '@libs/platform/infrastructure/adapters/services/codeManagement.service';
+import { CodeReviewPipelineContext } from '@libs/code-review/pipeline/context/code-review-pipeline.context';
 import { PlatformType } from '@libs/core/domain/enums/platform-type.enum';
 import { Repository } from '@libs/core/infrastructure/config/types/general/codeReview.type';
-import { PullRequestsEntity } from '@libs/platformData/domain/pullRequests/entities/pullRequests.entity';
 import { PullRequestReviewComment } from '@libs/platform/domain/platformIntegrations/types/codeManagement/pullRequests.type';
-import { CodeReviewPipelineContext } from '@libs/code-review/pipeline/context/code-review-pipeline.context';
+import { CodeManagementService } from '@libs/platform/infrastructure/adapters/services/codeManagement.service';
+import { PullRequestsEntity } from '@libs/platformData/domain/pullRequests/entities/pullRequests.entity';
 
 @Injectable()
 export class SuggestionService implements ISuggestionService {
@@ -213,7 +213,8 @@ export class SuggestionService implements ISuggestionService {
             // Check if suggestion overlaps with any visible range in the diff
             return visibleRanges.some(
                 (range) =>
-                    suggestionStart <= range.end && suggestionEnd >= range.start,
+                    suggestionStart <= range.end &&
+                    suggestionEnd >= range.start,
             );
         });
     }
@@ -563,6 +564,120 @@ export class SuggestionService implements ISuggestionService {
         );
     }
 
+    private getPrimaryBrokenKodyRuleId(suggestion: any): string | null {
+        const brokenKodyRulesIds = suggestion?.brokenKodyRulesIds;
+
+        if (
+            !Array.isArray(brokenKodyRulesIds) ||
+            brokenKodyRulesIds.length < 1
+        ) {
+            return null;
+        }
+
+        const primaryRuleId = brokenKodyRulesIds[0];
+
+        if (typeof primaryRuleId !== 'string' || !primaryRuleId.trim()) {
+            return null;
+        }
+
+        return primaryRuleId;
+    }
+
+    private shouldClusterKodySuggestionByRuleId(suggestion: any): boolean {
+        if (this.normalizeLabel(suggestion?.label) !== 'kody_rules') {
+            return false;
+        }
+
+        if (suggestion?.clusteringInformation?.type) {
+            return false;
+        }
+
+        return !!this.getPrimaryBrokenKodyRuleId(suggestion);
+    }
+
+    private clusterKodySuggestionsByRuleIdForFullMode(
+        suggestions: any[],
+    ): any[] {
+        const groupedByRule = new Map<string, any[]>();
+        const nonClusterableSuggestions: any[] = [];
+
+        for (const suggestion of suggestions) {
+            if (!this.shouldClusterKodySuggestionByRuleId(suggestion)) {
+                nonClusterableSuggestions.push(suggestion);
+                continue;
+            }
+
+            const primaryRuleId = this.getPrimaryBrokenKodyRuleId(suggestion);
+
+            if (!primaryRuleId) {
+                nonClusterableSuggestions.push(suggestion);
+                continue;
+            }
+
+            if (!groupedByRule.has(primaryRuleId)) {
+                groupedByRule.set(primaryRuleId, []);
+            }
+
+            groupedByRule.get(primaryRuleId)?.push(suggestion);
+        }
+
+        const clusteredSuggestions: any[] = [];
+
+        for (const [, groupedSuggestions] of groupedByRule.entries()) {
+            if (groupedSuggestions.length <= 1) {
+                clusteredSuggestions.push(groupedSuggestions[0]);
+                continue;
+            }
+
+            const sortedGroup = [...groupedSuggestions].sort((a, b) =>
+                String(a?.id || '').localeCompare(String(b?.id || '')),
+            );
+
+            const parentSuggestion = sortedGroup.find((s) => s?.id);
+
+            if (!parentSuggestion) {
+                clusteredSuggestions.push(...groupedSuggestions);
+                continue;
+            }
+
+            const relatedSuggestions = sortedGroup.filter(
+                (s) => s !== parentSuggestion,
+            );
+
+            const problemDescription =
+                parentSuggestion?.oneSentenceSummary ||
+                parentSuggestion?.suggestionContent ||
+                'This Kody Rule issue appears in multiple locations.';
+
+            const actionStatement =
+                'Please fix this Kody Rule violation in all listed locations.';
+
+            clusteredSuggestions.push({
+                ...parentSuggestion,
+                clusteringInformation: {
+                    type: ClusteringType.PARENT,
+                    relatedSuggestionsIds: relatedSuggestions
+                        .map((s) => s?.id)
+                        .filter(Boolean),
+                    problemDescription,
+                    actionStatement,
+                },
+            });
+
+            for (const relatedSuggestion of relatedSuggestions) {
+                clusteredSuggestions.push({
+                    ...relatedSuggestion,
+                    clusteringInformation: {
+                        type: ClusteringType.RELATED,
+                        parentSuggestionId: parentSuggestion.id,
+                    },
+                });
+            }
+        }
+
+        return [...nonClusterableSuggestions, ...clusteredSuggestions];
+    }
+
     public async prioritizeSuggestionsLegacy(
         organizationAndTeamData: OrganizationAndTeamData,
         suggestionControl: SuggestionControlConfig,
@@ -588,21 +703,40 @@ export class SuggestionService implements ISuggestionService {
 
         let refinedSuggestions = suggestions;
 
+        if (groupingMode === GroupingModeSuggestions.FULL) {
+            refinedSuggestions =
+                this.clusterKodySuggestionsByRuleIdForFullMode(
+                    refinedSuggestions,
+                );
+        }
+
         if (
             groupingMode === GroupingModeSuggestions.SMART ||
             groupingMode === GroupingModeSuggestions.FULL
         ) {
-            const suggestionsClustered =
-                await this.commentManagerService.repeatedCodeReviewSuggestionClustering(
-                    organizationAndTeamData,
-                    prNumber,
-                    LLMModelProvider.NOVITA_DEEPSEEK_V3_0324,
-                    suggestions,
-                    byokConfig,
-                );
+            const alreadyClusteredSuggestions = refinedSuggestions.filter(
+                (suggestion) => !!suggestion?.clusteringInformation?.type,
+            );
 
-            refinedSuggestions =
-                await this.normalizeSeverity(suggestionsClustered);
+            const suggestionsToCluster = refinedSuggestions.filter(
+                (suggestion) => !suggestion?.clusteringInformation?.type,
+            );
+
+            const suggestionsClustered =
+                suggestionsToCluster.length > 0
+                    ? await this.commentManagerService.repeatedCodeReviewSuggestionClustering(
+                          organizationAndTeamData,
+                          prNumber,
+                          LLMModelProvider.NOVITA_DEEPSEEK_V3_0324,
+                          suggestionsToCluster,
+                          byokConfig,
+                      )
+                    : [];
+
+            refinedSuggestions = await this.normalizeSeverity([
+                ...alreadyClusteredSuggestions,
+                ...suggestionsClustered,
+            ]);
         }
 
         const { prioritizedBySeverity, discardedBySeverity } =
@@ -747,7 +881,7 @@ export class SuggestionService implements ISuggestionService {
         }
 
         // Se NÃO deve aplicar filtros às Kody Rules, separa e processa diferenciadamente
-        const kodyRulesSuggestions = suggestions.filter((s) => {
+        let kodyRulesSuggestions = suggestions.filter((s) => {
             const normalizedLabel = this.normalizeLabel(s.label);
             return normalizedLabel === 'kody_rules';
         });
@@ -772,6 +906,13 @@ export class SuggestionService implements ISuggestionService {
                 prNumber,
             },
         });
+
+        if (suggestionControl.groupingMode === GroupingModeSuggestions.FULL) {
+            kodyRulesSuggestions =
+                this.clusterKodySuggestionsByRuleIdForFullMode(
+                    kodyRulesSuggestions,
+                );
+        }
 
         const allPrioritized: any[] = [];
         const allDiscarded: any[] = [];
@@ -1497,7 +1638,7 @@ export class SuggestionService implements ISuggestionService {
         });
 
         // For each group, finds the highest severity and normalizes
-        groupsMap.forEach((groupIds, parentId) => {
+        groupsMap.forEach((groupIds, _parentId) => {
             // Convert to Set for O(1) lookup instead of O(n) includes
             const groupIdSet = new Set(groupIds);
 

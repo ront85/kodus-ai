@@ -19,10 +19,9 @@ import {
     BookOpen,
     Target,
 } from "lucide-react";
-import { useAuth } from "src/core/providers/auth.provider";
 import { ScrollArea } from "@components/ui/scroll-area";
 import { cn } from "src/core/utils/components";
-import { capturePostHogEvent } from "src/core/utils/posthog";
+import { saveMarketingSurvey } from "@services/users/fetch";
 
 import { StepIndicators } from "../_components/step-indicators";
 
@@ -154,7 +153,6 @@ const SelectionCard = ({
 
 export default function MarketingSurveyPage() {
     const router = useRouter();
-    const { userId } = useAuth();
 
     const [selectedSource, setSelectedSource] = useState<ReferralSource | null>(
         null,
@@ -163,44 +161,22 @@ export default function MarketingSurveyPage() {
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleContinue = async () => {
-        if (!userId) {
-            router.push("/setup/connecting-git-tool");
-            return;
-        }
-
         setIsSubmitting(true);
 
         try {
-            await capturePostHogEvent({
-                userId,
-                event: "setup_marketing_survey_completed",
-                properties: {
-                    referralSource: selectedSource,
-                    primaryGoal: selectedGoal,
-                },
+            await saveMarketingSurvey({
+                referralSource: selectedSource ?? undefined,
+                primaryGoal: selectedGoal ?? undefined,
             });
-
-            router.push("/setup/connecting-git-tool");
         } catch (error) {
-            console.error("Error capturing marketing survey", error);
-            router.push("/setup/connecting-git-tool");
+            console.error("Error saving marketing survey", error);
         } finally {
             setIsSubmitting(false);
+            router.push("/setup/connecting-git-tool");
         }
     };
 
     const handleSkip = () => {
-        if (!userId) {
-            router.push("/setup/connecting-git-tool");
-            return;
-        }
-
-        capturePostHogEvent({
-            userId,
-            event: "setup_marketing_survey_skipped",
-            properties: {},
-        });
-
         router.push("/setup/connecting-git-tool");
     };
 

@@ -1,6 +1,7 @@
 import { ICodeReviewExecutionRepository } from './codeReviewExecution.repository.contract';
 import { CodeReviewExecutionEntity } from '../entities/codeReviewExecution.entity';
 import { CodeReviewExecution } from '../interfaces/codeReviewExecution.interface';
+import { AutomationStatus } from '../../automation/enum/automation-status';
 
 export const CODE_REVIEW_EXECUTION_SERVICE = Symbol(
     'CODE_REVIEW_EXECUTION_SERVICE',
@@ -20,4 +21,10 @@ export interface ICodeReviewExecutionService<
         executionId: string,
         stageName: string,
     ): Promise<CodeReviewExecutionEntity<T> | null>;
+
+    existsByAutomationExecutionAndStageStatus(
+        executionId: string,
+        stageNames: string[],
+        statuses: AutomationStatus[],
+    ): Promise<boolean>;
 }

@@ -110,7 +110,7 @@ export const NavMenu = () => {
             {
                 label: "Library",
                 icon: <LibraryBig className="size-5" />,
-                href: "/library/kody-rules/featured",
+                href: "/library/kody-rules",
                 visible: canReadCodeReviewSettings,
             },
         ];

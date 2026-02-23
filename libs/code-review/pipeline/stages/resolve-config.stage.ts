@@ -58,6 +58,13 @@ export class ResolveConfigStage extends BasePipelineStage<CodeReviewPipelineCont
         context: CodeReviewPipelineContext,
     ): Promise<CodeReviewPipelineContext> {
         try {
+            const forceFullRerun = Boolean(
+                context.pipelineMetadata?.forceFullRerun,
+            );
+            const baseCommit = forceFullRerun
+                ? undefined
+                : context?.lastExecution?.lastAnalyzedCommit;
+
             // Busca apenas metadados dos arquivos (sem conteúdo) - mais rápido
             // O conteúdo será buscado depois no FetchChangedFilesStage apenas para arquivos não ignorados
             const preliminaryFiles =
@@ -65,7 +72,7 @@ export class ResolveConfigStage extends BasePipelineStage<CodeReviewPipelineCont
                     context.organizationAndTeamData,
                     context.repository,
                     context.pullRequest,
-                    context?.lastExecution?.lastAnalyzedCommit,
+                    baseCommit,
                 );
 
             if (!preliminaryFiles || preliminaryFiles.length === 0) {
