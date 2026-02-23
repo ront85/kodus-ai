@@ -1,4 +1,5 @@
 import { createLogger } from '@kodus/flow';
+import { performance } from 'node:perf_hooks';
 import { AutomationStatus } from '@libs/automation/domain/automation/enum/automation-status';
 import {
     AUTOMATION_EXECUTION_SERVICE_TOKEN,
@@ -25,6 +26,17 @@ import { Inject, Injectable } from '@nestjs/common';
 @Injectable()
 export class CodeReviewPipelineObserver implements IPipelineObserver {
     private readonly logger = createLogger(CodeReviewPipelineObserver.name);
+    private readonly stagePerfSnapshots = new Map<
+        string,
+        {
+            startedAtNs: bigint;
+            eventLoopBaseline: ReturnType<
+                typeof performance.eventLoopUtilization
+            >;
+            cpuUsageBaseline: NodeJS.CpuUsage;
+            memoryUsageBaseline: NodeJS.MemoryUsage;
+        }
+    >();
 
     constructor(
         @Inject(AUTOMATION_EXECUTION_SERVICE_TOKEN)
@@ -297,6 +309,80 @@ export class CodeReviewPipelineObserver implements IPipelineObserver {
         return undefined;
     }
 
+    private buildStagePerfKey(
+        stageName: string,
+        context: CodeReviewPipelineContext,
+    ): string {
+        const executionUuid = context.pipelineMetadata?.lastExecution?.uuid;
+        const correlationBase =
+            context.correlationId ||
+            executionUuid ||
+            `${context.repository?.id || 'unknown-repo'}:${context.pullRequest?.number || 'unknown-pr'}`;
+        return `${correlationBase}:${stageName}`;
+    }
+
+    private startStagePerfTracking(
+        stageName: string,
+        context: CodeReviewPipelineContext,
+    ): void {
+        const stageKey = this.buildStagePerfKey(stageName, context);
+        this.stagePerfSnapshots.set(stageKey, {
+            startedAtNs: process.hrtime.bigint(),
+            eventLoopBaseline: performance.eventLoopUtilization(),
+            cpuUsageBaseline: process.cpuUsage(),
+            memoryUsageBaseline: process.memoryUsage(),
+        });
+    }
+
+    private finishStagePerfTracking(
+        stageName: string,
+        context: CodeReviewPipelineContext,
+    ): Record<string, any> | undefined {
+        const stageKey = this.buildStagePerfKey(stageName, context);
+        const snapshot = this.stagePerfSnapshots.get(stageKey);
+        if (!snapshot) {
+            return undefined;
+        }
+
+        this.stagePerfSnapshots.delete(stageKey);
+
+        const elapsedNs = process.hrtime.bigint() - snapshot.startedAtNs;
+        const wallMs = Number(elapsedNs) / 1_000_000;
+        const cpuDelta = process.cpuUsage(snapshot.cpuUsageBaseline);
+        const eluDelta = performance.eventLoopUtilization(
+            snapshot.eventLoopBaseline,
+        );
+        const memoryNow = process.memoryUsage();
+        const cpuTotalMs = (cpuDelta.user + cpuDelta.system) / 1000;
+        const cpuPctSingleCore =
+            wallMs > 0 ? Number(((cpuTotalMs / wallMs) * 100).toFixed(2)) : 0;
+
+        return {
+            stagePerf: {
+                wallMs: Number(wallMs.toFixed(2)),
+                cpuUserMs: Number((cpuDelta.user / 1000).toFixed(2)),
+                cpuSystemMs: Number((cpuDelta.system / 1000).toFixed(2)),
+                cpuPctSingleCore,
+                eventLoopUtilization: Number(eluDelta.utilization.toFixed(4)),
+                rssDeltaMB: Number(
+                    (
+                        (memoryNow.rss - snapshot.memoryUsageBaseline.rss) /
+                        1024 /
+                        1024
+                    ).toFixed(2),
+                ),
+                heapUsedDeltaMB: Number(
+                    (
+                        (memoryNow.heapUsed -
+                            snapshot.memoryUsageBaseline.heapUsed) /
+                        1024 /
+                        1024
+                    ).toFixed(2),
+                ),
+            },
+        };
+    }
+
     private async logStage(
         stageName: string,
         status: AutomationStatus,
@@ -329,7 +415,24 @@ export class CodeReviewPipelineObserver implements IPipelineObserver {
             return;
         }
 
-        const { visibility, label, additionalMetadata } = options || {};
+        const { visibility, label } = options || {};
+        let additionalMetadata = options?.additionalMetadata;
+
+        if (status === AutomationStatus.IN_PROGRESS) {
+            this.startStagePerfTracking(stageName, context);
+        } else {
+            const perfMetadata = this.finishStagePerfTracking(
+                stageName,
+                context,
+            );
+            if (perfMetadata) {
+                additionalMetadata = {
+                    ...(additionalMetadata || {}),
+                    ...perfMetadata,
+                };
+            }
+        }
+
         const metadata: any = visibility ? { visibility } : {};
 
         if (label) {

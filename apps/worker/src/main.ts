@@ -14,6 +14,7 @@ import { LoggerWrapperService } from '@libs/core/log/loggerWrapper.service';
 import { ObservabilityService } from '@libs/core/log/observability.service';
 
 import { WorkerModule } from './worker.module';
+import { startEventLoopMonitor } from './diagnostics/event-loop.monitor';
 
 declare const module: any;
 
@@ -74,6 +75,7 @@ async function bootstrap() {
         });
 
         await appContext.get(ObservabilityService).init('worker');
+        startEventLoopMonitor();
 
         appContext.enableShutdownHooks();
 

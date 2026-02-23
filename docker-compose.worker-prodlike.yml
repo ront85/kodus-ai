@@ -1,0 +1,13 @@
+services:
+    worker:
+        # Opt-in override for production-like worker simulation in dev.
+        command: yarn start:prod:worker
+        environment:
+            - NODE_ENV=production
+            - API_DEVELOPMENT_MODE=false
+            - NODE_OPTIONS=--max-old-space-size=11264 --max-semi-space-size=64
+        deploy:
+            resources:
+                limits:
+                    cpus: "3.0"
+                    memory: 13G
