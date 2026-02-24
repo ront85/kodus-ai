@@ -145,12 +145,15 @@ export class E2BSandboxService {
                 glob?: string,
             ): Promise<string> => {
                 const fullPath = this.resolvePath(path);
-                const globArg = glob ? ` --glob "${glob}"` : '';
+                const escapedPath = fullPath.replace(/'/g, "'\\''");
+                const globArg = glob
+                    ? ` --glob '${glob.replace(/'/g, "'\\''")}'`
+                    : '';
                 // Use single quotes to prevent bash from interpreting
                 // regex escape sequences (e.g. \b as backspace).
                 const escapedPattern = pattern.replace(/'/g, "'\\''");
                 const result = await sandbox.commands.run(
-                    `rg --no-heading -n '${escapedPattern}' ${fullPath}${globArg}`,
+                    `rg --no-heading -n '${escapedPattern}' '${escapedPath}'${globArg}`,
                     { timeoutMs: 30_000 },
                 );
                 return result.stdout;
@@ -162,8 +165,9 @@ export class E2BSandboxService {
                 end: number,
             ): Promise<string> => {
                 const fullPath = this.resolvePath(path);
+                const escapedPath = fullPath.replace(/'/g, "'\\''");
                 const result = await sandbox.commands.run(
-                    `sed -n '${start},${end}p' ${fullPath}`,
+                    `sed -n '${start},${end}p' '${escapedPath}'`,
                     { timeoutMs: 10_000 },
                 );
                 return result.stdout;
@@ -174,8 +178,9 @@ export class E2BSandboxService {
                 maxDepth: number,
             ): Promise<string> => {
                 const fullPath = this.resolvePath(path);
+                const escapedPath = fullPath.replace(/'/g, "'\\''");
                 const result = await sandbox.commands.run(
-                    `find ${fullPath} -maxdepth ${maxDepth} -type f`,
+                    `find '${escapedPath}' -maxdepth ${maxDepth} -type f`,
                     { timeoutMs: 30_000 },
                 );
                 return result.stdout;
