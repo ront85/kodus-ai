@@ -7,6 +7,7 @@ import {
     PromptRunnerService,
 } from '@kodus/kodus-common/llm';
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import {
     CrossFileContextPlannerSchema,
@@ -92,6 +93,7 @@ export class CollectCrossFileContextsService {
         private readonly promptRunnerService: PromptRunnerService,
         private readonly observabilityService: ObservabilityService,
         private readonly tokenChunkingService: TokenChunkingService,
+        private readonly configService: ConfigService,
     ) {}
 
     async collectContexts(
@@ -435,7 +437,7 @@ export class CollectCrossFileContextsService {
     ): Promise<CrossFileContextSnippet[]> {
         const allSnippets: CrossFileContextSnippet[] = [];
 
-        const client = new WarpGrepClient({ morphApiKey: process.env.API_MORPHLLM_API_KEY ?? '' });
+        const client = new WarpGrepClient({ morphApiKey: this.configService.get<string>('API_MORPHLLM_API_KEY') ?? '' });
 
         for (const query of queries) {
             try {
@@ -612,7 +614,7 @@ export class CollectCrossFileContextsService {
         }
 
         try {
-            const client = new WarpGrepClient({ morphApiKey: process.env.API_MORPHLLM_API_KEY ?? '' });
+            const client = new WarpGrepClient({ morphApiKey: this.configService.get<string>('API_MORPHLLM_API_KEY') ?? '' });
 
             // Extract function names only from high-risk hop 1 snippets
             const hop1FunctionNames = new Set<string>();
