@@ -36,6 +36,7 @@ import { checkPermissions } from '@libs/identity/infrastructure/adapters/service
 
 import {
     SkillInstructionsResponseDto,
+    SkillMetaResponseDto,
     SkillOverrideSavedResponseDto,
     SkillVersionsResponseDto,
 } from '../dtos/skills-response.dto';
@@ -51,6 +52,25 @@ export class SkillsController {
 
         private readonly skillLoaderService: SkillLoaderService,
     ) {}
+
+    @Get(':skillName/meta')
+    @ApiParam({ name: 'skillName', example: 'business-rules-validation' })
+    @ApiOperation({
+        summary: 'Get skill platform metadata',
+        description:
+            'Return platform-owned metadata from the SKILL.md frontmatter — allowed tools and required MCP plugin categories.',
+    })
+    @ApiOkResponse({ type: SkillMetaResponseDto })
+    @UseGuards(PolicyGuard)
+    @CheckPolicies(
+        checkPermissions({
+            action: Action.Read,
+            resource: ResourceType.CodeReviewSettings,
+        }),
+    )
+    public getSkillMeta(@Param('skillName') skillName: string) {
+        return this.skillLoaderService.loadSkillMetaFromFilesystem(skillName);
+    }
 
     @Get(':skillName/instructions')
     @ApiParam({ name: 'skillName', example: 'business-rules-validation' })

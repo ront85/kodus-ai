@@ -4,6 +4,10 @@ description: Validate PR code changes against task requirements to identify miss
 allowed-tools:
   - KODUS_GET_PULL_REQUEST
   - KODUS_GET_PULL_REQUEST_DIFF
+required-mcps:
+  - category: task-management
+    label: Task Management
+    examples: Jira, Linear, Notion, ClickUp
 metadata:
   version: "1.0.0"
 ---

@@ -27,6 +27,7 @@ import { ResolveConfigStage } from '../stages/resolve-config.stage';
 import { ValidateNewCommitsStage } from '../stages/validate-new-commits.stage';
 import { ValidatePrerequisitesStage } from '../stages/validate-prerequisites.stage';
 import { ValidateSuggestionsStage } from '../stages/validate-suggestions.stage';
+import { BusinessLogicValidationStage } from '../stages/business-logic-validation.stage';
 
 @Injectable()
 export class CodeReviewPipelineStrategy implements IPipelineStrategy<CodeReviewPipelineContext> {
@@ -43,6 +44,7 @@ export class CodeReviewPipelineStrategy implements IPipelineStrategy<CodeReviewP
         private readonly collectCrossFileContextStage: CollectCrossFileContextStage,
         private readonly processFilesPrLevelReviewStage: ProcessFilesPrLevelReviewStage,
         private readonly processFilesReview: ProcessFilesReview,
+        private readonly businessLogicValidationStage: BusinessLogicValidationStage,
         private readonly createPrLevelCommentsStage: CreatePrLevelCommentsStage,
         private readonly createFileCommentsStage: CreateFileCommentsStage,
         private readonly aggregateResultsStage: AggregateResultsStage,
@@ -64,6 +66,7 @@ export class CodeReviewPipelineStrategy implements IPipelineStrategy<CodeReviewP
             this.collectCrossFileContextStage,
             this.processFilesPrLevelReviewStage,
             this.processFilesReview,
+            this.businessLogicValidationStage,
             this.createPrLevelCommentsStage,
             this.validateSuggestionsStage,
             this.createFileCommentsStage,

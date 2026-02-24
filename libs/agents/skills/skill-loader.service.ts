@@ -18,12 +18,24 @@ const SKILL_KEY_MAP: Record<string, ParametersKey> = {
         ParametersKey.SKILL_BUSINESS_RULES_VALIDATION,
 };
 
+/** A required external MCP plugin category declared in SKILL.md frontmatter. */
+export interface SkillRequiredMcp {
+    /** Machine-readable category key, e.g. "task-management" */
+    category: string;
+    /** Human-readable label, e.g. "Task Management" */
+    label: string;
+    /** Comma-separated plugin examples shown to the user, e.g. "Jira, Linear, Notion" */
+    examples?: string;
+}
+
 /** Platform-level metadata parsed from SKILL.md frontmatter. Not user-editable. */
 export interface SkillMeta {
     name?: string;
     description?: string;
     /** MCP tool names the skill's fetcher agent is allowed to use. */
     allowedTools?: string[];
+    /** External MCP plugin categories required for this skill to work. */
+    requiredMcps?: SkillRequiredMcp[];
 }
 
 @Injectable()
@@ -275,6 +287,7 @@ export class SkillLoaderService {
         const yamlStr = match[1];
         const body = match[2].trimStart();
 
+        // Parse allowed-tools as a flat YAML list
         const toolsMatch = yamlStr.match(
             /^allowed-tools:\s*\n((?:[ \t]+-[ \t]+\S+[ \t]*\n?)+)/m,
         );
@@ -282,7 +295,42 @@ export class SkillLoaderService {
             ? (toolsMatch[1].match(/\S+(?=\s*$)/gm) ?? [])
             : undefined;
 
-        return { body, meta: { allowedTools } };
+        // Parse required-mcps as a list of objects with category/label/examples
+        const requiredMcps = this.parseRequiredMcps(yamlStr);
+
+        return { body, meta: { allowedTools, requiredMcps } };
+    }
+
+    /**
+     * Parse the required-mcps YAML block:
+     *
+     *   required-mcps:
+     *     - category: task-management
+     *       label: Task Management
+     *       examples: Jira, Linear, Notion
+     */
+    private parseRequiredMcps(yamlStr: string): SkillRequiredMcp[] | undefined {
+        const blockMatch = yamlStr.match(
+            /^required-mcps:\s*\n((?:[ \t]+[\s\S]*?)(?=\n\S|\n*$))/m,
+        );
+        if (!blockMatch) return undefined;
+
+        const block = blockMatch[1];
+        const items: SkillRequiredMcp[] = [];
+
+        // Split on list item starters (lines beginning with "  -")
+        const itemBlocks = block.split(/\n(?=[ \t]+-[ \t])/);
+
+        for (const itemBlock of itemBlocks) {
+            const category = itemBlock.match(/category:\s*(.+)/)?.[1]?.trim();
+            const label = itemBlock.match(/label:\s*(.+)/)?.[1]?.trim();
+            const examples = itemBlock.match(/examples:\s*(.+)/)?.[1]?.trim();
+            if (category && label) {
+                items.push({ category, label, ...(examples && { examples }) });
+            }
+        }
+
+        return items.length > 0 ? items : undefined;
     }
 
     private requireConfigKey(skillName: string): ParametersKey {
