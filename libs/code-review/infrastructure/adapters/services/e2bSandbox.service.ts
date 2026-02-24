@@ -189,9 +189,13 @@ export class E2BSandboxService {
     }
 
     private resolvePath(path: string): string {
-        // If the path is already absolute, use it as-is
+        // Security: Prevent path traversal by disallowing absolute paths
         if (path.startsWith('/')) {
-            return path;
+            throw new Error('Absolute paths are not allowed');
+        }
+        // Security: Prevent path traversal by disallowing '..' segments
+        if (path.includes('..')) {
+            throw new Error('Path traversal using ".." is not allowed');
         }
         // Resolve relative paths against the repo directory
         return `${REPO_DIR}/${path}`;
