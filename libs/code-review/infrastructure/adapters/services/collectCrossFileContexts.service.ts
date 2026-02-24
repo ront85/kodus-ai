@@ -715,41 +715,45 @@ export class CollectCrossFileContextsService {
 
         // Merge overlapping snippets per file and enforce per-file limit
         const merged: CrossFileContextSnippet[] = [];
-        for (const [filePath, fileSnippets] of byFile) {
+        for (const [, fileSnippets] of byFile) {
             // Sort by relevance score desc, keep the best
             fileSnippets.sort(
                 (a, b) => b.relevanceScore - a.relevanceScore,
             );
 
+            const snippetsForThisFile: CrossFileContextSnippet[] = [];
             let totalChars = 0;
+
             for (const snippet of fileSnippets) {
                 if (totalChars + snippet.content.length > MAX_PER_FILE_CHARS) {
                     continue;
                 }
 
-                // Check for content overlap with already-merged snippets from same file
-                const existingDuplicate = merged.find(
-                    (m) =>
-                        m.filePath === filePath &&
-                        this.hasContentOverlap(m.content, snippet.content),
+                // Check for overlap only within snippets for the current file
+                const overlappingSnippet = snippetsForThisFile.find(
+                    (existing) =>
+                        this.hasContentOverlap(
+                            existing.content,
+                            snippet.content,
+                        ),
                 );
 
-                if (existingDuplicate) {
+                if (overlappingSnippet) {
                     // Merge targetFiles from the duplicate into the survivor
                     if (snippet.targetFiles?.length) {
-                        existingDuplicate.targetFiles = [
+                        overlappingSnippet.targetFiles = [
                             ...new Set([
-                                ...(existingDuplicate.targetFiles || []),
+                                ...(overlappingSnippet.targetFiles || []),
                                 ...snippet.targetFiles,
                             ]),
                         ];
                     }
-                    continue;
+                } else {
+                    totalChars += snippet.content.length;
+                    snippetsForThisFile.push(snippet);
                 }
-
-                totalChars += snippet.content.length;
-                merged.push(snippet);
             }
+            merged.push(...snippetsForThisFile);
         }
 
         // Sort by score descending
