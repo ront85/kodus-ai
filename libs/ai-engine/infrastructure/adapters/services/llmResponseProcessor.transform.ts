@@ -27,8 +27,12 @@ export class LLMResponseProcessor {
                     .trim();
             }
 
-            // Attempt to parse the JSON
-            const parsedResponse = tryParseJSONObject(cleanResponse);
+            // Attempt to parse the JSON — validator picks the first block
+            // containing codeSuggestions when multiple code blocks exist
+            const parsedResponse = tryParseJSONObject(
+                cleanResponse,
+                (obj) => Array.isArray(obj?.codeSuggestions),
+            );
 
             if (!parsedResponse) {
                 this.logger.error({

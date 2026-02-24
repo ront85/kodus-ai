@@ -9,13 +9,9 @@
  * - Components missing assertion.metric
  */
 
-const fs = require('fs');
-const path = require('path');
-
-const outputPath = path.join(__dirname, 'results', 'output.json');
-const data = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-
-const results = data.results.results;
+const { loadResults } = require('./load-results');
+const { results } = loadResults();
+if (results.length === 0) { console.error('No result files found.'); process.exit(1); }
 
 console.log('='.repeat(100));
 console.log('PROMPTFOO JUDGE FAILURE DEBUG REPORT');

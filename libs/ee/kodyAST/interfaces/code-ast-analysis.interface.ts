@@ -93,3 +93,28 @@ export interface GetImpactAnalysisResponse {
     functionsAffect: FunctionAffect[];
     functionSimilarity: FunctionSimilarity[];
 }
+
+export enum FileContentFlag {
+    DIFF = 'DIFF',
+    FULL = 'FULL',
+    SIMPLE = 'SIMPLE',
+}
+
+export interface InitializeContentFromDiffRequest {
+    files: {
+        id: string;
+        content: string; // encrypted + gzipped
+        filePath: string; // for language detection in AST
+        diff: string; // encrypted + gzipped
+    }[];
+}
+
+export interface GetContentFromDiffResponse {
+    result: {
+        files: {
+            id: string;
+            content: string; // encrypted + gzipped
+            flag: FileContentFlag;
+        }[];
+    };
+}

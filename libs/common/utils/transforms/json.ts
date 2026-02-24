@@ -1,11 +1,52 @@
 import * as JSON5 from 'json5';
 
+type JsonValidator = (parsed: any) => boolean;
+
 const transformToValidJSON = (input: string): string => {
     // Replaces unescaped single quotes with double quotes
     return input.replace(/(?<!\\)'/g, '"');
 };
 
-const tryParseJSONObject = (payload: any) => {
+const extractValidJsonBlocks = (text: string): string[] => {
+    const cleanText = text.replace(/^['"]|['"]$/g, '');
+    const blocks: string[] = [];
+
+    // Collect all ```json blocks that parse as valid JSON
+    const jsonMatches = cleanText.matchAll(/```json([\s\S]*?)```/g);
+    for (const match of jsonMatches) {
+        try {
+            JSON.parse(match[1].trim());
+            blocks.push(match[1]);
+        } catch {
+            /* skip invalid */
+        }
+    }
+    if (blocks.length > 0) return blocks;
+
+    // Fallback: any code block with JSON-like content
+    const genericMatches = cleanText.match(/```(?:\w*)\s*([\s\S]*?)```/g);
+    if (genericMatches) {
+        for (const block of genericMatches) {
+            const content = block
+                .replace(/^```\w*\s*/, '')
+                .replace(/```$/, '')
+                .trim();
+            if (content.startsWith('{') || content.startsWith('[')) {
+                blocks.push(content);
+            }
+        }
+    }
+
+    return blocks;
+};
+
+const stripCodeBlocks = (text: string): string => {
+    const blocks = extractValidJsonBlocks(text);
+    if (blocks.length > 0) return blocks[blocks.length - 1];
+    return text.replace(/^['"]|['"]$/g, '');
+};
+
+const tryParseJSONObject = (payload: any, validator?: JsonValidator) => {
     try {
         const cleanedPayload = payload
             .replace(/\\\\n/g, '\\n') // Transform '\\\\n' into '\n'
@@ -13,7 +54,10 @@ const tryParseJSONObject = (payload: any) => {
             .replace(/(\r\n|\n|\r)/gm, '') // Remove newlines outside of strings
             .replace(/\\\\"/g, '\\"');
 
-        const parsedData: any = tryParseJSONObjectWithFallback(cleanedPayload);
+        const parsedData: any = tryParseJSONObjectWithFallback(
+            cleanedPayload,
+            validator,
+        );
 
         if (
             parsedData &&
@@ -29,7 +73,10 @@ const tryParseJSONObject = (payload: any) => {
     }
 };
 
-const tryParseJSONObjectWithFallback = (payload: any) => {
+const tryParseJSONObjectWithFallback = (
+    payload: any,
+    validator?: JsonValidator,
+) => {
     try {
         if (payload.length <= 0) {
             return null;
@@ -41,15 +88,54 @@ const tryParseJSONObjectWithFallback = (payload: any) => {
             return JSON.parse(payload);
         } catch (err2) {
             try {
-                const noCodeBlocks = stripCodeBlocks(payload);
-                const cleanedPayload = noCodeBlocks
-                    .replace(/\\n/g, '') // Remove newline characters
-                    .replace(/\\/g, '') // Remove backslashes (escape characters)
-                    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments (/* comment */)
-                    .replace(/<[^>]*>/g, '') // Remove HTML tags (e.g., <tag>)
-                    .replace(/^`+|`+$/g, '') // Remove backticks at the beginning and end
-                    .trim();
+                const validBlocks = extractValidJsonBlocks(payload);
 
+                if (validBlocks.length > 0) {
+                    // If validator provided, return the first block that passes
+                    if (validator) {
+                        for (const block of validBlocks) {
+                            try {
+                                const parsed = JSON.parse(block.trim());
+                                if (validator(parsed)) return parsed;
+                            } catch {
+                                /* next block */
+                            }
+                        }
+                    }
+
+                    // No validator OR none passed → last valid block (current behavior)
+                    const lastBlock = validBlocks[validBlocks.length - 1];
+                    try {
+                        return JSON.parse(lastBlock.trim());
+                    } catch {
+                        /* fall through to aggressive cleaning */
+                    }
+
+                    // Aggressive cleaning on last block (last resort)
+                    const cleanedPayload = lastBlock
+                        .replace(/\\n/g, '')
+                        .replace(/\\/g, '')
+                        .replace(/\/\*[\s\S]*?\*\//g, '')
+                        .replace(/<[^>]*>/g, '')
+                        .replace(/^`+|`+$/g, '')
+                        .trim();
+                    return JSON.parse(cleanedPayload);
+                }
+
+                // No code blocks → try stripped payload, then aggressive cleaning
+                const noCodeBlocks = stripCodeBlocks(payload);
+                try {
+                    return JSON.parse(noCodeBlocks.trim());
+                } catch {
+                    /* fall through to aggressive cleaning */
+                }
+                const cleanedPayload = noCodeBlocks
+                    .replace(/\\n/g, '')
+                    .replace(/\\/g, '')
+                    .replace(/\/\*[\s\S]*?\*\//g, '')
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/^`+|`+$/g, '')
+                    .trim();
                 return JSON.parse(cleanedPayload);
             } catch (err3) {
                 console.log(
@@ -60,19 +146,6 @@ const tryParseJSONObjectWithFallback = (payload: any) => {
             }
         }
     }
-};
-
-const stripCodeBlocks = (text: string) => {
-    // Remove quotes at the beginning and end if they exist
-    const cleanText = text.replace(/^['"]|['"]$/g, '');
-
-    // Extract the content between ```json and ```
-    const match = cleanText.match(/```json({[\s\S]*?})```/);
-    if (match && match[1]) {
-        return match[1];
-    }
-
-    return cleanText;
 };
 
 export { transformToValidJSON, tryParseJSONObject };

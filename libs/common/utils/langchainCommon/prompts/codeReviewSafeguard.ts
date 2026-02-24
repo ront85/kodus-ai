@@ -257,3 +257,26 @@ DISCUSSION
 
 Start analysis`;
 };
+
+/**
+ * Additional context block injected into the safeguard user prompt when
+ * cross-file snippets are available for the file under review.
+ * Kept concise — the panel only needs to know this is real code
+ * that should be considered as extra evidence when evaluating suggestions.
+ */
+export const SAFEGUARD_CROSS_FILE_CONTEXT_PREAMBLE = `### Codebase Context (additional evidence)
+
+The snippets below are **real code from the repository** — callers, consumers, or dependents of the code being changed in this PR. Use them as extra evidence when evaluating each suggestion.
+
+**Decision guidelines:**
+
+- **keep (no_changes)**: The suggestion is complete and accurate. All affected code is already mentioned in the suggestion, OR the suggestion correctly identifies the core issue and the codebase context only shows repetitions of the same pattern without adding new information.
+
+- **discard**: The suggestion contradicts what these snippets show, or makes claims that are proven false by the codebase context.
+
+- **update**: The suggestion identifies a real problem BUT is incomplete. Use update when:
+  * The suggestion mentions only ONE affected file/caller, but the codebase context shows MULTIPLE files/callers with the same issue
+  * The suggestion describes the impact generically (e.g., "this will break callers") but doesn't list the specific callers shown in the snippets
+  * The suggestion's severity or scope should be adjusted based on additional affected code visible in the snippets
+  * When updating, ADD the missing callers/files to the suggestion content, making it more comprehensive and specific
+`;

@@ -20,13 +20,14 @@ import {
     prompt_codeReviewSafeguard_system,
     prompt_validateImplementedSuggestions,
 } from '@libs/common/utils/langchainCommon/prompts';
+import { SAFEGUARD_CROSS_FILE_CONTEXT_PREAMBLE } from '@libs/common/utils/langchainCommon/prompts/codeReviewSafeguard';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import {
     prompt_codereview_system_gemini,
     prompt_codereview_system_gemini_v2,
     prompt_codereview_user_gemini,
     prompt_codereview_user_gemini_v2,
 } from '@libs/common/utils/langchainCommon/prompts/configuration/codeReview';
-import { prompt_selectorLightOrHeavyMode_system } from '@libs/common/utils/langchainCommon/prompts/seletorLightOrHeavyMode';
 import { prompt_severity_analysis_user } from '@libs/common/utils/langchainCommon/prompts/severityAnalysis';
 import {
     AIAnalysisResult,
@@ -65,28 +66,19 @@ export class LLMAnalysisService implements IAIAnalysisService {
         filePath: string;
         suggestions?: CodeSuggestion[];
         reviewMode: ReviewModeResponse;
+        crossFileSnippets?: CrossFileContextSnippet[];
     }) {
         if (!context?.patchWithLinesStr) {
             throw new Error('Required context parameters are missing');
         }
 
-        const { reviewMode } = context;
-
-        if (reviewMode === ReviewModeResponse.LIGHT_MODE) {
-            return `
-## Context
-
-<codeDiff>
-    ${context.patchWithLinesStr}
-</codeDiff>
-
-<filePath>
-    ${context.filePath}
-</filePath>
-
-<suggestionsContext>
-    ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
-</suggestionsContext>`;
+        let crossFileBlock = '';
+        if (context.crossFileSnippets?.length) {
+            const snippetLines = context.crossFileSnippets.map(
+                (s) =>
+                    `#### ${s.filePath}${s.relatedSymbol ? ` (symbol: ${s.relatedSymbol})` : ''}\n**Rationale:** ${s.rationale}\n\`\`\`\n${s.content}\n\`\`\``,
+            );
+            crossFileBlock = `\n\n<codebaseContext>\n${SAFEGUARD_CROSS_FILE_CONTEXT_PREAMBLE}\n${snippetLines.join('\n\n')}\n</codebaseContext>`;
         }
 
         return `
@@ -106,7 +98,7 @@ export class LLMAnalysisService implements IAIAnalysisService {
 
 <suggestionsContext>
 ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
-</suggestionsContext>`;
+</suggestionsContext>${crossFileBlock}`;
     }
 
     //#endregion
@@ -398,6 +390,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
                 ...(context?.fileAugmentations ?? {}),
             } as ContextAugmentationsMap,
             contextPack: context?.sharedContextPack as ContextPack | undefined,
+            crossFileSnippets: context?.crossFileSnippets,
         };
 
         return baseContext;
@@ -410,7 +403,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
         sessionId: string,
         question: string,
         parameters: any,
-        reviewMode: ReviewModeResponse = ReviewModeResponse.LIGHT_MODE,
+        reviewMode: ReviewModeResponse = ReviewModeResponse.HEAVY_MODE,
     ) {
         const provider =
             parameters.llmProvider || LLMModelProvider.GEMINI_2_5_PRO;
@@ -610,6 +603,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
         languageResultPrompt: string,
         reviewMode: ReviewModeResponse,
         byokConfig: BYOKConfig,
+        crossFileSnippets?: CrossFileContextSnippet[],
     ): Promise<ISafeguardResponse> {
         const runName = 'filterSuggestionsSafeGuard';
 
@@ -644,6 +638,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
             suggestions,
             languageResultPrompt,
             reviewMode,
+            crossFileSnippets,
         };
 
         const spanName = `${LLMAnalysisService.name}::${runName}`;
@@ -905,90 +900,7 @@ ${JSON.stringify(context?.suggestions) || 'No suggestions provided'}
         file: FileChange,
         codeDiff: string,
     ): Promise<ReviewModeResponse> {
-        const fallbackProvider =
-            provider === LLMModelProvider.OPENAI_GPT_4O
-                ? LLMModelProvider.NOVITA_DEEPSEEK_V3_0324
-                : LLMModelProvider.OPENAI_GPT_4O;
-        const runName = 'selectReviewMode';
-
-        const payload = { file, codeDiff };
-        const spanName = `${LLMAnalysisService.name}::${runName}`;
-        const spanAttrs = {
-            type: 'system',
-            organizationId: organizationAndTeamData?.organizationId,
-            prNumber,
-        };
-
-        try {
-            const { result } = await this.observability.runLLMInSpan({
-                spanName,
-                runName,
-                attrs: spanAttrs,
-                exec: async (callbacks) => {
-                    return await this.promptRunnerService
-                        .builder()
-                        .setProviders({
-                            main: provider,
-                            fallback: fallbackProvider,
-                        })
-                        .setParser(ParserType.STRING)
-                        .setLLMJsonMode(true)
-                        .setTemperature(0)
-                        .setPayload(payload)
-                        .addPrompt({
-                            prompt: prompt_selectorLightOrHeavyMode_system,
-                            role: PromptRole.SYSTEM,
-                        })
-                        .addCallbacks(callbacks)
-                        .addMetadata({
-                            organizationId:
-                                organizationAndTeamData?.organizationId,
-                            teamId: organizationAndTeamData?.teamId,
-                            pullRequestId: prNumber,
-                            provider,
-                            fallbackProvider,
-                            runName,
-                        })
-                        .setRunName(runName)
-                        .execute();
-                },
-            });
-
-            if (!result) {
-                const message = `No response from select review mode for PR#${prNumber}`;
-                this.logger.warn({
-                    message,
-                    context: LLMAnalysisService.name,
-                    metadata: {
-                        organizationAndTeamData,
-                        prNumber,
-                        provider,
-                    },
-                });
-                throw new Error(message);
-            }
-
-            const reviewMode =
-                this.llmResponseProcessor.processReviewModeResponse(
-                    organizationAndTeamData,
-                    prNumber,
-                    result,
-                );
-
-            return reviewMode?.reviewMode || ReviewModeResponse.LIGHT_MODE;
-        } catch (error) {
-            this.logger.error({
-                message: 'Error executing select review mode chain:',
-                error,
-                context: LLMAnalysisService.name,
-                metadata: {
-                    organizationAndTeamData,
-                    prNumber,
-                    provider,
-                },
-            });
-            return ReviewModeResponse.LIGHT_MODE;
-        }
+        return ReviewModeResponse.HEAVY_MODE;
     }
     //#endregion
 }

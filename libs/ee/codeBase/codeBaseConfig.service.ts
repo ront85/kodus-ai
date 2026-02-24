@@ -625,27 +625,7 @@ export default class CodeBaseConfigService implements ICodeBaseConfigService {
     private async getReviewModeConfigParameter(
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<ReviewModeConfig> {
-        try {
-            const reviewModeConfig =
-                await this.organizationParametersService.findByKey(
-                    OrganizationParametersKey.REVIEW_MODE_CONFIG,
-                    organizationAndTeamData,
-                );
-
-            return (
-                reviewModeConfig?.configValue?.reviewMode ??
-                ReviewModeConfig.LIGHT_MODE_FULL
-            );
-        } catch (error) {
-            this.logger.error({
-                message: 'Error getting review mode config',
-                error,
-                context: CodeBaseConfigService.name,
-                metadata: { organizationAndTeamData },
-            });
-
-            return ReviewModeConfig.LIGHT_MODE_FULL;
-        }
+        return ReviewModeConfig.HEAVY_MODE;
     }
 
     private async getKodyFineTuningConfigParameter(

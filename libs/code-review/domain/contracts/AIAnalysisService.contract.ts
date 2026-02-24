@@ -1,5 +1,6 @@
 import { BYOKConfig, LLMModelProvider } from '@kodus/kodus-common/llm';
 
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import {
     AIAnalysisResult,
     AnalysisContext,
@@ -43,6 +44,7 @@ export interface IAIAnalysisService {
         languageResultPrompt: string,
         reviewMode: ReviewModeResponse,
         byokConfig: BYOKConfig,
+        crossFileSnippets?: CrossFileContextSnippet[],
     ): Promise<any>;
     validateImplementedSuggestions(
         organizationAndTeamData: OrganizationAndTeamData,

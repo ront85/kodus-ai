@@ -6,6 +6,14 @@ import { SeverityLevel } from '../../enums/severityLevel.enum';
 import { getDefaultKodusConfigFile } from '../../validateCodeReviewConfigFile';
 import { getTextOrDefault } from './prompt.helpers';
 
+export interface CrossFileContextForPrompt {
+    filePath: string;
+    content: string;
+    rationale: string;
+    relationship: string;
+    relatedSymbol?: string;
+}
+
 export interface CrossFileAnalysisPayload {
     files: {
         file: {
@@ -18,6 +26,7 @@ export interface CrossFileAnalysisPayload {
         CodeReviewConfig['v2PromptOverrides'],
         'categories'
     >;
+    crossFileContexts?: CrossFileContextForPrompt[];
 }
 
 export const CrossFileAnalysisSchema = z.object({
@@ -88,6 +97,27 @@ ${JSON.stringify(
     2,
 )}
 
+${payload?.crossFileContexts?.length ? `## Retrieved Cross-File Context
+
+The following code snippets were retrieved from files OUTSIDE this PR that consume or depend on the changed code. Use these to detect real breakage, inconsistencies, or missed updates.
+
+${payload.crossFileContexts
+    .map(
+        (ctx) => `### ${ctx.filePath}
+**Relationship:** ${ctx.relationship}${ctx.relatedSymbol ? ` (symbol: ${ctx.relatedSymbol})` : ''}
+**Rationale:** ${ctx.rationale}
+
+\`\`\`
+${ctx.content}
+\`\`\``,
+    )
+    .join('\n\n')}
+
+### Cross-File Context Analysis Rules
+- **PRIORITIZE** real breakage detected in the retrieved snippets (e.g., callers using removed parameters, consumers expecting old return types)
+- Issues backed by retrieved context evidence should be rated at least **HIGH** severity
+- Do not re-report issues that are already visible in the PR diff alone — focus on cross-file impact revealed by the retrieved context
+` : ''}
 ## Analysis Focus
 
 Look for cross-file issues that require multiple file context **AND represent an unintentional oversight**:

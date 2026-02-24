@@ -221,6 +221,7 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                     context.pullRequest.number,
                     context,
                     preparedFilesData,
+                    undefined,
                 );
 
             const crossFileAnalysisSuggestions =
