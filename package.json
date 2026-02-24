@@ -150,7 +150,6 @@
         "@langchain/google-gauth": "^2.1.18",
         "@langchain/google-vertexai": "^2.1.18",
         "@langchain/openai": "1.2.7",
-        "@llamaduck/forgejo-ts": "14.0.2-4",
         "@modelcontextprotocol/sdk": "^1.26.0",
         "@morphllm/morphsdk": "^0.2.114",
         "@nestjs/axios": "^4.0.1",
