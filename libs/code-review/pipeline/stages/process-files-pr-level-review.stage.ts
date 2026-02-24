@@ -74,6 +74,10 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
             return context;
         }
 
+        // Business logic validation does not require changedFiles — run it regardless.
+        // File-level analyses (kody rules, cross-file) are skipped when no files changed.
+        const businessLogicPromise = this.runBusinessLogicValidation(context);
+
         if (!context?.changedFiles?.length) {
             this.logger.warn({
                 message: `No files to analyze for PR#${context.pullRequest.number}`,
@@ -84,14 +88,31 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                     prNumber: context.pullRequest.number,
                 },
             });
-            return context;
+
+            const businessLogicSettled =
+                await Promise.allSettled([businessLogicPromise]);
+            const businessLogicContext =
+                businessLogicSettled[0].status === 'fulfilled'
+                    ? businessLogicSettled[0].value
+                    : null;
+
+            if (businessLogicSettled[0].status === 'rejected') {
+                this.logger.error({
+                    message: `BusinessLogicValidation settled as rejected for PR#${context.pullRequest.number}`,
+                    context: this.stageName,
+                    error: (businessLogicSettled[0] as PromiseRejectedResult)
+                        .reason,
+                });
+            }
+
+            return businessLogicContext ?? context;
         }
 
         const [kodyRulesSettled, crossFileSettled, businessLogicSettled] =
             await Promise.allSettled([
                 this.runKodyRulesAnalysis(context),
                 this.runCrossFileAnalysis(context),
-                this.runBusinessLogicValidation(context),
+                businessLogicPromise,
             ]);
 
         const kodyRulesResult =

@@ -58,6 +58,7 @@ export class BusinessLogicValidationStage extends BasePipelineStage<CodeReviewPi
         }
 
         const prBody = context.pullRequest.body ?? '';
+        const prBodyHash = this.computePrBodyHash(prBody);
         const signals = this.detectSignals(prBody);
 
         this.logger.log({
@@ -110,6 +111,7 @@ export class BusinessLogicValidationStage extends BasePipelineStage<CodeReviewPi
             if (!hasGap) {
                 return this.updateContext(context, (draft) => {
                     draft.businessLogicResults = [];
+                    draft.businessLogicPrBodyHash = prBodyHash;
                 });
             }
 
@@ -125,6 +127,7 @@ export class BusinessLogicValidationStage extends BasePipelineStage<CodeReviewPi
 
             return this.updateContext(context, (draft) => {
                 draft.businessLogicResults = [suggestion];
+                draft.businessLogicPrBodyHash = prBodyHash;
             });
         } catch (error) {
             const runtime = Date.now() - startTime;
@@ -171,9 +174,11 @@ export class BusinessLogicValidationStage extends BasePipelineStage<CodeReviewPi
         }
 
         const currentHash = this.computePrBodyHash(prBody);
+        // pipelineMetadata.lastExecution holds the spread dataExecution fields
+        // (see codeReviewHandlerService.service.ts), so businessLogicHash is a
+        // direct property — not nested under a second dataExecution key.
         const lastHash =
-            context.pipelineMetadata?.lastExecution?.dataExecution
-                ?.businessLogicHash;
+            (context.pipelineMetadata?.lastExecution as any)?.businessLogicHash;
         if (lastHash && lastHash === currentHash) {
             return false;
         }
@@ -231,6 +236,10 @@ export class BusinessLogicValidationStage extends BasePipelineStage<CodeReviewPi
             'all requirements met',
             'implementation is complete',
             'no violations',
+            // SKILL.md output patterns
+            '✅ compliant',
+            'status: ✅',
+            '"needsMoreInfo": false',
         ];
         return !noGapIndicators.some((indicator) => lower.includes(indicator));
     }

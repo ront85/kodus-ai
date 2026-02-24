@@ -90,15 +90,6 @@ export interface CodeReviewPipelineContext extends PipelineContext {
         notificationHandled?: boolean;
         showStatusFeedback?: boolean;
         forceFullRerun?: boolean;
-        fileSampling?: {
-            enabled: boolean;
-            minFiles: number;
-            maxFiles: number;
-            targetFiles: number;
-            originalFilteredCount: number;
-            selectedCount: number;
-            sampledOutCount: number;
-        };
     };
 
     initialCommentData?: {
@@ -135,6 +126,13 @@ export interface CodeReviewPipelineContext extends PipelineContext {
 
     /** Business logic validation results — merged into PR-level comments by CreatePrLevelCommentsStage. */
     businessLogicResults?: ISuggestionByPR[];
+
+    /**
+     * SHA-256 hash of the PR body at the time of the last successful business logic
+     * validation. Written by BusinessLogicValidationStage and persisted to
+     * dataExecution.businessLogicHash to enable dedup on subsequent runs.
+     */
+    businessLogicPrBodyHash?: string;
 
     lineComments?: CommentResult[];
 

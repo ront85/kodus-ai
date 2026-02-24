@@ -2748,101 +2748,11 @@ export class GithubService
         );
 
         const octokit = await this.instanceOctokit(organizationAndTeamData);
-        const owner = githubAuthDetail?.org;
-        const repoName = repository?.name;
-        const shouldSampleAtSource = this.isRandomFileSamplingEnabled();
-
-        let files: any[] = [];
-
-        if (!shouldSampleAtSource) {
-            files = await octokit.paginate(octokit.rest.pulls.listFiles, {
-                owner,
-                repo: repoName,
-                pull_number: prNumber,
-            });
-        } else {
-            const { minFiles, maxFiles } = this.getRandomFileSampleRange();
-            const targetFiles = this.getRandomIntInclusive(minFiles, maxFiles);
-            const perPage = 100;
-            const maxWindowSize = maxFiles;
-
-            let changedFilesCount: number | undefined;
-            try {
-                const { data: prData } = await octokit.rest.pulls.get({
-                    owner,
-                    repo: repoName,
-                    pull_number: prNumber,
-                });
-                changedFilesCount = prData?.changed_files ?? undefined;
-            } catch (error) {
-                this.logger.warn({
-                    message:
-                        'Failed to fetch changed_files count from PR. Falling back to first pages for file sampling.',
-                    context: GithubService.name,
-                    serviceName: 'GithubService getFilesByPullRequestId',
-                    error: error?.message,
-                    metadata: {
-                        owner,
-                        repository: repoName,
-                        prNumber,
-                    },
-                });
-            }
-
-            const windowSize = Math.min(
-                changedFilesCount || maxWindowSize,
-                maxWindowSize,
-            );
-            const startIndex =
-                changedFilesCount && changedFilesCount > windowSize
-                    ? this.getRandomIntInclusive(
-                        0,
-                        changedFilesCount - windowSize,
-                    )
-                    : 0;
-
-            const startPage = Math.floor(startIndex / perPage) + 1;
-            const endPage = Math.ceil((startIndex + windowSize) / perPage);
-
-            const collectedFiles: any[] = [];
-            for (let page = startPage; page <= endPage; page++) {
-                const { data } = await octokit.rest.pulls.listFiles({
-                    owner,
-                    repo: repoName,
-                    pull_number: prNumber,
-                    per_page: perPage,
-                    page,
-                });
-                collectedFiles.push(...data);
-
-                if (data.length < perPage) {
-                    break;
-                }
-            }
-
-            const offset = startIndex % perPage;
-            const windowFiles = collectedFiles.slice(offset, offset + windowSize);
-            files = this.shuffleArray(windowFiles).slice(
-                0,
-                Math.min(targetFiles, windowFiles.length),
-            );
-
-            this.logger.log({
-                message: `Source file sampling applied for PR#${prNumber}`,
-                context: GithubService.name,
-                serviceName: 'GithubService getFilesByPullRequestId',
-                metadata: {
-                    owner,
-                    repository: repoName,
-                    prNumber,
-                    changedFilesCount,
-                    startIndex,
-                    windowSize,
-                    targetFiles,
-                    selectedFiles: files.length,
-                },
-            });
-        }
+        const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
+            owner: githubAuthDetail?.org,
+            repo: repository?.name,
+            pull_number: prNumber,
+        });
 
         return files.map((file) => ({
             filename: file.filename,
@@ -2853,49 +2763,6 @@ export class GithubService
             changes: file.changes,
             patch: file.patch,
         }));
-    }
-
-    private isRandomFileSamplingEnabled(): boolean {
-        return process.env.CODE_REVIEW_RANDOM_FILE_SAMPLE_ENABLED === 'true';
-    }
-
-    private getRandomFileSampleRange(): { minFiles: number; maxFiles: number } {
-        const min = this.getPositiveIntFromEnv(
-            'CODE_REVIEW_RANDOM_FILE_SAMPLE_MIN',
-            10,
-        );
-        const max = this.getPositiveIntFromEnv(
-            'CODE_REVIEW_RANDOM_FILE_SAMPLE_MAX',
-            120,
-        );
-
-        return {
-            minFiles: Math.min(min, max),
-            maxFiles: Math.max(min, max),
-        };
-    }
-
-    private getPositiveIntFromEnv(key: string, fallback: number): number {
-        const value = Number.parseInt(process.env[key] || '', 10);
-        if (!Number.isFinite(value) || value <= 0) {
-            return fallback;
-        }
-        return value;
-    }
-
-    private getRandomIntInclusive(min: number, max: number): number {
-        return Math.floor(Math.random() * (max - min + 1)) + min;
-    }
-
-    private shuffleArray<T>(values: T[]): T[] {
-        const copy = [...values];
-        for (let index = copy.length - 1; index > 0; index--) {
-            const randomIndex = this.getRandomIntInclusive(0, index);
-            const current = copy[index];
-            copy[index] = copy[randomIndex];
-            copy[randomIndex] = current;
-        }
-        return copy;
     }
 
     formatCodeBlock(language: string, code: string) {
@@ -5786,7 +5653,6 @@ This is an experimental feature that generates committable changes. Review the d
     }): Promise<string> {
         const {
             suggestion,
-            repository,
             includeHeader = true,
             includeFooter = true,
             language,
