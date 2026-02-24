@@ -313,7 +313,7 @@ describe('E2BSandboxService', () => {
                 const result = await remoteCommands.grep('myFunc\\(', 'src/index.ts');
 
                 expect(mockRun).toHaveBeenCalledWith(
-                    "rg --no-heading -n 'myFunc\\(' /home/user/repo/src/index.ts",
+                    "rg --no-heading -n 'myFunc\\(' '/home/user/repo/src/index.ts'",
                     { timeoutMs: 30_000 },
                 );
                 expect(result).toBe('output');
@@ -323,18 +323,15 @@ describe('E2BSandboxService', () => {
                 await remoteCommands.grep('pattern', 'src', '*.ts');
 
                 expect(mockRun).toHaveBeenCalledWith(
-                    "rg --no-heading -n 'pattern' /home/user/repo/src --glob \"*.ts\"",
+                    "rg --no-heading -n 'pattern' '/home/user/repo/src' --glob '*.ts'",
                     { timeoutMs: 30_000 },
                 );
             });
 
-            it('should use absolute path as-is', async () => {
-                await remoteCommands.grep('pattern', '/tmp/other');
-
-                expect(mockRun).toHaveBeenCalledWith(
-                    "rg --no-heading -n 'pattern' /tmp/other",
-                    { timeoutMs: 30_000 },
-                );
+            it('should reject absolute paths', async () => {
+                await expect(
+                    remoteCommands.grep('pattern', '/tmp/other'),
+                ).rejects.toThrow('Absolute paths are not allowed');
             });
         });
 
@@ -343,7 +340,7 @@ describe('E2BSandboxService', () => {
                 const result = await remoteCommands.read('src/app.ts', 10, 20);
 
                 expect(mockRun).toHaveBeenCalledWith(
-                    "sed -n '10,20p' /home/user/repo/src/app.ts",
+                    "sed -n '10,20p' '/home/user/repo/src/app.ts'",
                     { timeoutMs: 10_000 },
                 );
                 expect(result).toBe('output');
@@ -355,7 +352,7 @@ describe('E2BSandboxService', () => {
                 const result = await remoteCommands.listDir('src', 3);
 
                 expect(mockRun).toHaveBeenCalledWith(
-                    'find /home/user/repo/src -maxdepth 3 -type f',
+                    "find '/home/user/repo/src' -maxdepth 3 -type f",
                     { timeoutMs: 30_000 },
                 );
                 expect(result).toBe('output');
@@ -379,8 +376,16 @@ describe('E2BSandboxService', () => {
             );
         });
 
-        it('should return absolute paths unchanged', () => {
-            expect(resolvePath('/tmp/somefile')).toBe('/tmp/somefile');
+        it('should reject absolute paths', () => {
+            expect(() => resolvePath('/tmp/somefile')).toThrow(
+                'Absolute paths are not allowed',
+            );
+        });
+
+        it('should reject path traversal with ".."', () => {
+            expect(() => resolvePath('../etc/passwd')).toThrow(
+                'Path traversal using ".." is not allowed',
+            );
         });
 
     });
