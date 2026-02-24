@@ -16,12 +16,3 @@ export class SkillOverrideNotFoundError extends Error {
     }
 }
 
-export class CircularSkillDependencyError extends Error {
-    constructor(cycle: string[]) {
-        super(
-            `Circular skill dependency detected: ${cycle.join(' → ')}. ` +
-                `Fix the blueprint before starting the application.`,
-        );
-        this.name = 'CircularSkillDependencyError';
-    }
-}

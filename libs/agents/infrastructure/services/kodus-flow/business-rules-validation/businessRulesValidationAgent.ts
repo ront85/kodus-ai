@@ -8,7 +8,7 @@ import {
 } from '@kodus/flow';
 import { SDKOrchestrator } from '@kodus/flow/dist/orchestration';
 import { LLMModelProvider, PromptRunnerService } from '@kodus/kodus-common/llm';
-import { Injectable, Inject, OnModuleInit } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 
 import { ParametersKey } from '@libs/core/domain/enums/parameters-key.enum';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
@@ -18,29 +18,25 @@ import {
     IParametersService,
 } from '@libs/organization/domain/parameters/contracts/parameters.service.contract';
 
-import { BaseAgentProvider } from './base-agent.provider';
+import { BaseAgentProvider } from '../base-agent.provider';
 import { ObservabilityService } from '@libs/core/log/observability.service';
 import { MCPManagerService } from '@libs/mcp-server/services/mcp-manager.service';
 
 import { runBlueprint } from '@libs/shared/blueprint/blueprint.runner';
 import { LLMStep } from '@libs/shared/blueprint/blueprint.types';
-import { SkillLoaderService } from '../../../skills/skill-loader.service';
-import { SkillRunnerService } from '../skill-runner.service';
-import { businessRulesBlueprint } from '../../../skills/business-rules-validation/blueprint';
+import { SkillLoaderService } from '../../../../skills/skill-loader.service';
+import { businessRulesBlueprint } from './blueprint';
 import {
     BusinessRulesContext,
     TaskQuality,
     ValidationResult,
-} from '../../../skills/business-rules-validation/types';
+} from './types';
 
 /** Re-exported for backward compatibility with callers that imported from here */
 export type { ValidationResult };
 
 @Injectable()
-export class BusinessRulesValidationAgentProvider
-    extends BaseAgentProvider
-    implements OnModuleInit
-{
+export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
     private readonly logger = createLogger(
         BusinessRulesValidationAgentProvider.name,
     );
@@ -65,22 +61,12 @@ export class BusinessRulesValidationAgentProvider
         private readonly parametersService: IParametersService,
         observabilityService: ObservabilityService,
         private readonly skillLoaderService: SkillLoaderService,
-        private readonly skillRunnerService: SkillRunnerService,
         private readonly mcpManagerService?: MCPManagerService,
     ) {
         super(
             promptRunnerService,
             permissionValidationService,
             observabilityService,
-        );
-    }
-
-    onModuleInit(): void {
-        // Register so SkillRunnerService can invoke this skill from any trigger
-        this.skillRunnerService.registerSkill(
-            'business-rules-validation',
-            businessRulesBlueprint,
-            this.runAnalyzerStep.bind(this),
         );
     }
 
@@ -312,10 +298,12 @@ export class BusinessRulesValidationAgentProvider
             return;
         }
 
-        const requiredTools = [
-            'KODUS_GET_PULL_REQUEST_DIFF',
-            'KODUS_GET_PULL_REQUEST',
-        ];
+        const meta = this.skillLoaderService.loadSkillMetaFromFilesystem(
+            'business-rules-validation',
+        );
+        const requiredTools = meta.allowedTools?.length
+            ? meta.allowedTools
+            : ['KODUS_GET_PULL_REQUEST_DIFF', 'KODUS_GET_PULL_REQUEST'];
 
         const filteredServers = mcpManagerServers.filter((server) => {
             if (server.provider !== 'kodusmcp') return true;

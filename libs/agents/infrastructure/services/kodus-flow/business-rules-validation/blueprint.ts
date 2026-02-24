@@ -34,7 +34,6 @@ export const businessRulesBlueprint: BlueprintStep<BusinessRulesContext>[] = [
         },
         onFail: (ctx): BusinessRulesContext => {
             const quality = ctx.taskQuality ?? 'EMPTY';
-            const isEmpty = quality === 'EMPTY';
 
             const missingInfo = isEmptyQuality(quality)
                 ? buildEmptyContextMessage(ctx)

@@ -18,6 +18,14 @@ const SKILL_KEY_MAP: Record<string, ParametersKey> = {
         ParametersKey.SKILL_BUSINESS_RULES_VALIDATION,
 };
 
+/** Platform-level metadata parsed from SKILL.md frontmatter. Not user-editable. */
+export interface SkillMeta {
+    name?: string;
+    description?: string;
+    /** MCP tool names the skill's fetcher agent is allowed to use. */
+    allowedTools?: string[];
+}
+
 @Injectable()
 export class SkillLoaderService {
     private readonly logger = new Logger(SkillLoaderService.name);
@@ -31,9 +39,12 @@ export class SkillLoaderService {
      * Load skill instructions for a given team.
      *
      * Resolution order:
-     * 1. DB: parameters WHERE configKey = skill_key AND team = team AND active = true
+     * 1. DB: all active records for configKey + team, highest version wins
      * 2. Filesystem: libs/agents/skills/{skillName}/SKILL.md
      * 3. Throws SkillNotFoundError if both unavailable
+     *
+     * Frontmatter is stripped before returning — the LLM receives only the
+     * Markdown body. References (references/*.md) are appended when present.
      *
      * DB failure silently falls back to filesystem — reviews must never fail
      * due to a transient override fetch error.
@@ -46,17 +57,21 @@ export class SkillLoaderService {
 
         if (configKey) {
             try {
-                const override = await this.parametersService.findByKey(
+                const allVersions = await this.parametersService.find({
                     configKey,
-                    organizationAndTeamData,
-                );
+                    team: { uuid: organizationAndTeamData.teamId } as any,
+                });
 
-                if (override?.configValue?.content) {
+                const latest = allVersions
+                    ?.sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0];
+
+                if (latest?.configValue?.content) {
                     this.logger.log(
-                        `[SkillLoader] loaded DB override for skill '${skillName}' ` +
+                        `[SkillLoader] loaded DB override v${latest.version} for skill '${skillName}' ` +
                             `(team: ${organizationAndTeamData?.teamId})`,
                     );
-                    return override.configValue.content;
+                    // Strip frontmatter — DB override may or may not include it
+                    return this.parseFrontmatter(latest.configValue.content).body;
                 }
             } catch (err) {
                 this.logger.warn(
@@ -69,10 +84,27 @@ export class SkillLoaderService {
     }
 
     /**
-     * Save or update a team's SKILL.md instruction override.
+     * Read platform metadata (allowed-tools, name, description) from the
+     * filesystem SKILL.md frontmatter.
      *
-     * Deactivates the current active record and creates a new one with
-     * version = previous_max + 1. Returns the new version number.
+     * Always reads from the filesystem — this metadata is platform-owned and
+     * is not overridable by teams via the DB override API.
+     */
+    loadSkillMetaFromFilesystem(skillName: string): SkillMeta {
+        const skillPath = path.join(__dirname, skillName, 'SKILL.md');
+        if (!fs.existsSync(skillPath)) return {};
+        const raw = fs.readFileSync(skillPath, 'utf-8');
+        return this.parseFrontmatter(raw).meta;
+    }
+
+    /**
+     * Save a new version of a team's SKILL.md instruction override.
+     *
+     * All previous records remain active — the highest version number is always
+     * the current one. This avoids the need to find inactive records when
+     * restoring older versions.
+     *
+     * Returns the new version number.
      */
     async saveOverride(
         skillName: string,
@@ -81,20 +113,15 @@ export class SkillLoaderService {
     ): Promise<number> {
         const configKey = this.requireConfigKey(skillName);
 
-        const existing = await this.parametersService.findByKey(
+        const existing = await this.parametersService.find({
             configKey,
-            organizationAndTeamData,
-        );
+            team: { uuid: organizationAndTeamData.teamId } as any,
+        });
 
-        let nextVersion = 1;
-
-        if (existing) {
-            nextVersion = (existing.version ?? 1) + 1;
-            await this.parametersService.update(
-                { uuid: existing.uuid },
-                { active: false },
-            );
-        }
+        const maxVersion =
+            existing?.reduce((max, r) => Math.max(max, r.version ?? 0), 0) ??
+            0;
+        const nextVersion = maxVersion + 1;
 
         await this.parametersService.create({
             uuid: undefined as any,
@@ -114,9 +141,10 @@ export class SkillLoaderService {
     }
 
     /**
-     * Restore a previous version of a team's skill override.
+     * Restore a previous version by creating a new record with that version's
+     * content, making it the new highest-version (current) entry.
      *
-     * Deactivates the current active record and activates the requested version.
+     * Works with the existing repository API — no need to query inactive records.
      */
     async restoreVersion(
         skillName: string,
@@ -125,43 +153,65 @@ export class SkillLoaderService {
     ): Promise<void> {
         const configKey = this.requireConfigKey(skillName);
 
-        const current = await this.parametersService.findByKey(
-            configKey,
-            organizationAndTeamData,
-        );
-
-        if (current) {
-            await this.parametersService.update(
-                { uuid: current.uuid },
-                { active: false },
-            );
-        }
-
         const allVersions = await this.parametersService.find({
             configKey,
             team: { uuid: organizationAndTeamData.teamId } as any,
-            version,
         });
 
-        const target = allVersions?.[0];
+        const target = allVersions?.find((r) => r.version === version);
 
         if (!target) {
             throw new SkillOverrideNotFoundError(skillName, version);
         }
 
-        await this.parametersService.update(
-            { uuid: target.uuid },
-            { active: true },
-        );
+        const maxVersion =
+            allVersions.reduce((max, r) => Math.max(max, r.version ?? 0), 0);
+
+        await this.parametersService.create({
+            uuid: undefined as any,
+            configKey,
+            configValue: target.configValue,
+            team: { uuid: organizationAndTeamData.teamId } as any,
+            version: maxVersion + 1,
+            active: true,
+        });
 
         this.logger.log(
-            `[SkillLoader] restored v${version} for skill '${skillName}' ` +
+            `[SkillLoader] restored v${version} as v${maxVersion + 1} for skill '${skillName}' ` +
                 `(team: ${organizationAndTeamData?.teamId})`,
         );
     }
 
+    /**
+     * List all DB override versions saved for a skill+team, newest first.
+     * Returns an empty array when no overrides have been saved yet.
+     */
+    async listVersions(
+        skillName: string,
+        organizationAndTeamData: OrganizationAndTeamData,
+    ): Promise<Array<{ version: number; createdAt?: Date; updatedAt?: Date }>> {
+        const configKey = this.requireConfigKey(skillName);
+
+        const all = await this.parametersService.find({
+            configKey,
+            team: { uuid: organizationAndTeamData.teamId } as any,
+        });
+
+        return (all ?? [])
+            .sort((a, b) => (b.version ?? 0) - (a.version ?? 0))
+            .map((r) => ({
+                version: r.version ?? 0,
+                createdAt: r.createdAt,
+                updatedAt: r.updatedAt,
+            }));
+    }
+
     // ─── Private helpers ──────────────────────────────────────────────────────
 
+    /**
+     * Load SKILL.md from filesystem, strip frontmatter, and append any
+     * reference files found in references/*.md.
+     */
     private loadFromFilesystem(skillName: string): string {
         const skillPath = path.join(__dirname, skillName, 'SKILL.md');
 
@@ -173,7 +223,66 @@ export class SkillLoaderService {
             `[SkillLoader] loaded filesystem SKILL.md for skill '${skillName}'`,
         );
 
-        return fs.readFileSync(skillPath, 'utf-8');
+        const raw = fs.readFileSync(skillPath, 'utf-8');
+        const { body } = this.parseFrontmatter(raw);
+
+        const refs = this.loadReferences(skillName);
+        return refs
+            ? `${body}\n\n---\n\n## Reference Material\n\n${refs}`
+            : body;
+    }
+
+    /**
+     * Concatenate all .md files in references/ sorted alphabetically.
+     * Returns an empty string when the directory does not exist.
+     */
+    private loadReferences(skillName: string): string {
+        const refsDir = path.join(__dirname, skillName, 'references');
+        if (!fs.existsSync(refsDir)) return '';
+
+        const files = fs
+            .readdirSync(refsDir)
+            .filter((f) => f.endsWith('.md'))
+            .sort();
+
+        if (files.length === 0) return '';
+
+        this.logger.log(
+            `[SkillLoader] loading ${files.length} reference file(s) for skill '${skillName}'`,
+        );
+
+        return files
+            .map((f) =>
+                fs.readFileSync(path.join(refsDir, f), 'utf-8').trim(),
+            )
+            .join('\n\n---\n\n');
+    }
+
+    /**
+     * Parse YAML frontmatter from a SKILL.md string.
+     *
+     * Supports the `allowed-tools` field as a YAML list:
+     *   allowed-tools:
+     *     - TOOL_NAME
+     *
+     * Returns the Markdown body (without frontmatter) and the parsed metadata.
+     * If no frontmatter is present, returns the raw content as the body.
+     */
+    private parseFrontmatter(raw: string): { body: string; meta: SkillMeta } {
+        const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+        if (!match) return { body: raw, meta: {} };
+
+        const yamlStr = match[1];
+        const body = match[2].trimStart();
+
+        const toolsMatch = yamlStr.match(
+            /^allowed-tools:\s*\n((?:[ \t]+-[ \t]+\S+[ \t]*\n?)+)/m,
+        );
+        const allowedTools = toolsMatch
+            ? (toolsMatch[1].match(/\S+(?=\s*$)/gm) ?? [])
+            : undefined;
+
+        return { body, meta: { allowedTools } };
     }
 
     private requireConfigKey(skillName: string): ParametersKey {
