@@ -303,7 +303,8 @@ export class CodeReviewPipelineObserver implements IPipelineObserver {
             context.ignoredFiles.length > 0
         ) {
             return {
-                ignoredFiles: context.ignoredFiles.slice(0, 50),
+                ignoredFilesCount: context.ignoredFiles.length,
+                ignoredFilesSample: context.ignoredFiles.slice(0, 10),
             };
         }
         return undefined;

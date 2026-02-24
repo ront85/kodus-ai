@@ -5,6 +5,15 @@ import { CodeReviewPipelineContext } from '../context/code-review-pipeline.conte
 import { AutomationStatus } from '@libs/automation/domain/automation/enum/automation-status';
 import { PipelineReasons } from '@libs/core/infrastructure/pipeline/constants/pipeline-reasons.const';
 import { StageMessageHelper } from '@libs/core/infrastructure/pipeline/utils/stage-message.helper';
+import { isFileMatchingGlob } from '@libs/common/utils/glob-utils';
+
+jest.mock('@libs/common/utils/glob-utils', () => {
+    const actual = jest.requireActual('@libs/common/utils/glob-utils');
+    return {
+        ...actual,
+        isFileMatchingGlob: jest.fn(actual.isFileMatchingGlob),
+    };
+});
 
 describe('FetchChangedFilesStage', () => {
     let stage: FetchChangedFilesStage;
@@ -76,6 +85,28 @@ describe('FetchChangedFilesStage', () => {
         expect(result.ignoredFiles).toEqual(['file.js']);
     });
 
+    it('should evaluate ignore matcher only once per file', async () => {
+        context.codeReviewConfig.ignorePaths = ['**/*.js'];
+        const files = [
+            { filename: 'a.js' },
+            { filename: 'b.ts', patch: 'diff', status: 'modified' },
+            { filename: 'c.ts', patch: 'diff', status: 'modified' },
+        ];
+        (isFileMatchingGlob as jest.Mock).mockClear();
+
+        mockPullRequestManagerService.getChangedFilesMetadata.mockResolvedValue(
+            files,
+        );
+        mockPullRequestManagerService.enrichFilesWithContent.mockResolvedValue([
+            { filename: 'b.ts', patch: 'diff', status: 'modified' },
+            { filename: 'c.ts', patch: 'diff', status: 'modified' },
+        ]);
+
+        await stage.execute(context);
+
+        expect(isFileMatchingGlob).toHaveBeenCalledTimes(files.length);
+    });
+
     it('should populate ignoredFiles and proceed if some files are valid', async () => {
         context.codeReviewConfig.ignorePaths = ['**/*.js'];
         const files = [
@@ -117,6 +148,30 @@ describe('FetchChangedFilesStage', () => {
         );
 
         expect(result.statusInfo.message).toBe(expectedMessage);
+    });
+
+    it('should skip early when pullRequest.changed_files exceeds limit without fetching files', async () => {
+        context.pullRequest = {
+            number: 1,
+            changed_files: 3000,
+        } as any;
+
+        const result = await stage.execute(context);
+
+        expect(result.statusInfo.status).toBe(AutomationStatus.SKIPPED);
+
+        const expectedMessage = StageMessageHelper.skippedWithReason(
+            PipelineReasons.FILES.TOO_MANY,
+            'Count: 3000, Limit: 500',
+        );
+
+        expect(result.statusInfo.message).toBe(expectedMessage);
+        expect(
+            mockPullRequestManagerService.getChangedFilesMetadata,
+        ).not.toHaveBeenCalled();
+        expect(
+            mockPullRequestManagerService.enrichFilesWithContent,
+        ).not.toHaveBeenCalled();
     });
 
     it('should ignore lastAnalyzedCommit when forceFullRerun is enabled', async () => {

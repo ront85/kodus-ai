@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { AnyBulkWriteOperation, Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { PullRequestsModel } from './schemas/pullRequests.model';
 
@@ -859,6 +859,37 @@ export class PullRequestsRepository implements IPullRequestsRepository {
         return doc ? mapSimpleModelToEntity(doc, PullRequestsEntity) : null;
     }
 
+    async addFilesToPullRequestBatch(
+        pullRequestNumber: number,
+        repositoryName: string,
+        newFiles: Array<Omit<IFile, 'id'>>,
+    ): Promise<void> {
+        if (!newFiles?.length) {
+            return;
+        }
+
+        const filesWithId = newFiles.map((file) => ({
+            ...file,
+            id: new mongoose.Types.ObjectId().toString(),
+        }));
+
+        await this.pullRequestsModel
+            .updateOne(
+                {
+                    'number': pullRequestNumber,
+                    'repository.name': repositoryName,
+                },
+                {
+                    $push: {
+                        files: {
+                            $each: filesWithId,
+                        },
+                    },
+                },
+            )
+            .exec();
+    }
+
     async addSuggestionToFile(
         fileId: string,
         newSuggestion: Omit<ISuggestion, 'id'> & { id?: string },
@@ -887,6 +918,88 @@ export class PullRequestsRepository implements IPullRequestsRepository {
             .exec();
 
         return doc ? mapSimpleModelToEntity(doc, PullRequestsEntity) : null;
+    }
+
+    async bulkUpdateFilesAndSuggestions(params: {
+        pullRequestNumber: number;
+        repositoryName: string;
+        updates: Array<{
+            fileId: string;
+            fileUpdate: Partial<IFile>;
+            suggestions: Array<Omit<ISuggestion, 'id'> & { id?: string }>;
+        }>;
+    }): Promise<void> {
+        const { pullRequestNumber, repositoryName, updates } = params;
+
+        if (!updates?.length) {
+            return;
+        }
+
+        const now = new Date().toISOString();
+        const operations: AnyBulkWriteOperation<PullRequestsModel>[] = [];
+
+        for (const update of updates) {
+            const sanitizedFileUpdate = this.sanitizeCodeReviewConfigData(
+                update.fileUpdate || {},
+            );
+
+            const setUpdate = Object.entries(sanitizedFileUpdate).reduce(
+                (acc, [key, value]) => {
+                    acc[`files.$.${key}`] = value;
+                    return acc;
+                },
+                {
+                    'files.$.updatedAt': now,
+                },
+            );
+
+            operations.push({
+                updateOne: {
+                    filter: {
+                        'number': pullRequestNumber,
+                        'repository.name': repositoryName,
+                        'files.id': update.fileId,
+                    },
+                    update: {
+                        $set: setUpdate,
+                    },
+                },
+            });
+
+            if (update.suggestions?.length) {
+                const suggestionsWithId = update.suggestions.map(
+                    (suggestion) => ({
+                        ...suggestion,
+                        id:
+                            suggestion.id ||
+                            new mongoose.Types.ObjectId().toString(),
+                    }),
+                );
+
+                operations.push({
+                    updateOne: {
+                        filter: {
+                            'number': pullRequestNumber,
+                            'repository.name': repositoryName,
+                            'files.id': update.fileId,
+                        },
+                        update: {
+                            $push: {
+                                'files.$.suggestions': {
+                                    $each: suggestionsWithId,
+                                },
+                            },
+                        },
+                    },
+                });
+            }
+        }
+
+        if (operations.length) {
+            await this.pullRequestsModel.bulkWrite(operations, {
+                ordered: false,
+            });
+        }
     }
 
     async findRecentByRepositoryId(

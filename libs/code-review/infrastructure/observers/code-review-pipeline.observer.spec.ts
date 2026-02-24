@@ -844,9 +844,10 @@ describe('CodeReviewPipelineObserver', () => {
             'stage-log-uuid',
             expect.objectContaining({
                 metadata: expect.objectContaining({
-                    ignoredFiles: expect.arrayContaining([
+                    ignoredFilesCount: 60,
+                    ignoredFilesSample: expect.arrayContaining([
                         'file-0.ts',
-                        'file-49.ts',
+                        'file-9.ts',
                     ]),
                 }),
             }),
@@ -856,8 +857,8 @@ describe('CodeReviewPipelineObserver', () => {
         const callArgs =
             mockAutomationExecutionService.updateStageLog.mock.calls[0];
         const metadata = callArgs[1].metadata;
-        expect(metadata.ignoredFiles).toHaveLength(50);
-        expect(metadata.ignoredFiles).not.toContain('file-50.ts');
+        expect(metadata.ignoredFilesSample).toHaveLength(10);
+        expect(metadata.ignoredFilesSample).not.toContain('file-10.ts');
     });
 
     it('should include ignoredFiles in metadata on stage skipped if present in context', async () => {
@@ -883,7 +884,8 @@ describe('CodeReviewPipelineObserver', () => {
             expect.objectContaining({
                 status: AutomationStatus.SKIPPED,
                 metadata: expect.objectContaining({
-                    ignoredFiles: ['ignored-file.ts'],
+                    ignoredFilesCount: 1,
+                    ignoredFilesSample: ['ignored-file.ts'],
                 }),
             }),
         );

@@ -128,12 +128,26 @@ export interface IPullRequestsRepository {
         repositoryName: string,
         newFile: Omit<IFile, 'id'>,
     ): Promise<PullRequestsEntity | null>;
+    addFilesToPullRequestBatch(
+        pullRequestNumber: number,
+        repositoryName: string,
+        newFiles: Array<Omit<IFile, 'id'>>,
+    ): Promise<void>;
     addSuggestionToFile(
         fileId: string,
         newSuggestion: Omit<ISuggestion, 'id'>,
         pullRequestNumber: number,
         repositoryName: string,
     ): Promise<PullRequestsEntity | null>;
+    bulkUpdateFilesAndSuggestions(params: {
+        pullRequestNumber: number;
+        repositoryName: string;
+        updates: Array<{
+            fileId: string;
+            fileUpdate: Partial<IFile>;
+            suggestions: Array<Omit<ISuggestion, 'id'> & { id?: string }>;
+        }>;
+    }): Promise<void>;
     findRecentByRepositoryId(
         organizationId: string,
         repositoryId: string,

@@ -253,6 +253,18 @@ export class PullRequestsService implements IPullRequestsService {
         );
     }
 
+    async addFilesToPullRequestBatch(
+        pullRequestNumber: number,
+        repositoryName: string,
+        newFiles: Array<Omit<IFile, 'id'>>,
+    ): Promise<void> {
+        return this.pullRequestsRepository.addFilesToPullRequestBatch(
+            pullRequestNumber,
+            repositoryName,
+            newFiles,
+        );
+    }
+
     async addSuggestionToFile(
         fileId: string,
         newSuggestion: Omit<ISuggestion, 'id'>,
@@ -264,6 +276,20 @@ export class PullRequestsService implements IPullRequestsService {
             newSuggestion,
             pullRequestNumber,
             repositoryName,
+        );
+    }
+
+    async bulkUpdateFilesAndSuggestions(params: {
+        pullRequestNumber: number;
+        repositoryName: string;
+        updates: Array<{
+            fileId: string;
+            fileUpdate: Partial<IFile>;
+            suggestions: Array<Omit<ISuggestion, 'id'> & { id?: string }>;
+        }>;
+    }): Promise<void> {
+        return this.pullRequestsRepository.bulkUpdateFilesAndSuggestions(
+            params,
         );
     }
 
@@ -525,7 +551,10 @@ export class PullRequestsService implements IPullRequestsService {
             }
 
             return this.handleExistingPullRequest(
-                enrichedPullRequest,
+                {
+                    number: enrichedPullRequest.number,
+                    files: existingPR.files || [],
+                },
                 repository,
                 changedFiles,
                 prioritizedSuggestions,
@@ -842,12 +871,29 @@ export class PullRequestsService implements IPullRequestsService {
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<IPullRequests> {
         try {
+            const existingFilesByPath = new Map<string, IFile>(
+                (pullRequest?.files || [])
+                    .filter((file: IFile) => !!file?.path)
+                    .map((file: IFile) => [file.path, file]),
+            );
+
+            const existingFileUpdates: Array<{
+                fileId: string;
+                fileUpdate: Partial<IFile>;
+                suggestions: Array<Omit<ISuggestion, 'id'> & { id?: string }>;
+            }> = [];
+            const newFilesToInsert: Array<Omit<IFile, 'id'>> = [];
+
             for (const file of changedFiles) {
-                const existingFile = await this.findFileWithSuggestions(
-                    pullRequest?.number,
-                    repository?.name,
-                    file?.filename,
-                );
+                let existingFile = existingFilesByPath.get(file?.filename);
+
+                if (!existingFile) {
+                    existingFile = await this.findFileWithSuggestions(
+                        pullRequest?.number,
+                        repository?.name,
+                        file?.filename,
+                    );
+                }
 
                 if (existingFile) {
                     const updatedFile = {
@@ -860,30 +906,16 @@ export class PullRequestsService implements IPullRequestsService {
                         codeReviewModelUsed: file.codeReviewModelUsed ?? '',
                     };
 
-                    await this.updateFile(existingFile.id, updatedFile);
-
                     const newSuggestions = this.getSuggestionsForFile(
                         file.filename,
                         prioritizedSuggestions,
                         unusedSuggestions,
                     );
 
-                    for (const suggestion of newSuggestions) {
-                        await this.addSuggestionToFile(
-                            existingFile.id,
-                            suggestion,
-                            pullRequest?.number,
-                            repository?.name,
-                        );
-                    }
-
-                    this.logger.log({
-                        message: `Added new suggestions to existing file ${file.filename} for PR#${pullRequest?.number}`,
-                        context: PullRequestsService.name,
-                        metadata: {
-                            fileId: existingFile.id,
-                            newSuggestionsCount: newSuggestions.length,
-                        },
+                    existingFileUpdates.push({
+                        fileId: existingFile.id,
+                        fileUpdate: updatedFile,
+                        suggestions: newSuggestions,
                     });
                 } else {
                     const formattedFile = {
@@ -904,22 +936,39 @@ export class PullRequestsService implements IPullRequestsService {
                         changes: file.changes ?? 0,
                     };
 
-                    await this.pullRequestsRepository.addFileToPullRequest(
-                        pullRequest.number,
-                        repository.name,
-                        formattedFile,
-                    );
-
-                    this.logger.log({
-                        message: `Added new file ${file.filename} to PR#${pullRequest?.number}`,
-                        context: PullRequestsService.name,
-                        metadata: {
-                            filename: file.filename,
-                            suggestionsCount: formattedFile.suggestions.length,
-                        },
-                    });
+                    newFilesToInsert.push(formattedFile);
                 }
             }
+
+            if (existingFileUpdates.length > 0) {
+                await this.pullRequestsRepository.bulkUpdateFilesAndSuggestions({
+                    pullRequestNumber: pullRequest.number,
+                    repositoryName: repository.name,
+                    updates: existingFileUpdates,
+                });
+            }
+
+            if (newFilesToInsert.length > 0) {
+                await this.pullRequestsRepository.addFilesToPullRequestBatch(
+                    pullRequest.number,
+                    repository.name,
+                    newFilesToInsert,
+                );
+            }
+
+            this.logger.log({
+                message: `Batch sync completed for PR#${pullRequest?.number}`,
+                context: PullRequestsService.name,
+                metadata: {
+                    changedFilesCount: changedFiles?.length ?? 0,
+                    existingFilesUpdated: existingFileUpdates.length,
+                    newFilesAdded: newFilesToInsert.length,
+                    suggestionsAdded: existingFileUpdates.reduce(
+                        (acc, current) => acc + current.suggestions.length,
+                        0,
+                    ),
+                },
+            });
 
             const newPrEntity = await this.findByNumberAndRepositoryName(
                 pullRequest?.number,

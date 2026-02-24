@@ -56,9 +56,9 @@ export class PullRequestHandlerService implements IPullRequestManagerService {
         ignorePaths?: string[],
         lastCommit?: string,
     ): Promise<FileChange[]> {
-        try {
-            let changedFiles: FileChange[];
+        let changedFiles: FileChange[] | undefined;
 
+        try {
             if (lastCommit) {
                 // Retrieve files changed since the last commit
                 changedFiles =
@@ -90,11 +90,16 @@ export class PullRequestHandlerService implements IPullRequestManagerService {
                     message: `No files to review after filtering PR#${pullRequest?.number}`,
                     context: PullRequestHandlerService.name,
                     metadata: {
-                        repository,
+                        repositoryId: repository?.id,
+                        repositoryName: repository?.name,
                         prNumber: pullRequest?.number,
-                        ignorePaths,
-                        changedFilePaths:
-                            changedFiles?.map((file) => file.filename) || [],
+                        ignorePathsCount: ignorePaths?.length || 0,
+                        ignorePathsSample:
+                            (ignorePaths || []).slice(0, 10),
+                        changedFilesCount: changedFiles?.length || 0,
+                        changedFilePathsSample: (changedFiles || [])
+                            .map((file) => file.filename)
+                            .slice(0, 20),
                     },
                 });
             }
@@ -162,7 +167,14 @@ export class PullRequestHandlerService implements IPullRequestManagerService {
                 message: 'Error fetching changed files',
                 context: PullRequestHandlerService.name,
                 error,
-                metadata: { ...pullRequest, repository },
+                metadata: {
+                    repositoryId: repository?.id,
+                    repositoryName: repository?.name,
+                    prNumber: pullRequest?.number,
+                    hasLastCommit: Boolean(lastCommit),
+                    ignorePathsCount: ignorePaths?.length || 0,
+                    changedFilesCount: changedFiles?.length || 0,
+                },
             });
             throw error;
         }

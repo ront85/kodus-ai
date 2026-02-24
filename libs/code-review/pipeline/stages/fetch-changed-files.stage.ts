@@ -59,6 +59,39 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
             });
         }
 
+        const pullRequestChangedFilesCount =
+            this.getPullRequestChangedFilesCount(context);
+
+        if (pullRequestChangedFilesCount > this.maxFilesToAnalyze) {
+            const message = StageMessageHelper.skippedWithReason(
+                PipelineReasons.FILES.TOO_MANY,
+                `Count: ${pullRequestChangedFilesCount}, Limit: ${this.maxFilesToAnalyze}`,
+            );
+
+            this.logger.warn({
+                message: `Skipping code review for PR#${context.pullRequest.number} - ${message}`,
+                context: FetchChangedFilesStage.name,
+                metadata: {
+                    organizationAndTeamData: context?.organizationAndTeamData,
+                    filesCount: pullRequestChangedFilesCount,
+                    limit: this.maxFilesToAnalyze,
+                    ignorePathsCount:
+                        context.codeReviewConfig.ignorePaths?.length || 0,
+                    ignorePathsSample:
+                        context.codeReviewConfig.ignorePaths
+                            ?.slice(0, 5)
+                            .join(', ') || '',
+                },
+            });
+
+            return this.updateContext(context, (draft) => {
+                draft.statusInfo = {
+                    status: AutomationStatus.SKIPPED,
+                    message,
+                };
+            });
+        }
+
         // Reutilizar arquivos do ResolveConfigStage se disponíveis, caso contrário buscar
         let filesToProcess = context.preliminaryFiles;
         const forceFullRerun = Boolean(context.pipelineMetadata?.forceFullRerun);
@@ -87,12 +120,16 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
 
         // Aplicar filtro ignorePaths
         const ignorePaths = context.codeReviewConfig.ignorePaths || [];
-        const filteredFiles = filesToProcess?.filter(
-            (file) => !isFileMatchingGlob(file.filename, ignorePaths),
-        );
-        const ignoredList = filesToProcess?.filter((file) =>
-            isFileMatchingGlob(file.filename, ignorePaths),
-        );
+        const filteredFiles: FileChange[] = [];
+        const ignoredList: FileChange[] = [];
+
+        for (const file of filesToProcess || []) {
+            if (isFileMatchingGlob(file.filename, ignorePaths)) {
+                ignoredList.push(file);
+            } else {
+                filteredFiles.push(file);
+            }
+        }
 
         const validation = this.validateFiles(
             filesToProcess,
@@ -111,7 +148,8 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
                     organizationAndTeamData: context?.organizationAndTeamData,
                     filesCount: filteredFiles?.length || 0,
                     totalFilesBeforeFilter: filesToProcess?.length || 0,
-                    ignorePaths,
+                    ignorePathsCount: ignorePaths.length,
+                    ignorePathsSample: ignorePaths.slice(0, 5).join(', '),
                     technicalReason,
                     ...metadata,
                 },
@@ -185,6 +223,7 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
             const ignoredFileNames = filesToProcess.map((f) => f.filename);
             const messageFiles = ignoredFileNames.slice(0, 5).join(', ');
             const suffix = ignoredFileNames.length > 5 ? '...' : '';
+            const ignoredFilesSample = ignoredFileNames.slice(0, 20);
 
             return {
                 canProceed: false,
@@ -194,8 +233,12 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
                         PipelineReasons.FILES.ALL_IGNORED,
                         `Ignored: ${messageFiles}${suffix}`,
                     ),
-                    technicalReason: `Ignored files: ${ignoredFileNames.join(', ')}`,
-                    metadata: { ignorePaths, ignoredFiles: ignoredFileNames },
+                    technicalReason: `Ignored files count: ${ignoredFileNames.length}. Sample: ${ignoredFilesSample.join(', ')}`,
+                    metadata: {
+                        ignorePathsCount: ignorePaths.length,
+                        ignoredFilesCount: ignoredFileNames.length,
+                        ignoredFilesSample,
+                    },
                 },
             };
         }
@@ -219,6 +262,25 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
         }
 
         return { canProceed: true };
+    }
+
+    private getPullRequestChangedFilesCount(
+        context: CodeReviewPipelineContext,
+    ): number {
+        const candidates = [
+            context?.pullRequest?.changed_files,
+            context?.pullRequest?.changedFiles,
+            context?.pullRequest?.stats?.total_files,
+        ];
+
+        for (const value of candidates) {
+            const numericValue = Number(value);
+            if (Number.isFinite(numericValue) && numericValue > 0) {
+                return Math.floor(numericValue);
+            }
+        }
+
+        return 0;
     }
 
     private prepareFilesWithLineNumbers(files: FileChange[]): FileChange[] {
