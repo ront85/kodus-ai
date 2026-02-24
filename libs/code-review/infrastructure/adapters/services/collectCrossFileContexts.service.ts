@@ -366,7 +366,7 @@ export class CollectCrossFileContextsService {
 
         const builder = promptRunner
             .builder()
-            .setParser(ParserType.ZOD, CrossFileContextPlannerSchema)
+            .setParser(ParserType.ZOD, CrossFileContextPlannerSchema as any)
             .setLLMJsonMode(true)
             .setPayload(payload)
             .addPrompt({
@@ -395,7 +395,7 @@ export class CollectCrossFileContextsService {
                     builder.addCallbacks(callbacks).execute(),
             });
 
-        return result?.queries ?? [];
+        return (result as CrossFileContextPlannerSchemaType)?.queries ?? [];
     }
 
     private deduplicatePlannerQueries(
