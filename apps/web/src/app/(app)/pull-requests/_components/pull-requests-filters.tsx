@@ -32,6 +32,7 @@ import { usePermissions } from "src/core/providers/permissions.provider";
 import { hasPermission } from "src/core/utils/permissions";
 
 type SuggestionsFilterValue = "all" | "true" | "false";
+type AuthorPolicyFilterValue = "all" | "reviewable" | "excluded";
 
 interface PullRequestsFiltersProps {
     teamId: string;
@@ -43,6 +44,8 @@ interface PullRequestsFiltersProps {
     onPullRequestNumberChange: (value: string) => void;
     suggestionsFilter: SuggestionsFilterValue;
     onSuggestionsFilterChange: (value: SuggestionsFilterValue) => void;
+    authorPolicy: AuthorPolicyFilterValue;
+    onAuthorPolicyChange: (value: AuthorPolicyFilterValue) => void;
 }
 
 export const PullRequestsFilters = ({
@@ -55,6 +58,8 @@ export const PullRequestsFilters = ({
     onPullRequestNumberChange,
     suggestionsFilter,
     onSuggestionsFilterChange,
+    authorPolicy,
+    onAuthorPolicyChange,
 }: PullRequestsFiltersProps) => {
     const [open, setOpen] = useState(false);
     const { organizationId } = useAuth();
@@ -82,6 +87,7 @@ export const PullRequestsFilters = ({
         (pullRequestTitle.trim().length > 0 ? 1 : 0) +
         (pullRequestNumber?.trim().length > 0 ? 1 : 0) +
         (suggestionsFilter !== "all" ? 1 : 0) +
+        (authorPolicy !== "reviewable" ? 1 : 0) +
         (selectedRepository ? 1 : 0);
 
     return (
@@ -119,6 +125,7 @@ export const PullRequestsFilters = ({
                             onTitleChange("");
                             onPullRequestNumberChange("");
                             onSuggestionsFilterChange("all");
+                            onAuthorPolicyChange("reviewable");
                         }}>
                         Clear
                     </Button>
@@ -182,6 +189,34 @@ export const PullRequestsFilters = ({
                     </div>
 
                     <div className="flex flex-col gap-1.5">
+                        <Label className="text-text-secondary text-xs">
+                            PR authors
+                        </Label>
+                        <Select
+                            value={authorPolicy}
+                            onValueChange={(value) =>
+                                onAuthorPolicyChange(
+                                    value as AuthorPolicyFilterValue,
+                                )
+                            }>
+                            <SelectTrigger size="md">
+                                <SelectValue placeholder="Author policy" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="reviewable">
+                                    Actionable only (default)
+                                </SelectItem>
+                                <SelectItem value="all">
+                                    All PR authors
+                                </SelectItem>
+                                <SelectItem value="excluded">
+                                    Excluded by policy only
+                                </SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
                         <Label className="text-text-secondary text-xs uppercase">
                             Repositories
                         </Label>
@@ -218,8 +253,8 @@ export const PullRequestsFilters = ({
                                             </span>
                                             {selectedRepository ===
                                                 repo.name && (
-                                                <CheckIcon className="text-primary-light -mr-2 size-5" />
-                                            )}
+                                                    <CheckIcon className="text-primary-light -mr-2 size-5" />
+                                                )}
                                         </CommandItem>
                                     ))}
                                 </CommandGroup>
