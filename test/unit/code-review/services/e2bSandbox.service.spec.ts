@@ -49,14 +49,14 @@ describe('E2BSandboxService', () => {
     // ─── isAvailable ───────────────────────────────────────────────────────
 
     describe('isAvailable()', () => {
-        it('should return true when E2B_API_KEY is set', async () => {
+        it('should return true when API_E2B_KEY is set', async () => {
             service = await createService({
-                E2B_API_KEY: 'test-key-123',
+                API_E2B_KEY: 'test-key-123',
             });
             expect(service.isAvailable()).toBe(true);
         });
 
-        it('should return false when E2B_API_KEY is not set', async () => {
+        it('should return false when API_E2B_KEY is not set', async () => {
             service = await createService({});
             expect(service.isAvailable()).toBe(false);
         });
@@ -66,7 +66,7 @@ describe('E2BSandboxService', () => {
 
     describe('buildAuthHeader()', () => {
         beforeEach(async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
         });
 
         const buildAuthHeader = (platform: PlatformType, token: string) =>
@@ -94,7 +94,7 @@ describe('E2BSandboxService', () => {
 
     describe('getPrRefspec()', () => {
         beforeEach(async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
         });
 
         const getPrRefspec = (platform: PlatformType, prNumber: number) =>
@@ -139,16 +139,16 @@ describe('E2BSandboxService', () => {
             return { mockKill, mockRun, mockSandbox, Sandbox };
         };
 
-        it('should throw when E2B_API_KEY is not configured', async () => {
+        it('should throw when API_E2B_KEY is not configured', async () => {
             service = await createService({});
 
             await expect(
                 service.createSandboxWithRepo(defaultParams),
-            ).rejects.toThrow('E2B_API_KEY is not configured');
+            ).rejects.toThrow('API_E2B_KEY is not configured');
         });
 
         it('should kill sandbox on setup failure', async () => {
-            service = await createService({ E2B_API_KEY: 'test-key' });
+            service = await createService({ API_E2B_KEY: 'test-key' });
 
             const { Sandbox } = require('e2b');
             const mockKill = jest.fn().mockResolvedValue(undefined);
@@ -169,7 +169,7 @@ describe('E2BSandboxService', () => {
         });
 
         it('should create sandbox with correct apiKey and timeout', async () => {
-            service = await createService({ E2B_API_KEY: 'my-e2b-key' });
+            service = await createService({ API_E2B_KEY: 'my-e2b-key' });
             const { Sandbox } = setupSandboxMock();
 
             await service.createSandboxWithRepo(defaultParams);
@@ -181,7 +181,7 @@ describe('E2BSandboxService', () => {
         });
 
         it('should run apt-get install as first command', async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
             const { mockRun } = setupSandboxMock();
 
             await service.createSandboxWithRepo(defaultParams);
@@ -194,7 +194,7 @@ describe('E2BSandboxService', () => {
         });
 
         it('should run git commands with correct refspec and auth header', async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
             const { mockRun } = setupSandboxMock();
 
             await service.createSandboxWithRepo(defaultParams);
@@ -216,7 +216,7 @@ describe('E2BSandboxService', () => {
         });
 
         it('should return remoteCommands and cleanup function', async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
             setupSandboxMock();
 
             const result = await service.createSandboxWithRepo(defaultParams);
@@ -234,7 +234,7 @@ describe('E2BSandboxService', () => {
 
     describe('cleanup()', () => {
         it('should call sandbox.kill()', async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
 
             const mockKill = jest.fn().mockResolvedValue(undefined);
             const { Sandbox } = require('e2b');
@@ -257,7 +257,7 @@ describe('E2BSandboxService', () => {
         });
 
         it('should swallow sandbox.kill() errors (logged internally)', async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
 
             const mockKill = jest.fn().mockRejectedValue(new Error('kill failed'));
             const { Sandbox } = require('e2b');
@@ -286,7 +286,7 @@ describe('E2BSandboxService', () => {
         let remoteCommands: any;
 
         beforeEach(async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
 
             mockRun = jest.fn().mockResolvedValue({ stdout: 'output' });
             const { Sandbox } = require('e2b');
@@ -364,7 +364,7 @@ describe('E2BSandboxService', () => {
 
     describe('resolvePath()', () => {
         beforeEach(async () => {
-            service = await createService({ E2B_API_KEY: 'key' });
+            service = await createService({ API_E2B_KEY: 'key' });
         });
 
         const resolvePath = (path: string) =>

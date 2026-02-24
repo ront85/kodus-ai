@@ -29,17 +29,17 @@ export class E2BSandboxService {
     constructor(private readonly configService: ConfigService) {}
 
     isAvailable(): boolean {
-        return !!this.configService.get<string>('E2B_API_KEY');
+        return !!this.configService.get<string>('API_E2B_KEY');
     }
 
     async createSandboxWithRepo(
         params: CreateSandboxParams,
     ): Promise<SandboxWithCommands> {
         const { cloneUrl, authToken, branch, prNumber, platform } = params;
-        const apiKey = this.configService.get<string>('E2B_API_KEY');
+        const apiKey = this.configService.get<string>('API_E2B_KEY');
 
         if (!apiKey) {
-            throw new Error('E2B_API_KEY is not configured');
+            throw new Error('API_E2B_KEY is not configured');
         }
 
         const sandbox = await Sandbox.create({
