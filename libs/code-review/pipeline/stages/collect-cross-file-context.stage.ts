@@ -49,7 +49,7 @@ export class CollectCrossFileContextStage extends BasePipelineStage<CodeReviewPi
         // Guard: skip if E2B is not available
         if (!this.e2bSandboxService.isAvailable()) {
             this.logger.log({
-                message: `Skipping cross-file context collection: E2B_API_KEY not configured for PR#${context?.pullRequest?.number}`,
+                message: `Skipping cross-file context collection: API_E2B_KEY not configured for PR#${context?.pullRequest?.number}`,
                 context: this.stageName,
                 metadata: {
                     organizationAndTeamData: context?.organizationAndTeamData,

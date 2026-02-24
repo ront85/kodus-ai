@@ -160,6 +160,8 @@ KEYS=(
 
     "/prod/kodus-orchestrator/API_MORPHLLM_API_KEY"
 
+    "/prod/kodus-orchestrator/API_E2B_KEY"
+
     "/prod/kodus-orchestrator/API_BETTERSTACK_API_TOKEN"
     "/prod/kodus-orchestrator/API_BETTERSTACK_HEARTBEAT_ERROR_RATE_URL"
     "/prod/kodus-orchestrator/API_BETTERSTACK_HEARTBEAT_REVIEW_MONITOR_URL"
