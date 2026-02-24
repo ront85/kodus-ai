@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { redirect, usePathname } from "next/navigation";
 import { Badge } from "@components/ui/badge";
 import { Button } from "@components/ui/button";
@@ -52,7 +53,6 @@ const routes = [
     { label: "PR Summary", href: "pr-summary" },
     { label: "Kody Rules", href: "kody-rules" },
     { label: "Custom Messages", href: "custom-messages" },
-    { label: "Business Rules", href: "business-rules" },
 ] satisfies Array<{ label: string; href: string }>;
 
 export const SettingsLayout = ({ children }: React.PropsWithChildren) => {
@@ -78,33 +78,20 @@ export const SettingsLayout = ({ children }: React.PropsWithChildren) => {
         ResourceType.PluginSettings,
     );
 
-    const [isMCPAvailable, setIsMCPAvailable] = useState(true);
-
-    useEffect(() => {
-        if (!canReadPlugins) return;
-
-        let mounted = true;
-
-        (async () => {
+    const { data: isMCPAvailable = true } = useQuery({
+        queryKey: ["mcp-availability"],
+        queryFn: async () => {
             try {
                 await getMCPPlugins();
-                if (mounted) setIsMCPAvailable(true);
+                return true;
             } catch (error) {
-                if (!mounted) return;
-
-                if (error instanceof MCPServiceUnavailableError) {
-                    setIsMCPAvailable(false);
-                    return;
-                }
-
+                if (error instanceof MCPServiceUnavailableError) return false;
                 console.error("Failed to check MCP availability:", error);
+                return true;
             }
-        })();
-
-        return () => {
-            mounted = false;
-        };
-    }, [canReadPlugins]);
+        },
+        enabled: canReadPlugins,
+    });
 
     // Avoid hydration mismatch with Radix Collapsible IDs
     const [mounted, setMounted] = useState(false);
