@@ -19,6 +19,7 @@ import { IntegrationConfigModel } from '../../../../integrations/infrastructure/
 import { IssuesModel } from '../../../../issues/infrastructure/adapters/repositories/schemas/issues.model';
 import { SuggestionEmbeddedModel } from '../../../../kodyFineTuning/infrastructure/adapters/repositories/schemas/suggestionEmbedded.model';
 import { KodyRulesModel } from '../../../../kodyRules/infrastructure/adapters/repositories/schemas/kodyRules.model';
+import { SkillOverrideModel } from '../../../../agents/infrastructure/adapters/repositories/schemas/skill-override.model';
 import { GlobalParametersModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/global-parameters.model';
 import { OrganizationModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/organization.model';
 import { OrganizationParametersModel } from '../../../../organization/infrastructure/adapters/repositories/schemas/organizationParameters.model';
@@ -61,6 +62,7 @@ export const ENTITIES = [
     ProfileConfigModel,
     IntegrationModel,
     KodyRulesModel,
+    SkillOverrideModel,
     SSOConfigModel,
     ProfileModel,
     CodeReviewExecutionModel,

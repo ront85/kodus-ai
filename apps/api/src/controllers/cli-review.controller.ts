@@ -376,7 +376,11 @@ export class CliReviewController {
 
             // queryTeamId was explicitly provided but is not a valid team
             // and is not the orgId (CLI compat: CLI sends orgId as teamId)
-            if (!team && queryTeamId && queryTeamId !== jwtPayload.organizationId) {
+            if (
+                !team &&
+                queryTeamId &&
+                queryTeamId !== jwtPayload.organizationId
+            ) {
                 return buildInvalidPayload(
                     `Team not found for the provided teamId: ${queryTeamId}`,
                 );
@@ -400,8 +404,7 @@ export class CliReviewController {
                 );
             }
 
-            const safeTeamName =
-                typeof team.name === 'string' ? team.name : '';
+            const safeTeamName = typeof team.name === 'string' ? team.name : '';
             const safeOrgName =
                 typeof team.organization?.name === 'string'
                     ? team.organization.name
@@ -530,9 +533,7 @@ export class CliReviewController {
                     secret: this.jwtConfig.secret,
                 });
             } catch {
-                throw new UnauthorizedException(
-                    'Invalid or expired JWT token',
-                );
+                throw new UnauthorizedException('Invalid or expired JWT token');
             }
 
             const user = await this.authService.validateUser({
@@ -564,7 +565,11 @@ export class CliReviewController {
 
             // queryTeamId was explicitly provided but is not a valid team
             // and is not the orgId (CLI compat: CLI sends orgId as teamId)
-            if (!team && queryTeamId && queryTeamId !== payload.organizationId) {
+            if (
+                !team &&
+                queryTeamId &&
+                queryTeamId !== payload.organizationId
+            ) {
                 throw new UnauthorizedException(
                     `Team not found for the provided teamId: ${queryTeamId}`,
                 );
@@ -607,18 +612,16 @@ export class CliReviewController {
         // 3. Device tracking (opt-in)
         let deviceResult: { deviceToken?: string } | undefined;
         if (deviceId) {
-            deviceResult =
-                await this.cliDeviceService.validateOrRegisterDevice({
+            deviceResult = await this.cliDeviceService.validateOrRegisterDevice(
+                {
                     deviceId,
                     deviceToken,
                     organizationId: organizationAndTeamData.organizationId,
                     userAgent,
-                });
+                },
+            );
             if (deviceResult?.deviceToken && res) {
-                res.setHeader(
-                    'x-kodus-device-token',
-                    deviceResult.deviceToken,
-                );
+                res.setHeader('x-kodus-device-token', deviceResult.deviceToken);
             }
         }
 
@@ -804,7 +807,9 @@ export class CliReviewController {
             reviewsLimit,
             filesLimit: 10,
             linesLimit: 500,
-            resetsAt: status.resetAt?.toISOString() ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            resetsAt:
+                status.resetAt?.toISOString() ??
+                new Date(Date.now() + 60 * 60 * 1000).toISOString(),
             isLimited: !status.allowed,
         };
     }

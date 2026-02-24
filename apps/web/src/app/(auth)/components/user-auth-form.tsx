@@ -84,7 +84,6 @@ export function UserAuthForm() {
             setSsoAvailable(response);
             return response;
         } catch (error) {
-            console.error(error);
             setSsoAvailable(null);
             return null;
         }

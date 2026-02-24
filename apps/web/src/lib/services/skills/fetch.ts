@@ -1,7 +1,12 @@
 import { authorizedFetch } from "@services/fetch";
 import { pathToApiUrl } from "src/core/utils/helpers";
 
-import type { SkillInstructions, SkillMeta, SkillVersion } from "./types";
+import type {
+    SkillEditableContent,
+    SkillInstructions,
+    SkillMeta,
+    SkillVersion,
+} from "./types";
 
 export const SKILLS_PATHS = {
     GET_META: (skillName: string) =>
@@ -34,13 +39,13 @@ export const getSkillVersions = (skillName: string, teamId: string) =>
 export const saveSkillOverride = (
     skillName: string,
     teamId: string,
-    content: string,
+    editable: SkillEditableContent,
 ) =>
     authorizedFetch<{ version: number }>(
         SKILLS_PATHS.SAVE_OVERRIDE(skillName),
         {
             method: "POST",
-            body: JSON.stringify({ teamId, content }),
+            body: JSON.stringify({ teamId, editable }),
         },
     );
 

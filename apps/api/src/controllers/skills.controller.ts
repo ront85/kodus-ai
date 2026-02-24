@@ -24,6 +24,7 @@ import { ApiStandardResponses } from '../docs/api-standard-responses.decorator';
 
 import { UserRequest } from '@libs/core/infrastructure/config/types/http/user-request.type';
 import { SkillLoaderService } from '@libs/agents/skills/skill-loader.service';
+import { SkillEditableContent } from '@libs/agents/skills/skill-override.types';
 import {
     Action,
     ResourceType,
@@ -78,7 +79,7 @@ export class SkillsController {
     @ApiOperation({
         summary: 'Get skill instructions',
         description:
-            'Return current instructions for a skill — DB override if one exists, filesystem SKILL.md otherwise.',
+            'Return compiled instructions (immutable platform blocks + editable team blocks), plus editable JSON payload.',
     })
     @ApiOkResponse({ type: SkillInstructionsResponseDto })
     @UseGuards(PolicyGuard)
@@ -93,22 +94,10 @@ export class SkillsController {
         @Query('teamId') teamId: string,
     ) {
         const organizationId = this.request?.user?.organization?.uuid;
-
-        // Check if a DB override exists to indicate the source
-        const versions = await this.skillLoaderService.listVersions(skillName, {
+        return this.skillLoaderService.getInstructionsBundle(skillName, {
             organizationId,
             teamId,
         });
-
-        const instructions = await this.skillLoaderService.loadInstructions(
-            skillName,
-            { organizationId, teamId },
-        );
-
-        return {
-            instructions,
-            source: versions.length > 0 ? 'db' : 'filesystem',
-        };
     }
 
     @Get(':skillName/versions')
@@ -144,7 +133,7 @@ export class SkillsController {
     @ApiOperation({
         summary: 'Save skill override',
         description:
-            'Save a new version of the SKILL.md instructions for a team. The new version immediately becomes active.',
+            'Save a new version of the editable skill JSON payload for a team. Immutable platform blocks are not editable.',
     })
     @ApiCreatedResponse({ type: SkillOverrideSavedResponseDto })
     @UseGuards(PolicyGuard)
@@ -156,13 +145,13 @@ export class SkillsController {
     )
     public async saveOverride(
         @Param('skillName') skillName: string,
-        @Body() body: { teamId: string; content: string },
+        @Body() body: { teamId: string; editable: SkillEditableContent },
     ) {
         const organizationId = this.request?.user?.organization?.uuid;
 
         const version = await this.skillLoaderService.saveOverride(
             skillName,
-            body.content,
+            body.editable,
             { organizationId, teamId: body.teamId },
         );
 
@@ -175,7 +164,7 @@ export class SkillsController {
     @ApiOperation({
         summary: 'Restore skill version',
         description:
-            'Restore a previous override version by creating a new record with that version\'s content.',
+            "Restore a previous override version by creating a new record with that version's content.",
     })
     @ApiOkResponse({ description: 'Version restored successfully.' })
     @UseGuards(PolicyGuard)
@@ -191,10 +180,9 @@ export class SkillsController {
     ) {
         const organizationId = this.request?.user?.organization?.uuid;
 
-        await this.skillLoaderService.restoreVersion(
-            skillName,
-            body.version,
-            { organizationId, teamId: body.teamId },
-        );
+        await this.skillLoaderService.restoreVersion(skillName, body.version, {
+            organizationId,
+            teamId: body.teamId,
+        });
     }
 }

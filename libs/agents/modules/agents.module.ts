@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { PermissionValidationModule } from '@libs/ee/shared/permission-validation.module';
 import { OrganizationModule } from '@libs/organization/modules/organization.module';
 import { ParametersModule } from '@libs/organization/modules/parameters.module';
@@ -11,12 +12,14 @@ import { BusinessRulesValidationAgentProvider } from '../infrastructure/services
 import { ConversationAgentProvider } from '../infrastructure/services/kodus-flow/conversationAgent';
 import { LLMModule } from '@kodus/kodus-common/llm';
 import { SkillLoaderService } from '../skills/skill-loader.service';
+import { SkillOverrideModel } from '../infrastructure/adapters/repositories/schemas/skill-override.model';
 
 @Module({
     imports: [
         forwardRef(() => PermissionValidationModule),
         forwardRef(() => OrganizationModule),
         forwardRef(() => ParametersModule),
+        TypeOrmModule.forFeature([SkillOverrideModel]),
         LLMModule,
         forwardRef(() => McpCoreModule),
     ],

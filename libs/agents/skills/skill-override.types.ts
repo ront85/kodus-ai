@@ -1,22 +1,7 @@
-export type SkillRequiredMcp = {
-    /** e.g. "task-management" */
-    category: string;
-    /** e.g. "Task Management" */
-    label: string;
-    /** e.g. "Jira, Linear, Notion" */
-    examples?: string;
-};
-
-export type SkillMeta = {
-    name?: string;
-    description?: string;
-    version?: string;
-    allowedTools?: string[];
-    requiredMcps?: SkillRequiredMcp[];
-};
+export const SKILL_EDITABLE_SCHEMA_VERSION = 1 as const;
 
 export type SkillEditableContent = {
-    schemaVersion: 1;
+    schemaVersion: typeof SKILL_EDITABLE_SCHEMA_VERSION;
     editable: {
         businessContext: string;
         orgRules: string[];
@@ -34,16 +19,10 @@ export type SkillEditableContent = {
     };
 };
 
-export type SkillInstructions = {
+export type SkillInstructionsBundle = {
     instructions: string;
     source: 'db' | 'filesystem';
     editable: SkillEditableContent;
     defaultEditable: SkillEditableContent;
     editableSource: 'db' | 'default';
-};
-
-export type SkillVersion = {
-    version: number;
-    createdAt?: string;
-    updatedAt?: string;
 };

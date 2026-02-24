@@ -26,7 +26,7 @@ import { cn } from "src/core/utils/components";
 import { SubscriptionBadge } from "src/features/ee/subscription/_components/subscription-badge";
 import { useSubscriptionContext } from "src/features/ee/subscription/_providers/subscription-context";
 
-import { PendingRulesNotification } from "./_components/pending-rules-notification";
+
 
 const UserNav = dynamic(
     () =>
@@ -53,6 +53,11 @@ const NoSSRIssuesCount = dynamic(
 const NoSSRGithubStars = dynamic(
     () => import("./_components/github-stars").then((f) => f.GithubStars),
     { ssr: false },
+);
+
+const NoSSRPendingRulesNotification = dynamic(
+    () => import("./_components/pending-rules-notification").then((f) => f.PendingRulesNotification),
+    { ssr: false }
 );
 
 export const NavMenu = () => {
@@ -210,7 +215,7 @@ export const NavMenu = () => {
 
                 <div className="flex items-center gap-2">
                     <SubscriptionBadge />
-                    <PendingRulesNotification />
+                    <NoSSRPendingRulesNotification />
                 </div>
 
                 <Suspense>

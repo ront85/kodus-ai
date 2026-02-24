@@ -13,6 +13,15 @@ export class SkillRequiredMcpDto {
 }
 
 export class SkillMetaDto {
+    @ApiProperty({ required: false, example: 'business-rules-validation' })
+    name?: string;
+
+    @ApiProperty({ required: false })
+    description?: string;
+
+    @ApiProperty({ required: false, example: '1.0.0' })
+    version?: string;
+
     @ApiProperty({ type: [String], required: false })
     allowedTools?: string[];
 
@@ -26,11 +35,36 @@ export class SkillMetaResponseDto extends ApiResponseBaseDto {
 }
 
 export class SkillInstructionsDto {
-    @ApiProperty({ description: 'Raw SKILL.md content (DB override or filesystem default)' })
+    @ApiProperty({
+        description:
+            'Compiled instructions (immutable platform blocks + editable team blocks).',
+    })
     instructions: string;
 
-    @ApiProperty({ enum: ['db', 'filesystem'], description: 'Source of the instructions' })
+    @ApiProperty({
+        enum: ['db', 'filesystem'],
+        description: 'Source of the instructions',
+    })
     source: 'db' | 'filesystem';
+
+    @ApiProperty({
+        type: Object,
+        description:
+            'Structured editable JSON payload. Only this section can be changed by users.',
+    })
+    editable: Record<string, unknown>;
+
+    @ApiProperty({
+        type: Object,
+        description: 'Default editable JSON payload for reset action.',
+    })
+    defaultEditable: Record<string, unknown>;
+
+    @ApiProperty({
+        enum: ['db', 'default'],
+        description: 'Source of the editable payload.',
+    })
+    editableSource: 'db' | 'default';
 }
 
 export class SkillVersionDto {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge } from "@components/ui/badge";
 import { Button } from "@components/ui/button";
 import {
@@ -25,7 +25,10 @@ import {
     useGetSkillMeta,
     useGetSkillVersions,
 } from "@services/skills/hooks";
-import type { SkillRequiredMcp } from "@services/skills/types";
+import type {
+    SkillEditableContent,
+    SkillRequiredMcp,
+} from "@services/skills/types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     AlertTriangleIcon,
@@ -63,13 +66,18 @@ export function SkillEditorModal({
 
     const instructions = instructionsRes?.instructions ?? "";
     const source = instructionsRes?.source ?? "filesystem";
+    const initialEditableJson = useMemo(
+        () => JSON.stringify(instructionsRes?.editable ?? {}, null, 2),
+        [instructionsRes?.editable],
+    );
 
-    const [content, setContent] = useState<string | null>(null);
+    const [editableJson, setEditableJson] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [isRestoring, setIsRestoring] = useState<number | null>(null);
 
-    const displayContent = content ?? instructions;
-    const isDirty = content !== null && content !== instructions;
+    const displayEditableJson = editableJson ?? initialEditableJson;
+    const isDirty =
+        editableJson !== null && editableJson !== initialEditableJson;
 
     // For each required MCP category, check if at least one connected plugin satisfies it.
     // A plugin satisfies a category when it is non-default, connected, and ACTIVE.
@@ -97,17 +105,36 @@ export function SkillEditorModal({
     };
 
     const handleSave = async () => {
-        if (!isDirty || !content) return;
+        if (!isDirty || !editableJson) return;
         setIsSaving(true);
         try {
-            await saveSkillOverride(skillName, teamId, content);
+            const parsed = JSON.parse(editableJson) as SkillEditableContent;
+            await saveSkillOverride(skillName, teamId, parsed);
             await invalidateQueries();
-            setContent(null);
-            toast({ description: "Instructions saved", variant: "success" });
-        } catch {
+            setEditableJson(null);
+            toast({
+                description: "Editable template saved",
+                variant: "success",
+            });
+        } catch (error) {
+            const isParseError =
+                error instanceof SyntaxError ||
+                (error instanceof Error &&
+                    error.message.includes("JSON"));
+
+            if (isParseError) {
+                toast({
+                    title: "Invalid JSON",
+                    description:
+                        "Fix the JSON syntax before saving the editable template.",
+                    variant: "danger",
+                });
+                return;
+            }
+
             toast({
                 title: "Error",
-                description: "Failed to save instructions. Please try again.",
+                description: "Failed to save editable template. Please try again.",
                 variant: "danger",
             });
         } finally {
@@ -116,8 +143,31 @@ export function SkillEditorModal({
     };
 
     const handleReset = async () => {
-        setContent(null);
-        await invalidateQueries();
+        const defaultEditable = instructionsRes?.defaultEditable;
+        if (!defaultEditable) {
+            setEditableJson(null);
+            await invalidateQueries();
+            return;
+        }
+
+        setIsSaving(true);
+        try {
+            await saveSkillOverride(skillName, teamId, defaultEditable);
+            await invalidateQueries();
+            setEditableJson(null);
+            toast({
+                description: "Reset to default template",
+                variant: "success",
+            });
+        } catch {
+            toast({
+                title: "Error",
+                description: "Failed to reset template. Please try again.",
+                variant: "danger",
+            });
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleRestore = async (version: number) => {
@@ -125,7 +175,7 @@ export function SkillEditorModal({
         try {
             await restoreSkillVersion(skillName, teamId, version);
             await invalidateQueries();
-            setContent(null);
+            setEditableJson(null);
             toast({
                 description: `Restored to version ${version}`,
                 variant: "success",
@@ -175,13 +225,13 @@ export function SkillEditorModal({
                     </div>
                 ))}
 
-                {/* Instructions editor */}
+                {/* Editable JSON editor */}
                 <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                         <label
                             htmlFor="skill-instructions"
                             className="text-sm font-medium">
-                            Instructions
+                            Editable Template (JSON)
                         </label>
                         <div className="flex items-center gap-2">
                             {source === "db" && (
@@ -191,6 +241,7 @@ export function SkillEditorModal({
                                         size="sm"
                                         variant="tertiary"
                                         leftIcon={<RotateCcwIcon />}
+                                        loading={isSaving}
                                         onClick={handleReset}>
                                         Reset to default
                                     </Button>
@@ -201,11 +252,34 @@ export function SkillEditorModal({
 
                     <Textarea
                         id="skill-instructions"
-                        value={instructionsLoading ? "" : displayContent}
+                        value={instructionsLoading ? "" : displayEditableJson}
                         loading={instructionsLoading}
-                        onChange={(e) => setContent(e.target.value)}
+                        onChange={(e) => setEditableJson(e.target.value)}
                         rows={16}
                         className="font-mono text-sm"
+                        placeholder="Loading editable template..."
+                    />
+                    <p className="text-text-secondary text-xs">
+                        Immutable platform instructions (tools, output contract,
+                        and safety rules) are not editable. Only this JSON block
+                        is persisted per team.
+                    </p>
+                </div>
+
+                {/* Compiled instructions preview */}
+                <div className="flex flex-col gap-2">
+                    <label
+                        htmlFor="compiled-instructions"
+                        className="text-sm font-medium">
+                        Compiled Instructions (read-only)
+                    </label>
+                    <Textarea
+                        id="compiled-instructions"
+                        value={instructionsLoading ? "" : instructions}
+                        loading={instructionsLoading}
+                        readOnly
+                        rows={10}
+                        className="font-mono text-xs"
                         placeholder="Loading instructions..."
                     />
                 </div>

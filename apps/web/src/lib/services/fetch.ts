@@ -121,6 +121,12 @@ export const typedFetch = async <Data>(
         ) {
             throw new Error(`Network error: ${error.message}`);
         }
+
+        if (error instanceof TypeError) {
+            throw new Error(
+                `Network error while requesting ${urlWithParams}: ${error.message}`,
+            );
+        }
         throw error;
     }
 };

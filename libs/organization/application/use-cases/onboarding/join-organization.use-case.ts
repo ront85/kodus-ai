@@ -32,6 +32,7 @@ import { createLogger } from '@kodus/flow';
 import { IUseCase } from '@libs/core/domain/interfaces/use-case.interface';
 import { sendConfirmationEmail } from '@libs/common/utils/email/sendMail';
 import { JoinOrganizationDto } from '@libs/identity/dtos/join-organization.dto';
+import { environment } from '@libs/ee/configs/environment';
 import {
     IParametersService,
     PARAMETERS_SERVICE_TOKEN,
@@ -130,13 +131,16 @@ export class JoinOrganizationUseCase implements IUseCase {
                 );
             }
 
+            const requiresEmailConfirmation = environment.API_CLOUD_MODE;
             const updatedUser = await this.userService.update(
                 {
                     uuid: user.uuid,
                 },
                 {
                     role: Role.CONTRIBUTOR,
-                    status: STATUS.PENDING_EMAIL,
+                    status: requiresEmailConfirmation
+                        ? STATUS.PENDING_EMAIL
+                        : STATUS.ACTIVE,
                     organization,
                 },
             );
@@ -145,16 +149,22 @@ export class JoinOrganizationUseCase implements IUseCase {
                 throw new Error('Failed to update user with new organization');
             }
 
-            const token = await this.authService.createEmailToken(
-                user.uuid,
-                user.email,
-            );
+            if (requiresEmailConfirmation) {
+                const token = await this.authService.createEmailToken(
+                    user.uuid,
+                    user.email,
+                );
 
-            // send confirmation email
-            await sendConfirmationEmail(token, user.email, organization.name, {
-                organizationId,
-                teamId: team.uuid,
-            });
+                await sendConfirmationEmail(
+                    token,
+                    user.email,
+                    organization.name,
+                    {
+                        organizationId,
+                        teamId: team.uuid,
+                    },
+                );
+            }
 
             this.logger.log({
                 message: 'User joined organization',

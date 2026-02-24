@@ -1,21 +1,39 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
-import { ParametersKey } from '@libs/core/domain/enums/parameters-key.enum';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
-import {
-    IParametersService,
-    PARAMETERS_SERVICE_TOKEN,
-} from '@libs/organization/domain/parameters/contracts/parameters.service.contract';
+import { SkillOverrideModel } from '@libs/agents/infrastructure/adapters/repositories/schemas/skill-override.model';
 
 import { SkillNotFoundError, SkillOverrideNotFoundError } from './skill.errors';
+import {
+    SkillEditableContent,
+    SkillInstructionsBundle,
+    SKILL_EDITABLE_SCHEMA_VERSION,
+} from './skill-override.types';
 
-/** Maps skill name → ParametersKey for DB override lookup */
-const SKILL_KEY_MAP: Record<string, ParametersKey> = {
-    'business-rules-validation':
-        ParametersKey.SKILL_BUSINESS_RULES_VALIDATION,
+const SKILL_DEFAULT_EDITABLE_TEMPLATE: Record<string, SkillEditableContent> = {
+    'business-rules-validation': {
+        schemaVersion: SKILL_EDITABLE_SCHEMA_VERSION,
+        editable: {
+            businessContext: '',
+            orgRules: [],
+            qualityThresholds: {
+                empty: '',
+                minimal: '',
+                partial: '',
+                complete: '',
+            },
+            reportStyle: {
+                tone: 'professional',
+                language: 'en-US',
+            },
+            examples: [],
+        },
+    },
 };
 
 /** A required external MCP plugin category declared in SKILL.md frontmatter. */
@@ -32,6 +50,7 @@ export interface SkillRequiredMcp {
 export interface SkillMeta {
     name?: string;
     description?: string;
+    version?: string;
     /** MCP tool names the skill's fetcher agent is allowed to use. */
     allowedTools?: string[];
     /** External MCP plugin categories required for this skill to work. */
@@ -43,64 +62,98 @@ export class SkillLoaderService {
     private readonly logger = new Logger(SkillLoaderService.name);
 
     constructor(
-        @Inject(PARAMETERS_SERVICE_TOKEN)
-        private readonly parametersService: IParametersService,
+        @InjectRepository(SkillOverrideModel)
+        private readonly skillOverrideRepository: Repository<SkillOverrideModel>,
     ) {}
 
     /**
-     * Load skill instructions for a given team.
+     * Runtime instructions for the analyzer.
      *
      * Resolution order:
-     * 1. DB: all active records for configKey + team, highest version wins
-     * 2. Filesystem: libs/agents/skills/{skillName}/SKILL.md
-     * 3. Throws SkillNotFoundError if both unavailable
-     *
-     * Frontmatter is stripped before returning — the LLM receives only the
-     * Markdown body. References (references/*.md) are appended when present.
-     *
-     * DB failure silently falls back to filesystem — reviews must never fail
-     * due to a transient override fetch error.
+     * 1. Structured DB override (`skill_overrides`) + immutable filesystem base
+     * 2. Filesystem skill only
      */
     async loadInstructions(
         skillName: string,
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<string> {
-        const configKey = SKILL_KEY_MAP[skillName];
+        const baseInstructions = this.loadFromFilesystem(skillName);
 
-        if (configKey) {
-            try {
-                const allVersions = await this.parametersService.find({
-                    configKey,
-                    team: { uuid: organizationAndTeamData.teamId } as any,
-                });
+        try {
+            const latestStructured = await this.findLatestStructuredOverride(
+                skillName,
+                organizationAndTeamData.teamId,
+            );
 
-                const latest = allVersions
-                    ?.sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0];
-
-                if (latest?.configValue?.content) {
-                    this.logger.log(
-                        `[SkillLoader] loaded DB override v${latest.version} for skill '${skillName}' ` +
-                            `(team: ${organizationAndTeamData?.teamId})`,
-                    );
-                    // Strip frontmatter — DB override may or may not include it
-                    return this.parseFrontmatter(latest.configValue.content).body;
-                }
-            } catch (err) {
-                this.logger.warn(
-                    `[SkillLoader] DB lookup failed for skill '${skillName}', falling back to filesystem: ${err?.message}`,
+            if (latestStructured?.content) {
+                const editable = this.normalizeEditableContent(
+                    skillName,
+                    latestStructured.content,
                 );
+
+                this.logger.log(
+                    `[SkillLoader] loaded structured DB override v${latestStructured.overrideVersion} for skill '${skillName}' ` +
+                        `(team: ${organizationAndTeamData?.teamId})`,
+                );
+
+                return this.composeInstructions(baseInstructions, editable);
             }
+        } catch (err) {
+            this.logger.warn(
+                `[SkillLoader] structured DB lookup failed for skill '${skillName}', falling back: ${err?.message}`,
+            );
         }
 
-        return this.loadFromFilesystem(skillName);
+        return baseInstructions;
     }
 
     /**
-     * Read platform metadata (allowed-tools, name, description) from the
+     * Returns current display bundle for Settings UI:
+     * - compiled runtime instructions (immutable + editable)
+     * - editable JSON template
+     * - source markers
+     */
+    async getInstructionsBundle(
+        skillName: string,
+        organizationAndTeamData: OrganizationAndTeamData,
+    ): Promise<SkillInstructionsBundle> {
+        const baseInstructions = this.loadFromFilesystem(skillName);
+        const defaultEditable = this.getDefaultEditableContent(skillName);
+
+        const latestStructured = await this.findLatestStructuredOverride(
+            skillName,
+            organizationAndTeamData.teamId,
+        );
+
+        if (latestStructured?.content) {
+            const editable = this.normalizeEditableContent(
+                skillName,
+                latestStructured.content,
+            );
+            return {
+                instructions: this.composeInstructions(
+                    baseInstructions,
+                    editable,
+                ),
+                source: 'db',
+                editable,
+                defaultEditable,
+                editableSource: 'db',
+            };
+        }
+
+        return {
+            instructions: baseInstructions,
+            source: 'filesystem',
+            editable: defaultEditable,
+            defaultEditable,
+            editableSource: 'default',
+        };
+    }
+
+    /**
+     * Read platform metadata (allowed-tools, name, description, version) from
      * filesystem SKILL.md frontmatter.
-     *
-     * Always reads from the filesystem — this metadata is platform-owned and
-     * is not overridable by teams via the DB override API.
      */
     loadSkillMetaFromFilesystem(skillName: string): SkillMeta {
         const skillPath = path.join(__dirname, skillName, 'SKILL.md');
@@ -110,42 +163,37 @@ export class SkillLoaderService {
     }
 
     /**
-     * Save a new version of a team's SKILL.md instruction override.
-     *
-     * All previous records remain active — the highest version number is always
-     * the current one. This avoids the need to find inactive records when
-     * restoring older versions.
-     *
-     * Returns the new version number.
+     * Saves a new structured editable override for this team+skill.
      */
     async saveOverride(
         skillName: string,
-        content: string,
+        editable: SkillEditableContent,
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<number> {
-        const configKey = this.requireConfigKey(skillName);
+        const normalized = this.normalizeEditableContent(skillName, editable);
 
-        const existing = await this.parametersService.find({
-            configKey,
-            team: { uuid: organizationAndTeamData.teamId } as any,
-        });
-
-        const maxVersion =
-            existing?.reduce((max, r) => Math.max(max, r.version ?? 0), 0) ??
-            0;
+        const maxVersion = await this.getMaxStructuredVersion(
+            skillName,
+            organizationAndTeamData.teamId,
+        );
         const nextVersion = maxVersion + 1;
 
-        await this.parametersService.create({
-            uuid: undefined as any,
-            configKey,
-            configValue: { content } as any,
-            team: { uuid: organizationAndTeamData.teamId } as any,
-            version: nextVersion,
-            active: true,
-        });
+        const baseSkillVersion =
+            this.loadSkillMetaFromFilesystem(skillName).version ?? '1.0.0';
+
+        await this.skillOverrideRepository.save(
+            this.skillOverrideRepository.create({
+                team: { uuid: organizationAndTeamData.teamId } as any,
+                key: skillName,
+                baseSkillVersion,
+                overrideVersion: nextVersion,
+                content: normalized as Record<string, unknown>,
+                active: true,
+            }),
+        );
 
         this.logger.log(
-            `[SkillLoader] saved override v${nextVersion} for skill '${skillName}' ` +
+            `[SkillLoader] saved structured override v${nextVersion} for skill '${skillName}' ` +
                 `(team: ${organizationAndTeamData?.teamId})`,
         );
 
@@ -153,40 +201,42 @@ export class SkillLoaderService {
     }
 
     /**
-     * Restore a previous version by creating a new record with that version's
-     * content, making it the new highest-version (current) entry.
-     *
-     * Works with the existing repository API — no need to query inactive records.
+     * Restores an old structured version by cloning its content into a new head version.
      */
     async restoreVersion(
         skillName: string,
         version: number,
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<void> {
-        const configKey = this.requireConfigKey(skillName);
-
-        const allVersions = await this.parametersService.find({
-            configKey,
-            team: { uuid: organizationAndTeamData.teamId } as any,
-        });
-
-        const target = allVersions?.find((r) => r.version === version);
+        const target = await this.skillOverrideRepository
+            .createQueryBuilder('skill_override')
+            .where('skill_override.key = :skillName', { skillName })
+            .andWhere('skill_override.team_id = :teamId', {
+                teamId: organizationAndTeamData.teamId,
+            })
+            .andWhere('skill_override.overrideVersion = :version', { version })
+            .andWhere('skill_override.active = true')
+            .getOne();
 
         if (!target) {
             throw new SkillOverrideNotFoundError(skillName, version);
         }
 
-        const maxVersion =
-            allVersions.reduce((max, r) => Math.max(max, r.version ?? 0), 0);
+        const maxVersion = await this.getMaxStructuredVersion(
+            skillName,
+            organizationAndTeamData.teamId,
+        );
 
-        await this.parametersService.create({
-            uuid: undefined as any,
-            configKey,
-            configValue: target.configValue,
-            team: { uuid: organizationAndTeamData.teamId } as any,
-            version: maxVersion + 1,
-            active: true,
-        });
+        await this.skillOverrideRepository.save(
+            this.skillOverrideRepository.create({
+                team: { uuid: organizationAndTeamData.teamId } as any,
+                key: skillName,
+                baseSkillVersion: target.baseSkillVersion,
+                overrideVersion: maxVersion + 1,
+                content: target.content,
+                active: true,
+            }),
+        );
 
         this.logger.log(
             `[SkillLoader] restored v${version} as v${maxVersion + 1} for skill '${skillName}' ` +
@@ -195,30 +245,152 @@ export class SkillLoaderService {
     }
 
     /**
-     * List all DB override versions saved for a skill+team, newest first.
-     * Returns an empty array when no overrides have been saved yet.
+     * List structured DB override versions saved for a skill+team, newest first.
      */
     async listVersions(
         skillName: string,
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<Array<{ version: number; createdAt?: Date; updatedAt?: Date }>> {
-        const configKey = this.requireConfigKey(skillName);
+        const rows = await this.skillOverrideRepository
+            .createQueryBuilder('skill_override')
+            .where('skill_override.key = :skillName', { skillName })
+            .andWhere('skill_override.team_id = :teamId', {
+                teamId: organizationAndTeamData.teamId,
+            })
+            .andWhere('skill_override.active = true')
+            .orderBy('skill_override.overrideVersion', 'DESC')
+            .getMany();
 
-        const all = await this.parametersService.find({
-            configKey,
-            team: { uuid: organizationAndTeamData.teamId } as any,
-        });
-
-        return (all ?? [])
-            .sort((a, b) => (b.version ?? 0) - (a.version ?? 0))
-            .map((r) => ({
-                version: r.version ?? 0,
-                createdAt: r.createdAt,
-                updatedAt: r.updatedAt,
-            }));
+        return rows.map((r) => ({
+            version: r.overrideVersion,
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt,
+        }));
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
+
+    private async findLatestStructuredOverride(
+        skillName: string,
+        teamId: string,
+    ): Promise<SkillOverrideModel | null> {
+        return this.skillOverrideRepository
+            .createQueryBuilder('skill_override')
+            .where('skill_override.key = :skillName', { skillName })
+            .andWhere('skill_override.team_id = :teamId', { teamId })
+            .andWhere('skill_override.active = true')
+            .orderBy('skill_override.overrideVersion', 'DESC')
+            .getOne();
+    }
+
+    private async getMaxStructuredVersion(
+        skillName: string,
+        teamId: string,
+    ): Promise<number> {
+        const raw = await this.skillOverrideRepository
+            .createQueryBuilder('skill_override')
+            .select('MAX(skill_override.overrideVersion)', 'max')
+            .where('skill_override.key = :skillName', { skillName })
+            .andWhere('skill_override.team_id = :teamId', { teamId })
+            .andWhere('skill_override.active = true')
+            .getRawOne<{ max: string | null }>();
+
+        return Number(raw?.max ?? 0);
+    }
+
+    private getDefaultEditableContent(skillName: string): SkillEditableContent {
+        const template = SKILL_DEFAULT_EDITABLE_TEMPLATE[skillName];
+        if (!template) {
+            throw new Error(
+                `[SkillLoader] No editable template mapped for skill '${skillName}'.`,
+            );
+        }
+
+        return JSON.parse(JSON.stringify(template)) as SkillEditableContent;
+    }
+
+    private normalizeEditableContent(
+        skillName: string,
+        value: unknown,
+    ): SkillEditableContent {
+        const fallback = this.getDefaultEditableContent(skillName);
+
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            throw new Error('Invalid editable payload: expected an object.');
+        }
+
+        const raw = value as Record<string, any>;
+        if (Number(raw.schemaVersion) !== SKILL_EDITABLE_SCHEMA_VERSION) {
+            throw new Error(
+                `Invalid schemaVersion. Expected ${SKILL_EDITABLE_SCHEMA_VERSION}.`,
+            );
+        }
+
+        const editable = raw.editable as Record<string, any>;
+        if (
+            !editable ||
+            typeof editable !== 'object' ||
+            Array.isArray(editable)
+        ) {
+            throw new Error(
+                'Invalid editable payload: missing editable object.',
+            );
+        }
+
+        const asString = (v: unknown, defaultValue = '') =>
+            typeof v === 'string' ? v.trim() : defaultValue;
+        const asStringArray = (v: unknown): string[] =>
+            Array.isArray(v)
+                ? v
+                      .map((item) =>
+                          typeof item === 'string' ? item.trim() : '',
+                      )
+                      .filter(Boolean)
+                : [];
+
+        const quality = editable.qualityThresholds as Record<string, any>;
+        const reportStyle = editable.reportStyle as Record<string, any>;
+
+        return {
+            schemaVersion: SKILL_EDITABLE_SCHEMA_VERSION,
+            editable: {
+                businessContext: asString(
+                    editable.businessContext,
+                    fallback.editable.businessContext,
+                ),
+                orgRules: asStringArray(editable.orgRules),
+                qualityThresholds: {
+                    empty: asString(
+                        quality?.empty,
+                        fallback.editable.qualityThresholds.empty,
+                    ),
+                    minimal: asString(
+                        quality?.minimal,
+                        fallback.editable.qualityThresholds.minimal,
+                    ),
+                    partial: asString(
+                        quality?.partial,
+                        fallback.editable.qualityThresholds.partial,
+                    ),
+                    complete: asString(
+                        quality?.complete,
+                        fallback.editable.qualityThresholds.complete,
+                    ),
+                },
+                reportStyle: {
+                    tone: asString(
+                        reportStyle?.tone,
+                        fallback.editable.reportStyle.tone,
+                    ),
+                    language: asString(
+                        reportStyle?.language,
+                        fallback.editable.reportStyle.language,
+                    ),
+                },
+                examples: asStringArray(editable.examples),
+            },
+        };
+    }
 
     /**
      * Load SKILL.md from filesystem, strip frontmatter, and append any
@@ -244,6 +416,67 @@ export class SkillLoaderService {
             : body;
     }
 
+    private composeInstructions(
+        immutableBaseInstructions: string,
+        editable: SkillEditableContent,
+    ): string {
+        const customBlock = this.renderEditableBlock(editable);
+        if (!customBlock) return immutableBaseInstructions;
+        return `${immutableBaseInstructions}\n\n---\n\n${customBlock}`;
+    }
+
+    private renderEditableBlock(editable: SkillEditableContent): string {
+        const lines: string[] = [];
+        const data = editable.editable;
+
+        if (data.businessContext) {
+            lines.push('### Organization Business Context');
+            lines.push(data.businessContext);
+            lines.push('');
+        }
+
+        if (data.orgRules.length > 0) {
+            lines.push('### Organization Rules');
+            for (const rule of data.orgRules) lines.push(`- ${rule}`);
+            lines.push('');
+        }
+
+        const thresholds = data.qualityThresholds;
+        if (
+            thresholds.empty ||
+            thresholds.minimal ||
+            thresholds.partial ||
+            thresholds.complete
+        ) {
+            lines.push('### Organization Quality Guidance');
+            if (thresholds.empty) lines.push(`- EMPTY: ${thresholds.empty}`);
+            if (thresholds.minimal)
+                lines.push(`- MINIMAL: ${thresholds.minimal}`);
+            if (thresholds.partial)
+                lines.push(`- PARTIAL: ${thresholds.partial}`);
+            if (thresholds.complete)
+                lines.push(`- COMPLETE: ${thresholds.complete}`);
+            lines.push('');
+        }
+
+        if (data.examples.length > 0) {
+            lines.push('### Organization Examples');
+            for (const example of data.examples) lines.push(`- ${example}`);
+            lines.push('');
+        }
+
+        if (lines.length === 0) return '';
+
+        return [
+            '## Organization Customization (User Editable)',
+            '',
+            ...lines,
+            `### Report Preferences`,
+            `- Tone: ${data.reportStyle.tone || 'professional'}`,
+            `- Language: ${data.reportStyle.language || 'en-US'}`,
+        ].join('\n');
+    }
+
     /**
      * Concatenate all .md files in references/ sorted alphabetically.
      * Returns an empty string when the directory does not exist.
@@ -264,21 +497,18 @@ export class SkillLoaderService {
         );
 
         return files
-            .map((f) =>
-                fs.readFileSync(path.join(refsDir, f), 'utf-8').trim(),
-            )
+            .map((f) => fs.readFileSync(path.join(refsDir, f), 'utf-8').trim())
             .join('\n\n---\n\n');
     }
 
     /**
      * Parse YAML frontmatter from a SKILL.md string.
      *
-     * Supports the `allowed-tools` field as a YAML list:
-     *   allowed-tools:
-     *     - TOOL_NAME
-     *
-     * Returns the Markdown body (without frontmatter) and the parsed metadata.
-     * If no frontmatter is present, returns the raw content as the body.
+     * Supports:
+     * - name / description
+     * - metadata.version
+     * - allowed-tools list
+     * - required-mcps list
      */
     private parseFrontmatter(raw: string): { body: string; meta: SkillMeta } {
         const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
@@ -286,6 +516,17 @@ export class SkillLoaderService {
 
         const yamlStr = match[1];
         const body = match[2].trimStart();
+
+        const name = yamlStr.match(/^name:\s*(.+)$/m)?.[1]?.trim();
+        const description = yamlStr
+            .match(/^description:\s*(.+)$/m)?.[1]
+            ?.trim();
+
+        const metadataVersion = yamlStr
+            .match(
+                /metadata:\s*\n(?:[ \t]+.+\n)*?[ \t]+version:\s*["']?([^"'\n]+)["']?/m,
+            )?.[1]
+            ?.trim();
 
         // Parse allowed-tools as a flat YAML list
         const toolsMatch = yamlStr.match(
@@ -298,7 +539,16 @@ export class SkillLoaderService {
         // Parse required-mcps as a list of objects with category/label/examples
         const requiredMcps = this.parseRequiredMcps(yamlStr);
 
-        return { body, meta: { allowedTools, requiredMcps } };
+        return {
+            body,
+            meta: {
+                name,
+                description,
+                version: metadataVersion,
+                allowedTools,
+                requiredMcps,
+            },
+        };
     }
 
     /**
@@ -331,16 +581,5 @@ export class SkillLoaderService {
         }
 
         return items.length > 0 ? items : undefined;
-    }
-
-    private requireConfigKey(skillName: string): ParametersKey {
-        const configKey = SKILL_KEY_MAP[skillName];
-        if (!configKey) {
-            throw new Error(
-                `[SkillLoader] No ParametersKey mapping for skill '${skillName}'. ` +
-                    `Add it to SKILL_KEY_MAP in skill-loader.service.ts`,
-            );
-        }
-        return configKey;
     }
 }

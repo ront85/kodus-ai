@@ -4,9 +4,6 @@ export enum ParametersKey {
     LANGUAGE_CONFIG = 'language_config',
     ISSUE_CREATION_CONFIG = 'issue_creation_config',
 
-    // Skills — per-team SKILL.md instruction overrides
-    SKILL_BUSINESS_RULES_VALIDATION = 'skill_business_rules_validation',
-
     //DEPRECATED
     TEAM_ARTIFACTS_CONFIG = 'team_artifacts_config',
     ORGANIZATION_ARTIFACTS_CONFIG = 'organization_artifacts_config',
