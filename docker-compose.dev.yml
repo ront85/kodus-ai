@@ -61,6 +61,10 @@ services:
     worker:
         <<: *app-service-defaults
         container_name: kodus_worker
+        volumes:
+            - .:/usr/src/app:delegated
+            - node_modules_cache:/usr/src/app/node_modules:nocopy
+            - yalc_store:/root/.yalc
         ports:
             - '9231:9231'
             - '8001:8001'
@@ -89,6 +93,10 @@ services:
     webhooks:
         <<: *app-service-defaults
         container_name: kodus_webhooks
+        volumes:
+            - .:/usr/src/app:delegated
+            - node_modules_cache:/usr/src/app/node_modules:nocopy
+            - yalc_store:/root/.yalc
         ports:
             - '${API_WEBHOOKS_PORT:-3332}:${API_WEBHOOKS_PORT:-3332}'
             - '9232:9232'
