@@ -72,31 +72,12 @@ describe('LLMAnalysisService', () => {
                 relevantContent: '',
                 language: 'typescript',
                 filePath: 'test.ts',
-                reviewMode: ReviewModeResponse.LIGHT_MODE,
+                reviewMode: ReviewModeResponse.HEAVY_MODE,
             };
 
             expect(() =>
                 (service as any).preparePrefixChainForCache(context),
             ).toThrow('Required context parameters are missing');
-        });
-
-        it('should generate light mode context without fileContent', () => {
-            const context = {
-                patchWithLinesStr: '@@ -1,1 +1,1 @@\n-var x;\n+const x;',
-                fileContent: 'const x = 1;',
-                relevantContent: '',
-                language: 'typescript',
-                filePath: 'test.ts',
-                suggestions: [],
-                reviewMode: ReviewModeResponse.LIGHT_MODE,
-            };
-
-            const result = (service as any).preparePrefixChainForCache(context);
-
-            expect(result).toContain('<codeDiff>');
-            expect(result).toContain('<filePath>');
-            expect(result).toContain('test.ts');
-            expect(result).not.toContain('<fileContent>');
         });
 
         it('should generate heavy mode context with fileContent', () => {
@@ -144,7 +125,7 @@ describe('LLMAnalysisService', () => {
                 language: 'typescript',
                 filePath: 'test.ts',
                 suggestions,
-                reviewMode: ReviewModeResponse.LIGHT_MODE,
+                reviewMode: ReviewModeResponse.HEAVY_MODE,
             };
 
             const result = (service as any).preparePrefixChainForCache(context);
@@ -225,22 +206,7 @@ describe('LLMAnalysisService', () => {
     // of BYOKPromptRunnerService which is instantiated internally;
 
     describe('selectReviewMode', () => {
-        it('should return LIGHT_MODE on error', async () => {
-            const mockBuilder = {
-                setProviders: jest.fn().mockReturnThis(),
-                setParser: jest.fn().mockReturnThis(),
-                setLLMJsonMode: jest.fn().mockReturnThis(),
-                setPayload: jest.fn().mockReturnThis(),
-                addPrompt: jest.fn().mockReturnThis(),
-                addMetadata: jest.fn().mockReturnThis(),
-                addCallbacks: jest.fn().mockReturnThis(),
-                setRunName: jest.fn().mockReturnThis(),
-                setTemperature: jest.fn().mockReturnThis(),
-                execute: jest.fn().mockRejectedValue(new Error('LLM error')),
-            };
-
-            mockPromptRunnerService.builder.mockReturnValue(mockBuilder);
-
+        it('should always return HEAVY_MODE', async () => {
             const file = { filename: 'test.ts' };
             const codeDiff = '@@ -1,1 +1,1 @@';
 
@@ -252,7 +218,7 @@ describe('LLMAnalysisService', () => {
                 codeDiff,
             );
 
-            expect(result).toBe(ReviewModeResponse.LIGHT_MODE);
+            expect(result).toBe(ReviewModeResponse.HEAVY_MODE);
         });
     });
 
@@ -357,7 +323,7 @@ describe('LLMAnalysisService', () => {
                 '@@ -1,1 +1,1 @@',
                 suggestions,
                 'en',
-                ReviewModeResponse.LIGHT_MODE,
+                ReviewModeResponse.HEAVY_MODE,
                 {} as any,
             );
 
@@ -391,7 +357,7 @@ describe('LLMAnalysisService', () => {
                 '@@ -1,1 +1,1 @@',
                 suggestions,
                 'en',
-                ReviewModeResponse.LIGHT_MODE,
+                ReviewModeResponse.HEAVY_MODE,
                 {} as any,
             );
 

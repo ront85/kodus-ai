@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
-import pLimit from 'p-limit';
 import { BasePipelineStage } from '@libs/core/infrastructure/pipeline/abstracts/base-stage.abstract';
 import { PipelineError } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-context.interface';
 import { StageVisibility } from '@libs/core/infrastructure/pipeline/enums/stage-visibility.enum';
@@ -39,6 +38,8 @@ import { createOptimizedBatches } from '@libs/common/utils/batch.helper';
 import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
+import { ASTContentFormatterService } from '@libs/code-review/infrastructure/adapters/services/astContentFormatter.service';
 import { CodeAnalysisOrchestrator } from '@libs/ee/codeBase/codeAnalysisOrchestrator.service';
 import {
     CodeReviewPipelineContext,
@@ -46,7 +47,7 @@ import {
 } from '../context/code-review-pipeline.context';
 
 interface FileProcessingResult {
-    file: FileChange;
+    filename: string;
     validSuggestionsToAnalyze: Partial<CodeSuggestion>[];
     discardedSuggestionsBySafeGuard: Partial<CodeSuggestion>[];
     error?: PipelineError;
@@ -60,7 +61,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
     readonly label = 'Reviewing File Level';
     readonly visibility = StageVisibility.PRIMARY;
 
-    private readonly concurrencyLimit = 30;
+    private readonly MIN_BATCH_SIZE = 20;
+    private readonly MAX_BATCH_SIZE = 30;
     private readonly logger = createLogger(ProcessFilesReview.name);
 
     constructor(
@@ -80,6 +82,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         private readonly kodyAstAnalyzeContextPreparation: IKodyASTAnalyzeContextPreparationService,
 
         private readonly codeAnalysisOrchestrator: CodeAnalysisOrchestrator,
+
+        private readonly astContentFormatter: ASTContentFormatterService,
     ) {
         super();
     }
@@ -132,6 +136,13 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 if (errors?.length > 0) {
                     draft.errors.push(...errors);
                 }
+
+                // Release data no longer needed by subsequent stages
+                draft.crossFileContexts = undefined;
+
+                for (const file of draft.changedFiles) {
+                    delete file.patchWithLinesStr;
+                }
             });
         } catch (error) {
             this.logger.error({
@@ -141,7 +152,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 metadata: {
                     pullRequestNumber: context.pullRequest.number,
                     repositoryName: context.repository.name,
-                    batchCount: context.batches?.length || 0,
+                    changedFilesCount: context.changedFiles?.length || 0,
                 },
             });
 
@@ -204,7 +215,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 if (result.error) {
                     errors.push(result.error);
                 }
-
                 this.collectFileProcessingResult(
                     result,
                     validSuggestions,
@@ -224,15 +234,14 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 },
             });
 
-            // Retornar apenas os dados analisados sem criar comentários
             return {
-                validSuggestions: validSuggestions,
-                discardedSuggestions: discardedSuggestions,
-                fileMetadata: fileMetadata,
+                validSuggestions,
+                discardedSuggestions,
+                fileMetadata,
                 validCrossFileSuggestions:
                     analysisContext.validCrossFileSuggestions || [],
-                tasks: tasks,
-                errors: errors,
+                tasks,
+                errors,
             };
         } catch (error) {
             this.logProcessingError(
@@ -312,47 +321,11 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         };
     }
 
-    /**
-     * Creates optimized batches of files for parallel processing
-     * @param files Array of files to be processed
-     * @returns Array of file batches
-     */
     private createOptimizedBatches(files: FileChange[]): FileChange[][] {
-        const batches = createOptimizedBatches(files, {
-            minBatchSize: 20,
-            maxBatchSize: 30,
+        return createOptimizedBatches(files, {
+            minBatchSize: this.MIN_BATCH_SIZE,
+            maxBatchSize: this.MAX_BATCH_SIZE,
         });
-
-        this.validateBatchIntegrity(batches, files.length);
-
-        return batches;
-    }
-
-    /**
-     * Validates the integrity of the batches to ensure all files are processed
-     * @param batches Batches created for processing
-     * @param totalFileCount Original total number of files
-     */
-    private validateBatchIntegrity(
-        batches: FileChange[][],
-        totalFileCount: number,
-    ): void {
-        const totalFilesInBatches = batches.reduce(
-            (sum, batch) => sum + batch.length,
-            0,
-        );
-        if (totalFilesInBatches !== totalFileCount) {
-            this.logger.warn({
-                message: `Potential file processing mismatch! Total files: ${totalFileCount}, files in batches: ${totalFilesInBatches}`,
-                context: ProcessFilesReview.name,
-            });
-            // Ensure all files are processed even in case of mismatch
-            if (totalFilesInBatches < totalFileCount) {
-                // If we identify that files might be missing, process all at once
-                batches.length = 0;
-                batches.push(Array.from({ length: totalFileCount }));
-            }
-        }
     }
 
     private async processBatchesSequentially(
@@ -365,6 +338,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
     }> {
         const allResults: FileProcessingResult[] = [];
         const errors: PipelineError[] = [];
+        const processedFiles = new Set<string>();
 
         for (const [index, batch] of batches.entries()) {
             this.logger.log({
@@ -401,6 +375,30 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                     }),
                 );
             }
+
+            for (const file of batch) {
+                processedFiles.add(file.filename);
+            }
+
+            // Prune fully-consumed cross-file snippets between batches
+            if (context.crossFileSnippets?.length) {
+                const before = context.crossFileSnippets.length;
+                context.crossFileSnippets = context.crossFileSnippets.filter(
+                    (snippet) => {
+                        if (!snippet.targetFiles?.length) return true;
+                        return !snippet.targetFiles.every((f) =>
+                            processedFiles.has(f),
+                        );
+                    },
+                );
+                const pruned = before - context.crossFileSnippets.length;
+                if (pruned > 0) {
+                    this.logger.log({
+                        message: `Pruned ${pruned} fully-consumed cross-file snippets after batch ${index + 1} (${context.crossFileSnippets.length} remaining)`,
+                        context: ProcessFilesReview.name,
+                    });
+                }
+            }
         }
 
         return {
@@ -417,7 +415,23 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
     ): Promise<FileProcessingResult[]> {
         const { organizationAndTeamData, pullRequest } = context;
 
-        const preparedFiles = await this.filterAndPrepareFiles(batch, context);
+        // Fetch AST formatted content for this batch
+        const astResults = await this.astContentFormatter.fetchFormattedContent(
+            batch,
+            context,
+        );
+
+        // Create mutable copies with AST content attached (originals may be frozen by Immer)
+        const filesWithAst = astResults.size > 0
+            ? batch.map((file) => {
+                  const astResult = astResults.get(file.filename);
+                  return astResult
+                      ? { ...file, astFormattedContent: astResult.content }
+                      : file;
+              })
+            : batch;
+
+        const preparedFiles = await this.filterAndPrepareFiles(filesWithAst, context);
 
         const astFailed = preparedFiles.find((file) => {
             const task = file.fileContext.tasks?.astAnalysis;
@@ -467,7 +481,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
      * @param fileMetadata Map to store file metadata
      */
     private collectFileProcessingResult(
-        fileProcessingResult: IFinalAnalysisResult & { file: FileChange },
+        fileProcessingResult: FileProcessingResult,
         validSuggestionsToAnalyze: Partial<CodeSuggestion>[],
         discardedSuggestionsBySafeGuard: Partial<CodeSuggestion>[],
         fileMetadata: Map<string, any>,
@@ -484,35 +498,159 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             );
         }
 
-        if (fileProcessingResult?.file?.filename) {
-            fileMetadata.set(fileProcessingResult.file.filename, {
+        if (fileProcessingResult?.filename) {
+            fileMetadata.set(fileProcessingResult.filename, {
                 reviewMode: fileProcessingResult.reviewMode,
                 codeReviewModelUsed: fileProcessingResult.codeReviewModelUsed,
             });
         }
     }
 
+    private filterSnippetsForFile(
+        allSnippets: CrossFileContextSnippet[] | undefined,
+        file: FileChange,
+    ): CrossFileContextSnippet[] {
+        if (!allSnippets?.length) {
+            return [];
+        }
+
+        const diff = file.patchWithLinesStr || file.patch || '';
+        if (!diff) {
+            return [];
+        }
+
+        // Extract identifiers defined/exported in this file's diff (+lines).
+        // Used for reverse matching: does the snippet consume something this file changes?
+        const diffIdentifiers = this.extractDiffIdentifiers(diff);
+
+        return allSnippets.filter((snippet) => {
+            // Direct file targeting — replaces text heuristics when available
+            if (snippet.targetFiles?.length) {
+                return snippet.targetFiles.includes(file.filename);
+            }
+
+            // Fallback: same text-based matching for both hop 1 and hop 2
+            return this.matchSnippetByTextHeuristics(snippet, diff, diffIdentifiers);
+        });
+    }
+
+    /**
+     * Text-based heuristic to determine if a snippet is relevant to a file's diff.
+     * Used as fallback when targetFiles is not available (backward compat).
+     * Applied equally to hop 1 and hop 2 snippets.
+     */
+    private matchSnippetByTextHeuristics(
+        snippet: CrossFileContextSnippet,
+        diff: string,
+        diffIdentifiers: string[],
+    ): boolean {
+        // Snippets without relatedSymbol pass through — the planner
+        // already deemed them relevant; let the LLM judge per-file.
+        if (!snippet.relatedSymbol) {
+            return false;
+        }
+
+        // Forward match: snippet's relatedSymbol appears in this file's diff
+        if (diff.includes(snippet.relatedSymbol)) {
+            return true;
+        }
+
+        // Split compound symbols (e.g. "PlanType.PREMIUM") and match parts.
+        // Skip short tokens (<3 chars) to avoid false positives.
+        const parts = snippet.relatedSymbol
+            .split('.')
+            .filter((p) => p.length >= 3);
+
+        if (parts.some((part) => diff.includes(part))) {
+            return true;
+        }
+
+        // Reverse match: this file defines/changes symbols that appear in the snippet's content.
+        // Catches cases like: notificationEvents.ts changes NOTIFICATION_EVENTS,
+        // and PaymentService snippet references NOTIFICATION_EVENTS.
+        if (
+            diffIdentifiers.length > 0 &&
+            diffIdentifiers.some((id) => snippet.content.includes(id))
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Extract identifiers defined or exported in the diff's added lines.
+     * Returns unique names of consts, functions, classes, types, enums, interfaces,
+     * and string-keyed object properties.
+     */
+    private extractDiffIdentifiers(diff: string): string[] {
+        const identifiers = new Set<string>();
+        const lines = diff.split('\n');
+
+        for (const line of lines) {
+            // Only look at added lines
+            if (!line.startsWith('+')) continue;
+
+            // Match: export const FOO, function bar, class Baz, type X, enum Y, interface Z
+            const declarationPattern =
+                /(?:export\s+)?(?:const|let|var|function|class|interface|type|enum)\s+(\w+)/g;
+            let match: RegExpExecArray | null;
+            while ((match = declarationPattern.exec(line)) !== null) {
+                if (match[1] && match[1].length >= 3) {
+                    identifiers.add(match[1]);
+                }
+            }
+
+            // Match string-keyed object properties: "payment.captured": ...
+            const stringKeyPattern = /["']([^"']+)["']\s*:/g;
+            while ((match = stringKeyPattern.exec(line)) !== null) {
+                if (match[1] && match[1].length >= 3) {
+                    identifiers.add(match[1]);
+                }
+            }
+        }
+
+        return Array.from(identifiers);
+    }
+
     private async filterAndPrepareFiles(
         batch: FileChange[],
         context: AnalysisContext,
     ): Promise<Array<{ fileContext: AnalysisContext }>> {
-        const limit = pLimit(this.concurrencyLimit);
-
         const settledResults = await Promise.allSettled(
-            batch.map((file) =>
-                limit(() => {
-                    const perFileContext: AnalysisContext = {
-                        ...context,
-                        fileAugmentations:
-                            context.augmentationsByFile?.[file.filename] ?? {},
-                    };
+            batch.map((file) => {
+                const filteredSnippets = this.filterSnippetsForFile(
+                    context.crossFileSnippets,
+                    file,
+                );
 
-                    return this.fileReviewContextPreparation.prepareFileContext(
-                        file,
-                        perFileContext,
-                    );
-                }),
-            ),
+                if (context.crossFileSnippets?.length) {
+                    this.logger.log({
+                        message: `Cross-file snippets for ${file.filename}: ${filteredSnippets.length}/${context.crossFileSnippets.length} passed filter`,
+                        context: ProcessFilesReview.name,
+                        metadata: {
+                            filename: file.filename,
+                            totalSnippets: context.crossFileSnippets.length,
+                            filteredSnippets: filteredSnippets.length,
+                            matchedSymbols: filteredSnippets
+                                .filter((s) => s.relatedSymbol)
+                                .map((s) => s.relatedSymbol),
+                        },
+                    });
+                }
+
+                const perFileContext: AnalysisContext = {
+                    ...context,
+                    fileAugmentations:
+                        context.augmentationsByFile?.[file.filename] ?? {},
+                    crossFileSnippets: filteredSnippets,
+                };
+
+                return this.fileReviewContextPreparation.prepareFileContext(
+                    file,
+                    perFileContext,
+                );
+            }),
         );
 
         settledResults?.forEach((res, index) => {
@@ -578,7 +716,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 context,
             );
 
-            return { ...finalResult, file };
+            return { ...finalResult, filename: file.filename };
         } catch (error) {
             this.logger.error({
                 message: `Error analyzing file ${file.filename}`,
@@ -602,7 +740,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             return {
                 validSuggestionsToAnalyze: [],
                 discardedSuggestionsBySafeGuard: [],
-                file,
+                filename: file.filename,
                 error: {
                     stage: this.stageName,
                     substage: file.filename,
@@ -657,6 +795,19 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             validCrossFileSuggestions?.map((suggestion) => suggestion.id),
         );
 
+        // Standard review suggestions that the LLM flagged as based on
+        // cross-file evidence should also bypass safeguard — the safeguard
+        // LLM doesn't receive cross-file snippets and would discard them
+        // as "speculative".
+        for (const suggestion of keepedSuggestions) {
+            if (
+                !crossFileIds.has(suggestion.id) &&
+                suggestion.crossFileEvidence === true
+            ) {
+                crossFileIds.add(suggestion.id);
+            }
+        }
+
         const filteredCrossFileSuggestions = keepedSuggestions.filter(
             (suggestion) => crossFileIds?.has(suggestion.id),
         );
@@ -673,6 +824,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             relevantContent,
             patchWithLinesStr,
             reviewModeResponse,
+            context.crossFileSnippets,
         );
 
         safeguardLLMProvider = safeGuardResult.safeguardLLMProvider;
@@ -942,6 +1094,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         relevantContent,
         patchWithLinesStr: string,
         reviewModeResponse: any,
+        crossFileSnippets?: CrossFileContextSnippet[],
     ): Promise<{
         safeguardSuggestions: Partial<CodeSuggestion>[];
         allDiscardedSuggestions: Partial<CodeSuggestion>[];
@@ -983,6 +1136,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 context?.codeReviewConfig?.languageResultPrompt,
                 reviewModeResponse,
                 context?.codeReviewConfig?.byokConfig,
+                crossFileSnippets,
             );
 
         const safeguardLLMProvider =
@@ -1045,6 +1199,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             filePromptOverrides: this.buildFilePromptOverrides(
                 context.fileContextMap,
             ),
+            crossFileSnippets: context.crossFileContexts?.contexts,
         };
     }
 

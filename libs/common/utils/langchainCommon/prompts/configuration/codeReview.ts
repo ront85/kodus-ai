@@ -1,3 +1,4 @@
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import { ContextPack } from '@kodus/flow';
 import { getDefaultKodusConfigFile } from '@libs/common/utils/validateCodeReviewConfigFile';
 import { LimitationType } from '@libs/core/infrastructure/config/types/general/codeReview.type';
@@ -68,6 +69,7 @@ export interface CodeReviewPayload {
         }
     >;
     contextPack?: ContextPack;
+    crossFileSnippets?: CrossFileContextSnippet[];
 }
 
 const PATH_SOURCE_TYPE_MAP: Record<string, string> = {
@@ -912,8 +914,8 @@ ${lowText}
 ### MUST NOT DO:
 - **NO speculation whatsoever** - If you cannot trace the exact execution path that causes the issue, DO NOT report it
 - **NO "could", "might", "possibly"** - Only report what WILL definitely happen
-- **NO assumptions about external behavior** - Don't assume how external APIs, callbacks, user code, or imported functions/constants/utilities behave. If you cannot see the implementation in the provided code, do not make assumptions about it.
-- **NO assumptions about imported code structure** - If code imports from another file, don't assume whether it's a function, constant, class, or what parameters it accepts. Only analyze what you can see being used in the visible code.
+- **NO assumptions about external behavior** - Don't assume how external APIs, callbacks, user code, or imported functions/constants/utilities behave. If you cannot see the implementation in the provided code, do not make assumptions about it. **Exception:** code provided in the "Codebase Context" section IS visible evidence — use it as you would any other code in the diff.
+- **NO assumptions about imported code structure** - If code imports from another file, don't assume whether it's a function, constant, class, or what parameters it accepts. Only analyze what you can see being used in the visible code. **Exception:** if the "Codebase Context" section shows the actual source of an import, treat it as visible code and analyze contracts between them.
 - **NO defensive programming as bugs** - Missing try-catch, validation, or error handling is NOT a bug unless you can prove it causes actual failure
 - **NO theoretical edge cases** - Must be able to demonstrate with concrete, realistic values
 - **NO "if the user does X"** - Unless you can prove X is a normal, expected usage
@@ -929,12 +931,14 @@ ${lowText}
   2. Step-by-step execution trace showing the failure
   3. The specific line where the failure occurs
   4. The exact incorrect behavior that results
-  5. **Proof that the issue exists in VISIBLE code only** - if the bug depends on behavior of imported code you cannot see, you CANNOT report it
+  5. **Proof that the issue exists in VISIBLE code only** - if the bug depends on behavior of imported code you cannot see, you CANNOT report it. **Exception:** code shown in the "Codebase Context" section counts as visible — if a snippet proves a caller/consumer will break due to the diff changes, you MUST report it.
+  **Cross-file contract bugs are exempt from items 1-2 above.** When a Codebase Context snippet shows a consumer passing a string/value that no longer exists in the mapping or signature changed by the diff, the snippet IS the proof. You do not need to invent input values — the consumer code IS the input that will trigger the failure. Report it directly.
 
 ## Analysis Process
 
 1. **Understand PR intent** from summary as context for expected behavior
-2. **Identify critical points** in the changed code (+lines only)
+2. **Identify critical points** in the changed code (+lines), and check if any Codebase Context snippet references values changed or removed by the diff
+2.5. **Cross-file contract check** (if Codebase Context snippets are present): For each snippet, compare the string literals, event names, enum values, and config keys it passes to functions/mappings changed in the diff. If any value no longer exists in the new code, this is a RUNTIME BUG — report it immediately with severity high or critical. This takes priority over all other findings.
 3. **Simulate execution** through each critical path considering:
    - Variable initialization order vs usage order
    - Number of unique operations vs total iterations
@@ -945,8 +949,8 @@ ${lowText}
 4. **Test concrete scenarios** on each path with realistic inputs
 5. **Detect verifiable issues** where behavior is definitively problematic
 6. **Confirm with available context** - must be provable with given information
-   - Can you see ALL the code involved in the bug? If NO → DO NOT REPORT
-   - Does the bug depend on imported function behavior? If YES and you can't see the import → DO NOT REPORT
+   - Can you see ALL the code involved in the bug? If NO → DO NOT REPORT. **Exception:** code in the "Codebase Context" section is real repository code — if it shows a caller/consumer that will break because of diff changes, that IS visible evidence and you MUST report it.
+   - Does the bug depend on imported function behavior? If YES and you can't see the import → DO NOT REPORT. **Exception:** if the "Codebase Context" section shows the import source, treat it as visible.
    - Are you assuming what an imported function/constant contains? If YES → DO NOT REPORT
 6.1. **Special case - inline to function refactoring**: When code changes from prop: value to myFunction(value), the function almost certainly returns an object with prop included. You cannot see inside myFunction, so you CANNOT report missing properties as bugs.
 6.2. **Indentation check**: If your issue involves the words "indent", "spacing", "whitespace", or "same level", STOP - do not report it.
@@ -997,6 +1001,7 @@ Return only valid JSON, nothing more. Under no circumstances should there be any
             "relevantLinesEnd": 10,
             "label": "bug|performance|security",
             "severity": "low|medium|high|critical",
+            "crossFileEvidence": "true only when the suggestion is based on evidence from a Codebase Context snippet; false or omit otherwise",
             "llmPrompt": "Prompt for LLMs"
         }
     ]
@@ -1242,11 +1247,11 @@ A bug is not just a syntax error - it's any code that won't behave as intended i
 DO NOT speculate about:
 - What might happen if external services fail
 - Hypothetical edge cases not evident in the code
-- "What if" scenarios about parts of the system not visible
+- "What if" scenarios about parts of the system not visible — **however**, code provided in the "Codebase Context" section IS visible and IS part of this system. If a snippet shows code that will break because of the diff, report it as a concrete bug, not speculation.
 
 - Understand the purpose of the PR.
-- Focus exclusively on lines marked with '+' for suggestions.
-- Before finalizing a suggestion, ensure it is technically correct, logically sound, beneficial, **and based on clear evidence in the provided code diff.**
+- Focus on lines marked with '+' for suggestions. **Exception for cross-file bugs:** if a Codebase Context snippet shows a consumer that will break because of the diff changes, report the bug anchored to the diff lines that introduced the breaking change — even though the consumer code is in another file.
+- Before finalizing a suggestion, ensure it is technically correct, logically sound, beneficial, **and based on clear evidence in the provided code diff or Codebase Context snippets.**
 - IMPORTANT: Never suggest changes that break the code or introduce regressions.
 - You don't know what today's date is, so don't suggest anything related to it
 - Keep your suggestions concise and clear:
@@ -1437,6 +1442,15 @@ export const prompt_codereview_system_gemini_v2 = (
     );
     if (augmentationBlock) {
         collectExternalContext('augmentations', augmentationBlock);
+    }
+
+    if (payload?.crossFileSnippets?.length) {
+        const snippetLines = payload.crossFileSnippets.map(
+            (s) =>
+                `### ${s.filePath}${s.relatedSymbol ? ` (symbol: ${s.relatedSymbol})` : ''}\n**Rationale:** ${s.rationale}\n\`\`\`\n${s.content}\n\`\`\``,
+        );
+        const codebaseContextBlock = `### Codebase Context (REAL CODE — treat as visible evidence)\n\nThe snippets below are **actual code from the repository** (not hypothetical). They show callers, consumers, or dependents of the code being changed in this PR.\n\n**You MUST check for broken contracts between the diff and these snippets:**\n- A caller passing a string literal (event name, key, enum value) that no longer exists in the mapping/config changed by the diff\n- A consumer relying on a return type, enum value, event name, or config key that the diff renames, changes, or removes\n- A caller passing arguments that no longer match the new function signature\n- A mapping/config that references identifiers renamed or deleted in the diff\n\n**PRIORITY: Runtime-breaking bugs (wrong string literal, removed enum value, renamed key) take absolute priority over type-narrowing or type-safety improvements.** If a snippet shows code that WILL throw an error or silently fail at runtime, ALWAYS report it as a bug — even if you also see type-level improvements to suggest. Do NOT report type improvements instead of a runtime bug.\n\n**HOW TO REPORT cross-file bugs:**\n- Set \`relevantFile\` to the file under review (the diff file), since that is where the breaking change was introduced\n- Set \`relevantLinesStart/End\` to the diff lines that introduced the breaking change\n- In \`suggestionContent\`, explicitly name the cross-file consumer that will break (e.g., "PaymentService.ts still calls send(\\"paymentCaptured\\") but this event no longer exists in the mapping")\n- The proof IS the snippet — you do not need to guess hypothetical inputs. The snippet is real code that will execute\n\n${snippetLines.join('\n\n')}`;
+        collectExternalContext('codebase_context', codebaseContextBlock);
     }
 
     const prompt = buildFinalPrompt(

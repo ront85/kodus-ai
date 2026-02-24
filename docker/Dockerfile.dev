@@ -21,6 +21,18 @@ RUN npm i -g yalc chokidar-cli nodemon
 COPY package.json yarn.lock ./
 COPY nest-cli.json tsconfig*.json ./
 
+COPY packages/kodus-common ./packages/kodus-common
+COPY packages/kodus-flow ./packages/kodus-flow
+
+# Build local packages first
+RUN cd packages/kodus-common && yarn install && yarn prepack
+RUN cd packages/kodus-flow && yarn install && yarn build
+
+# Install dependencies and link local packages
+RUN yarn install --frozen-lockfile
+RUN rm -rf node_modules/@kodus/kodus-common && cp -r packages/kodus-common node_modules/@kodus/kodus-common
+RUN rm -rf node_modules/@kodus/flow && cp -r packages/kodus-flow node_modules/@kodus/flow
+
 COPY --chmod=0755 docker/dev-entrypoint.sh /usr/local/bin/dev-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/dev-entrypoint"]

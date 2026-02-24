@@ -1,4 +1,5 @@
 import { CodeReviewPipelineContext } from '@libs/code-review/pipeline/context/code-review-pipeline.context';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import { PlatformType } from '@libs/core/domain/enums/platform-type.enum';
 import { Repository } from '@libs/core/infrastructure/config/types/general/codeReview.type';
 import { BYOKConfig } from '@kodus/kodus-common/llm';
@@ -72,6 +73,7 @@ export interface ISuggestionService {
         languageResultPrompt: string,
         reviewMode: ReviewModeResponse,
         byokConfig: BYOKConfig,
+        crossFileSnippets?: CrossFileContextSnippet[],
     ): Promise<any>;
 
     /**

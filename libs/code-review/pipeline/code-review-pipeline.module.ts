@@ -9,6 +9,7 @@ import { FetchChangedFilesStage } from './stages/fetch-changed-files.stage';
 import { FileContextGateStage } from './stages/file-context-gate.stage';
 import { UpdateCommentsAndGenerateSummaryStage } from './stages/finish-comments.stage';
 import { RequestChangesOrApproveStage } from './stages/finish-process-review.stage';
+import { CollectCrossFileContextStage } from './stages/collect-cross-file-context.stage';
 import { InitialCommentStage } from './stages/initial-comment.stage';
 import { LoadExternalContextStage } from './stages/load-external-context.stage';
 import { ProcessFilesPrLevelReviewStage } from './stages/process-files-pr-level-review.stage';
@@ -53,6 +54,7 @@ import { CodeReviewJobProcessorService } from '../workflow/code-review-job-proce
 import { ImplementationVerificationProcessor } from '../workflow/implementation-verification.processor';
 import { LOAD_EXTERNAL_CONTEXT_STAGE_TOKEN } from './stages/contracts/loadExternalContextStage.contract';
 import { ValidateSuggestionsStage } from './stages/validate-suggestions.stage';
+import { ASTContentFormatterService } from '../infrastructure/adapters/services/astContentFormatter.service';
 import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.strategy';
 
 @Module({
@@ -97,8 +99,10 @@ import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.stra
         LoadExternalContextStage,
         FileContextGateStage,
         InitialCommentStage,
+        CollectCrossFileContextStage,
         ProcessFilesPrLevelReviewStage,
         ProcessFilesReview,
+        ASTContentFormatterService,
         CreatePrLevelCommentsStage,
         CreateFileCommentsStage,
         AggregateResultsStage,
@@ -144,6 +148,7 @@ import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.stra
         ValidatePrerequisitesStage,
         FetchChangedFilesStage,
         InitialCommentStage,
+        CollectCrossFileContextStage,
         AggregateResultsStage,
         LoadExternalContextStage,
         LOAD_EXTERNAL_CONTEXT_STAGE_TOKEN,

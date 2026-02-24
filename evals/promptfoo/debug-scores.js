@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const path = require('path');
-
-const data = JSON.parse(fs.readFileSync(path.join(__dirname, 'results', 'output.json'), 'utf-8'));
-const results = data.results.results;
+const { loadResults } = require('./load-results');
+const { results } = loadResults();
+if (results.length === 0) { console.error('No result files found.'); process.exit(1); }
 
 // ============================================================================
 // SECTION 1: Per-test breakdown for EVERY result

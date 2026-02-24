@@ -6,12 +6,9 @@
  * shows bias toward GPT models vs other model families.
  */
 
-const fs = require('fs');
-const path = require('path');
-
-const OUTPUT_PATH = path.join(__dirname, 'results', 'output.json');
-const data = JSON.parse(fs.readFileSync(OUTPUT_PATH, 'utf-8'));
-const results = data.results.results;
+const { loadResults } = require('./load-results');
+const { results } = loadResults();
+if (results.length === 0) { console.error('No result files found.'); process.exit(1); }
 
 // ──────────────────────────────────────────────────────
 // Helpers

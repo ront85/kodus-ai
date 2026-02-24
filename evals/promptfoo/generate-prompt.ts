@@ -49,8 +49,13 @@ Code Diff (PR Changes):
 
 Use the PR summary to understand the intended changes, then simulate execution of the modified code (+lines) to detect bugs that will actually occur in production.`;
 
+// Append crossFileContext template variable to system prompt.
+// When the variable is empty (no cross-file snippets), nothing is added.
+// When populated by convert-dataset.js, the full "External Context" section is injected.
+const systemPromptWithContext = systemPrompt + '\n\n{{crossFileContext}}';
+
 const prompt = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: systemPromptWithContext },
     { role: 'user', content: userPrompt },
 ];
 

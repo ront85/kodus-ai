@@ -4,7 +4,7 @@ import { createLogger } from '@kodus/flow';
  * © Kodus Tech. All rights reserved.
  */
 
-import { BYOKConfig, LLMModelProvider } from '@kodus/kodus-common/llm';
+import { BYOKConfig } from '@kodus/kodus-common/llm';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { IAIAnalysisService } from '@libs/code-review/domain/contracts/AIAnalysisService.contract';
@@ -16,7 +16,6 @@ import { ReviewModeOptions } from '@libs/core/domain/interfaces/file-review-cont
 import {
     AnalysisContext,
     FileChange,
-    ReviewModeConfig,
     ReviewModeResponse,
 } from '@libs/core/infrastructure/config/types/general/codeReview.type';
 import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
@@ -60,34 +59,7 @@ export class FileReviewContextPreparation extends BaseFileReviewContextPreparati
         options?: ReviewModeOptions,
         byokConfig?: BYOKConfig,
     ): Promise<ReviewModeResponse> {
-        try {
-            const { context } = options;
-
-            let reviewMode = ReviewModeResponse.HEAVY_MODE;
-
-            const shouldCheckMode =
-                context?.codeReviewConfig?.reviewModeConfig ===
-                    ReviewModeConfig.LIGHT_MODE_FULL ||
-                context?.codeReviewConfig?.reviewModeConfig ===
-                    ReviewModeConfig.LIGHT_MODE_PARTIAL;
-
-            if (shouldCheckMode) {
-                reviewMode = await this.getReviewMode(options, byokConfig);
-            }
-
-            return reviewMode;
-        } catch (error) {
-            this.logger.warn({
-                message:
-                    'Error determining advanced review mode, falling back to basic mode',
-                error,
-                context: FileReviewContextPreparation.name,
-            });
-
-            // In case of an error, we call the parent class method (basic implementation)
-            // However, since BaseFileReviewContextPreparation is now abstract, we need to implement a fallback here
-            return ReviewModeResponse.HEAVY_MODE;
-        }
+        return ReviewModeResponse.HEAVY_MODE;
     }
 
     /**
@@ -126,16 +98,7 @@ export class FileReviewContextPreparation extends BaseFileReviewContextPreparati
         options: ReviewModeOptions,
         byokConfig: BYOKConfig,
     ): Promise<ReviewModeResponse> {
-        const response = await this.aiAnalysisService.selectReviewMode(
-            options.context.organizationAndTeamData,
-            options.context.pullRequest.number,
-            LLMModelProvider.NOVITA_DEEPSEEK_V3_0324,
-            options.fileChangeContext.file,
-            options.patch,
-            byokConfig,
-        );
-
-        return response;
+        return ReviewModeResponse.HEAVY_MODE;
     }
 
     protected async getRelevantFileContent(
@@ -147,6 +110,15 @@ export class FileReviewContextPreparation extends BaseFileReviewContextPreparati
         hasRelevantContent?: boolean;
     }> {
         try {
+            // Use AST formatted content when available (set by ASTContentFormatterService)
+            if (file.astFormattedContent) {
+                return {
+                    relevantContent: file.astFormattedContent,
+                    hasRelevantContent: true,
+                    taskStatus: TaskStatus.TASK_STATUS_COMPLETED,
+                };
+            }
+
             const { taskId } = context.tasks.astAnalysis;
 
             if (!taskId) {

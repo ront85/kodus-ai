@@ -1,60 +1,108 @@
 /**
  * Replicates the production output parser from:
  * - libs/ai-engine/infrastructure/adapters/services/llmResponseProcessor.transform.ts
- * - packages/kodus-common/src/utils/json/index.ts
+ * - libs/common/utils/transforms/json.ts
  *
  * This ensures the eval tests parseability with the same logic used in production.
+ * IMPORTANT: Keep in sync with the production files above.
  */
 
-function stripCodeBlocks(text) {
+const JSON5 = require('json5');
+
+function extractValidJsonBlocks(text) {
     const cleanText = text.replace(/^['"]|['"]$/g, '');
-    // Try all ```json blocks, return the first one that parses as valid JSON
+    const blocks = [];
+
+    // Collect all ```json blocks that parse as valid JSON
     const jsonMatches = cleanText.matchAll(/```json([\s\S]*?)```/g);
     for (const match of jsonMatches) {
-        const content = match[1].trim();
         try {
-            JSON.parse(content);
-            return match[1];
-        } catch {
-            // Invalid JSON, try next block
-        }
+            JSON.parse(match[1].trim());
+            blocks.push(match[1]);
+        } catch { /* skip invalid */ }
     }
-    // Fallback: any code block containing JSON-like content
-    const genericMatch = cleanText.match(/```(?:\w*)\s*([\s\S]*?)```/g);
-    if (genericMatch) {
-        for (const block of genericMatch) {
+    if (blocks.length > 0) return blocks;
+
+    // Fallback: any code block with JSON-like content
+    const genericMatches = cleanText.match(/```(?:\w*)\s*([\s\S]*?)```/g);
+    if (genericMatches) {
+        for (const block of genericMatches) {
             const content = block.replace(/^```\w*\s*/, '').replace(/```$/, '').trim();
             if (content.startsWith('{') || content.startsWith('[')) {
-                return content;
+                blocks.push(content);
             }
         }
     }
-    return cleanText;
+
+    return blocks;
 }
 
-function tryParseJSONObjectWithFallback(payload) {
+function stripCodeBlocks(text) {
+    const blocks = extractValidJsonBlocks(text);
+    if (blocks.length > 0) return blocks[blocks.length - 1];
+    return text.replace(/^['"]|['"]$/g, '');
+}
+
+function tryParseJSONObjectWithFallback(payload, validator) {
     try {
         if (payload.length <= 0) return null;
-        // JSON5 not available in promptfoo runtime, use JSON.parse directly
-        return JSON.parse(payload);
+        return JSON5.parse(payload);
     } catch {
         try {
-            const noCodeBlocks = stripCodeBlocks(payload);
-            const cleanedPayload = noCodeBlocks
-                .replace(/\\n/g, '')
-                .replace(/\\/g, '')
-                .replace(/\/\*[\s\S]*?\*\//g, '')
-                .replace(/<[^>]*>/g, '')
-                .replace(/^`+|`+$/g, '')
-                .trim();
-            return JSON.parse(cleanedPayload);
+            return JSON.parse(payload);
         } catch {
-            return null;
+            try {
+                const validBlocks = extractValidJsonBlocks(payload);
+
+                if (validBlocks.length > 0) {
+                    // If validator provided, return the first block that passes
+                    if (validator) {
+                        for (const block of validBlocks) {
+                            try {
+                                const parsed = JSON.parse(block.trim());
+                                if (validator(parsed)) return parsed;
+                            } catch { /* next block */ }
+                        }
+                    }
+
+                    // No validator OR none passed → last valid block (current behavior)
+                    const lastBlock = validBlocks[validBlocks.length - 1];
+                    try {
+                        return JSON.parse(lastBlock.trim());
+                    } catch { /* fall through to aggressive cleaning */ }
+
+                    // Aggressive cleaning on last block (last resort)
+                    const cleanedPayload = lastBlock
+                        .replace(/\\n/g, '')
+                        .replace(/\\/g, '')
+                        .replace(/\/\*[\s\S]*?\*\//g, '')
+                        .replace(/<[^>]*>/g, '')
+                        .replace(/^`+|`+$/g, '')
+                        .trim();
+                    return JSON.parse(cleanedPayload);
+                }
+
+                // No code blocks → try stripped payload, then aggressive cleaning
+                const noCodeBlocks = stripCodeBlocks(payload);
+                try {
+                    return JSON.parse(noCodeBlocks.trim());
+                } catch { /* fall through to aggressive cleaning */ }
+                const cleanedPayload = noCodeBlocks
+                    .replace(/\\n/g, '')
+                    .replace(/\\/g, '')
+                    .replace(/\/\*[\s\S]*?\*\//g, '')
+                    .replace(/<[^>]*>/g, '')
+                    .replace(/^`+|`+$/g, '')
+                    .trim();
+                return JSON.parse(cleanedPayload);
+            } catch {
+                return null;
+            }
         }
     }
 }
 
-function tryParseJSONObject(payload) {
+function tryParseJSONObject(payload, validator) {
     try {
         const cleanedPayload = payload
             .replace(/\\\\n/g, '\\n')
@@ -62,7 +110,7 @@ function tryParseJSONObject(payload) {
             .replace(/(\r\n|\n|\r)/gm, '')
             .replace(/\\\\"/g, '\\"');
 
-        const parsedData = tryParseJSONObjectWithFallback(cleanedPayload);
+        const parsedData = tryParseJSONObjectWithFallback(cleanedPayload, validator);
 
         if (parsedData && (typeof parsedData === 'object' || Array.isArray(parsedData))) {
             return parsedData;
@@ -89,7 +137,10 @@ function processResponse(response) {
                 .trim();
         }
 
-        const parsedResponse = tryParseJSONObject(cleanResponse);
+        const parsedResponse = tryParseJSONObject(
+            cleanResponse,
+            (obj) => Array.isArray(obj?.codeSuggestions),
+        );
 
         if (!parsedResponse) {
             return null;

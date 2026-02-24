@@ -1,0 +1,392 @@
+import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
+import { E2BSandboxService } from '@libs/code-review/infrastructure/adapters/services/e2bSandbox.service';
+import { PlatformType } from '@libs/core/domain/enums/platform-type.enum';
+
+// Mock e2b SDK (virtual: true because the package may not be installed)
+jest.mock('e2b', () => ({
+    Sandbox: {
+        create: jest.fn(),
+    },
+}), { virtual: true });
+
+jest.mock('@kodus/flow', () => ({
+    createLogger: () => ({
+        log: jest.fn(),
+        error: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn(),
+        info: jest.fn(),
+    }),
+}));
+
+describe('E2BSandboxService', () => {
+    let service: E2BSandboxService;
+    let mockConfigService: any;
+
+    const createService = async (envVars: Record<string, string> = {}) => {
+        mockConfigService = {
+            get: jest.fn((key: string) => envVars[key]),
+        };
+
+        const module: TestingModule = await Test.createTestingModule({
+            providers: [
+                E2BSandboxService,
+                {
+                    provide: ConfigService,
+                    useValue: mockConfigService,
+                },
+            ],
+        }).compile();
+
+        return module.get<E2BSandboxService>(E2BSandboxService);
+    };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    // ─── isAvailable ───────────────────────────────────────────────────────
+
+    describe('isAvailable()', () => {
+        it('should return true when E2B_API_KEY is set', async () => {
+            service = await createService({
+                E2B_API_KEY: 'test-key-123',
+            });
+            expect(service.isAvailable()).toBe(true);
+        });
+
+        it('should return false when E2B_API_KEY is not set', async () => {
+            service = await createService({});
+            expect(service.isAvailable()).toBe(false);
+        });
+    });
+
+    // ─── buildAuthHeader ───────────────────────────────────────────────────
+
+    describe('buildAuthHeader()', () => {
+        beforeEach(async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+        });
+
+        const buildAuthHeader = (platform: PlatformType, token: string) =>
+            (service as any).buildAuthHeader(platform, token);
+
+        it('should use x-access-token for GitHub', () => {
+            const header = buildAuthHeader(PlatformType.GITHUB, 'mytoken');
+            const expectedBase64 = Buffer.from(
+                'x-access-token:mytoken',
+            ).toString('base64');
+            expect(header).toBe(`Authorization: Basic ${expectedBase64}`);
+        });
+
+        it('should use oauth2 for GitLab', () => {
+            const header = buildAuthHeader(PlatformType.GITLAB, 'mytoken');
+            const expectedBase64 = Buffer.from('oauth2:mytoken').toString(
+                'base64',
+            );
+            expect(header).toBe(`Authorization: Basic ${expectedBase64}`);
+        });
+
+    });
+
+    // ─── getPrRefspec ──────────────────────────────────────────────────────
+
+    describe('getPrRefspec()', () => {
+        beforeEach(async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+        });
+
+        const getPrRefspec = (platform: PlatformType, prNumber: number) =>
+            (service as any).getPrRefspec(platform, prNumber);
+
+        it('should return GitHub refspec', () => {
+            expect(getPrRefspec(PlatformType.GITHUB, 42)).toBe(
+                'refs/pull/42/head',
+            );
+        });
+
+        it('should return GitLab refspec', () => {
+            expect(getPrRefspec(PlatformType.GITLAB, 42)).toBe(
+                'refs/merge-requests/42/head',
+            );
+        });
+
+    });
+
+    // ─── createSandboxWithRepo ─────────────────────────────────────────────
+
+    describe('createSandboxWithRepo()', () => {
+        const defaultParams = {
+            cloneUrl: 'https://github.com/org/repo.git',
+            authToken: 'token',
+            branch: 'main',
+            prNumber: 42,
+            platform: PlatformType.GITHUB,
+        };
+
+        const setupSandboxMock = () => {
+            const mockKill = jest.fn().mockResolvedValue(undefined);
+            const mockRun = jest.fn().mockResolvedValue({ stdout: '', stderr: '' });
+            const mockSandbox = {
+                commands: { run: mockRun },
+                kill: mockKill,
+            };
+
+            const { Sandbox } = require('e2b');
+            Sandbox.create.mockResolvedValue(mockSandbox);
+
+            return { mockKill, mockRun, mockSandbox, Sandbox };
+        };
+
+        it('should throw when E2B_API_KEY is not configured', async () => {
+            service = await createService({});
+
+            await expect(
+                service.createSandboxWithRepo(defaultParams),
+            ).rejects.toThrow('E2B_API_KEY is not configured');
+        });
+
+        it('should kill sandbox on setup failure', async () => {
+            service = await createService({ E2B_API_KEY: 'test-key' });
+
+            const { Sandbox } = require('e2b');
+            const mockKill = jest.fn().mockResolvedValue(undefined);
+            const mockRun = jest
+                .fn()
+                .mockRejectedValue(new Error('apt-get failed'));
+
+            Sandbox.create.mockResolvedValue({
+                commands: { run: mockRun },
+                kill: mockKill,
+            });
+
+            await expect(
+                service.createSandboxWithRepo(defaultParams),
+            ).rejects.toThrow('apt-get failed');
+
+            expect(mockKill).toHaveBeenCalledTimes(1);
+        });
+
+        it('should create sandbox with correct apiKey and timeout', async () => {
+            service = await createService({ E2B_API_KEY: 'my-e2b-key' });
+            const { Sandbox } = setupSandboxMock();
+
+            await service.createSandboxWithRepo(defaultParams);
+
+            expect(Sandbox.create).toHaveBeenCalledWith({
+                timeoutMs: 5 * 60 * 1000,
+                apiKey: 'my-e2b-key',
+            });
+        });
+
+        it('should run apt-get install as first command', async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+            const { mockRun } = setupSandboxMock();
+
+            await service.createSandboxWithRepo(defaultParams);
+
+            const firstCall = mockRun.mock.calls[0];
+            expect(firstCall[0]).toContain('apt-get');
+            expect(firstCall[0]).toContain('git');
+            expect(firstCall[0]).toContain('ripgrep');
+            expect(firstCall[1]).toEqual({ timeoutMs: 120_000, user: 'root' });
+        });
+
+        it('should run git commands with correct refspec and auth header', async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+            const { mockRun } = setupSandboxMock();
+
+            await service.createSandboxWithRepo(defaultParams);
+
+            const gitCall = mockRun.mock.calls[1];
+            const gitCommand = gitCall[0];
+
+            // Should init, fetch with refspec, checkout, add remote, block push
+            expect(gitCommand).toContain('git init /home/user/repo');
+            expect(gitCommand).toContain('refs/pull/42/head:pr-head');
+            expect(gitCommand).toContain('git checkout pr-head');
+            expect(gitCommand).toContain(`git remote add origin ${defaultParams.cloneUrl}`);
+            expect(gitCommand).toContain('no-push-allowed');
+
+            // Auth header passed via envs, not embedded in URL
+            const opts = gitCall[1];
+            expect(opts.envs.GIT_AUTH_HEADER).toContain('Authorization: Basic');
+            expect(opts.timeoutMs).toBe(120_000);
+        });
+
+        it('should return remoteCommands and cleanup function', async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+            setupSandboxMock();
+
+            const result = await service.createSandboxWithRepo(defaultParams);
+
+            expect(result.remoteCommands).toBeDefined();
+            expect(typeof result.remoteCommands.grep).toBe('function');
+            expect(typeof result.remoteCommands.read).toBe('function');
+            expect(typeof result.remoteCommands.listDir).toBe('function');
+            expect(typeof result.cleanup).toBe('function');
+        });
+
+    });
+
+    // ─── cleanup ────────────────────────────────────────────────────────────
+
+    describe('cleanup()', () => {
+        it('should call sandbox.kill()', async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+
+            const mockKill = jest.fn().mockResolvedValue(undefined);
+            const { Sandbox } = require('e2b');
+            Sandbox.create.mockResolvedValue({
+                commands: { run: jest.fn().mockResolvedValue({ stdout: '' }) },
+                kill: mockKill,
+            });
+
+            const { cleanup } = await service.createSandboxWithRepo({
+                cloneUrl: 'https://github.com/org/repo.git',
+                authToken: 'token',
+                branch: 'main',
+                prNumber: 1,
+                platform: PlatformType.GITHUB,
+            });
+
+            await cleanup();
+
+            expect(mockKill).toHaveBeenCalledTimes(1);
+        });
+
+        it('should swallow sandbox.kill() errors (logged internally)', async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+
+            const mockKill = jest.fn().mockRejectedValue(new Error('kill failed'));
+            const { Sandbox } = require('e2b');
+            Sandbox.create.mockResolvedValue({
+                commands: { run: jest.fn().mockResolvedValue({ stdout: '' }) },
+                kill: mockKill,
+            });
+
+            const { cleanup } = await service.createSandboxWithRepo({
+                cloneUrl: 'https://github.com/org/repo.git',
+                authToken: 'token',
+                branch: 'main',
+                prNumber: 1,
+                platform: PlatformType.GITHUB,
+            });
+
+            // Should NOT throw — cleanup wraps kill() in try/catch
+            await expect(cleanup()).resolves.toBeUndefined();
+        });
+    });
+
+    // ─── buildRemoteCommands ────────────────────────────────────────────────
+
+    describe('buildRemoteCommands()', () => {
+        let mockRun: jest.Mock;
+        let remoteCommands: any;
+
+        beforeEach(async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+
+            mockRun = jest.fn().mockResolvedValue({ stdout: 'output' });
+            const { Sandbox } = require('e2b');
+            Sandbox.create.mockResolvedValue({
+                commands: { run: mockRun },
+                kill: jest.fn().mockResolvedValue(undefined),
+            });
+
+            const result = await service.createSandboxWithRepo({
+                cloneUrl: 'https://github.com/org/repo.git',
+                authToken: 'token',
+                branch: 'main',
+                prNumber: 1,
+                platform: PlatformType.GITHUB,
+            });
+            remoteCommands = result.remoteCommands;
+
+            // Clear calls from sandbox setup (apt-get, git commands)
+            mockRun.mockClear();
+        });
+
+        describe('grep()', () => {
+            it('should run rg with pattern and resolved path', async () => {
+                const result = await remoteCommands.grep('myFunc\\(', 'src/index.ts');
+
+                expect(mockRun).toHaveBeenCalledWith(
+                    "rg --no-heading -n 'myFunc\\(' '/home/user/repo/src/index.ts'",
+                    { timeoutMs: 30_000 },
+                );
+                expect(result).toBe('output');
+            });
+
+            it('should append --glob when glob argument is provided', async () => {
+                await remoteCommands.grep('pattern', 'src', '*.ts');
+
+                expect(mockRun).toHaveBeenCalledWith(
+                    "rg --no-heading -n 'pattern' '/home/user/repo/src' --glob '*.ts'",
+                    { timeoutMs: 30_000 },
+                );
+            });
+
+            it('should reject absolute paths', async () => {
+                await expect(
+                    remoteCommands.grep('pattern', '/tmp/other'),
+                ).rejects.toThrow('Absolute paths are not allowed');
+            });
+        });
+
+        describe('read()', () => {
+            it('should run sed with start and end lines', async () => {
+                const result = await remoteCommands.read('src/app.ts', 10, 20);
+
+                expect(mockRun).toHaveBeenCalledWith(
+                    "sed -n '10,20p' '/home/user/repo/src/app.ts'",
+                    { timeoutMs: 10_000 },
+                );
+                expect(result).toBe('output');
+            });
+        });
+
+        describe('listDir()', () => {
+            it('should run find with maxDepth', async () => {
+                const result = await remoteCommands.listDir('src', 3);
+
+                expect(mockRun).toHaveBeenCalledWith(
+                    "find '/home/user/repo/src' -maxdepth 3 -type f",
+                    { timeoutMs: 30_000 },
+                );
+                expect(result).toBe('output');
+            });
+        });
+    });
+
+    // ─── resolvePath ────────────────────────────────────────────────────────
+
+    describe('resolvePath()', () => {
+        beforeEach(async () => {
+            service = await createService({ E2B_API_KEY: 'key' });
+        });
+
+        const resolvePath = (path: string) =>
+            (service as any).resolvePath(path);
+
+        it('should prefix relative paths with REPO_DIR', () => {
+            expect(resolvePath('src/index.ts')).toBe(
+                '/home/user/repo/src/index.ts',
+            );
+        });
+
+        it('should reject absolute paths', () => {
+            expect(() => resolvePath('/tmp/somefile')).toThrow(
+                'Absolute paths are not allowed',
+            );
+        });
+
+        it('should reject path traversal with ".."', () => {
+            expect(() => resolvePath('../etc/passwd')).toThrow(
+                'Path traversal using ".." is not allowed',
+            );
+        });
+
+    });
+});
