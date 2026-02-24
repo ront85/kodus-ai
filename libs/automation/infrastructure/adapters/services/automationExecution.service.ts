@@ -108,9 +108,14 @@ export class AutomationExecutionService implements IAutomationExecutionService {
     findPullRequestExecutionsByOrganizationAndTeam(params: {
         organizationAndTeamData: OrganizationAndTeamData;
         repositoryIds?: string[];
+        repositoryName?: string;
+        pullRequestNumber?: number;
+        pullRequestTitle?: string;
+        prFilters?: Array<{ number: number; repositoryId: string }>;
         skip?: number;
         take?: number;
         order?: 'ASC' | 'DESC';
+        includeTotal?: boolean;
     }): Promise<{ data: AutomationExecutionEntity[]; total: number }> {
         return this.automationExecutionRepository.findPullRequestExecutionsByOrganizationAndTeam(
             params,
