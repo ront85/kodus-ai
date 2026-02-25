@@ -1,48 +1,35 @@
 import { SkillLoaderService } from './skill-loader.service';
 
 describe('SkillLoaderService', () => {
-    it('should keep filesystem bundle when there is no structured override', async () => {
-        const queryBuilder = {
-            where: jest.fn().mockReturnThis(),
-            andWhere: jest.fn().mockReturnThis(),
-            orderBy: jest.fn().mockReturnThis(),
-            getOne: jest.fn().mockResolvedValue(null),
-        };
+    it('loads instructions from SKILL.md for business-rules-validation', () => {
+        const service = new SkillLoaderService();
 
-        const skillOverrideRepository = {
-            createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
-        };
-
-        const parametersService = {
-            find: jest.fn().mockResolvedValue([
-                {
-                    version: 1,
-                    configValue: {
-                        content:
-                            '---\nname: Business Rules Validation\n---\nlegacy override',
-                    },
-                },
-            ]),
-        };
-
-        const LoaderCtor = SkillLoaderService as any;
-        const service: SkillLoaderService =
-            LoaderCtor.length >= 2
-                ? new LoaderCtor(
-                      parametersService as any,
-                      skillOverrideRepository as any,
-                  )
-                : new LoaderCtor(skillOverrideRepository as any);
-
-        const bundle = await service.getInstructionsBundle(
+        const instructions = service.loadInstructions(
             'business-rules-validation',
-            {
-                teamId: 'team-1',
-            } as any,
         );
 
-        expect(bundle.source).toBe('filesystem');
-        expect(bundle.editableSource).toBe('default');
-        expect(parametersService.find).not.toHaveBeenCalled();
+        expect(instructions).toContain('# Business Rules Gap Analysis');
+        expect(instructions).not.toContain('## Reference Material');
+    });
+
+    it('loads skill metadata from SKILL.md frontmatter', () => {
+        const service = new SkillLoaderService();
+
+        const meta =
+            service.loadSkillMetaFromFilesystem('business-rules-validation');
+
+        expect(meta.name).toBe('business-rules-validation');
+        expect(meta.version).toBe('1.0.0');
+        expect(meta.allowedTools).toEqual([
+            'KODUS_GET_PULL_REQUEST',
+            'KODUS_GET_PULL_REQUEST_DIFF',
+        ]);
+        expect(meta.requiredMcps).toEqual([
+            {
+                category: 'task-management',
+                label: 'Task Management',
+                examples: 'Jira, Linear, Notion, ClickUp',
+            },
+        ]);
     });
 });

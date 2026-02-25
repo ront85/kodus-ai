@@ -15,35 +15,6 @@ export type SkillMeta = {
     requiredMcps?: SkillRequiredMcp[];
 };
 
-export type SkillEditableContent = {
-    schemaVersion: 1;
-    editable: {
-        businessContext: string;
-        orgRules: string[];
-        qualityThresholds: {
-            empty: string;
-            minimal: string;
-            partial: string;
-            complete: string;
-        };
-        reportStyle: {
-            tone: string;
-            language: string;
-        };
-        examples: string[];
-    };
-};
-
 export type SkillInstructions = {
     instructions: string;
-    source: 'db' | 'filesystem';
-    editable: SkillEditableContent;
-    defaultEditable: SkillEditableContent;
-    editableSource: 'db' | 'default';
-};
-
-export type SkillVersion = {
-    version: number;
-    createdAt?: string;
-    updatedAt?: string;
 };

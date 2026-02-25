@@ -32,7 +32,6 @@ import { ResolveConfigStage } from '@libs/code-review/pipeline/stages/resolve-co
 import { ValidateNewCommitsStage } from '@libs/code-review/pipeline/stages/validate-new-commits.stage';
 import { ValidatePrerequisitesStage } from '@libs/code-review/pipeline/stages/validate-prerequisites.stage';
 import { ValidateSuggestionsStage } from '@libs/code-review/pipeline/stages/validate-suggestions.stage';
-import { BusinessLogicValidationStage } from '@libs/code-review/pipeline/stages/business-logic-validation.stage';
 
 @Injectable()
 export class CodeReviewPipelineStrategyEE implements IPipelineStrategy<CodeReviewPipelineContext> {
@@ -51,7 +50,6 @@ export class CodeReviewPipelineStrategyEE implements IPipelineStrategy<CodeRevie
         private readonly codeAnalysisASTStage: CodeAnalysisASTStage,
         private readonly processFilesPrLevelReviewStage: ProcessFilesPrLevelReviewStage,
         private readonly processFilesReview: ProcessFilesReview,
-        private readonly businessLogicValidationStage: BusinessLogicValidationStage,
         private readonly createPrLevelCommentsStage: CreatePrLevelCommentsStage,
         private readonly createFileCommentsStage: CreateFileCommentsStage,
         private readonly codeAnalysisASTCleanupStage: CodeAnalysisASTCleanupStage,
@@ -79,7 +77,6 @@ export class CodeReviewPipelineStrategyEE implements IPipelineStrategy<CodeRevie
             this.kodyFineTuningStage,
             this.processFilesPrLevelReviewStage,
             this.processFilesReview,
-            this.businessLogicValidationStage,
             this.createPrLevelCommentsStage,
             this.validateSuggestionsStage,
             this.createFileCommentsStage,

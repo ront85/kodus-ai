@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Button } from "@components/ui/button";
 import { Checkbox } from "@components/ui/checkbox";
 import { FormControl } from "@components/ui/form-control";
@@ -14,19 +14,9 @@ import type { CodeReviewLabel } from "@services/parameters/types";
 import { Controller, useFormContext } from "react-hook-form";
 import { safeArray } from "src/core/utils/safe-array";
 import { useCurrentConfigLevel } from "src/app/(app)/settings/_hooks";
-import { Settings2Icon } from "lucide-react";
 
 import { FormattedConfigLevel, type CodeReviewFormType } from "../../../_types";
 import { OverrideIndicatorForm } from "../../../_components/override";
-import { SkillEditorModal } from "./skill-editor-modal";
-
-/**
- * Maps a review category type to its configurable skill.
- * Add an entry here whenever a new category becomes skill-powered.
- */
-const CATEGORY_SKILLS: Record<string, { skillName: string }> = {
-    business_logic: { skillName: "business-rules-validation" },
-};
 
 interface CheckboxCardOption {
     value: string;
@@ -37,7 +27,6 @@ interface CheckboxCardOption {
 export const AnalysisTypes = () => {
     const currentLevel = useCurrentConfigLevel();
     const form = useFormContext<CodeReviewFormType>();
-    const [configuringCategory, setConfiguringCategory] = useState<string | null>(null);
     const codeReviewVersion = form.watch("codeReviewVersion.value") || "v2";
     const { data: labels = [], isLoading } =
         useGetCodeReviewLabels(codeReviewVersion);
@@ -87,7 +76,6 @@ export const AnalysisTypes = () => {
     }
 
     return (
-        <>
         <Controller
             name="reviewOptions"
             control={form.control}
@@ -133,65 +121,42 @@ export const AnalysisTypes = () => {
                                 field.onChange(updatedOptions);
                             }}>
                             {reviewOptionsOptions.map((option) => {
-                                const hasSkill = Boolean(
-                                    CATEGORY_SKILLS[option.value],
-                                );
                                 const isEnabled =
                                     field.value?.[option.value]?.value || false;
-                                const showSkillButton = hasSkill && isEnabled;
                                 return (
-                                    <div
+                                    <ToggleGroup.ToggleGroupItem
                                         key={option.value}
-                                        className="relative">
-                                        <ToggleGroup.ToggleGroupItem
-                                            asChild
-                                            value={option.value}>
-                                            <Button
-                                                size="lg"
-                                                variant="helper"
-                                                className={`w-full items-start py-5${showSkillButton ? " pr-12" : ""}`}>
-                                                <div className="flex w-full flex-row justify-between gap-6">
-                                                    <div className="flex min-w-0 flex-col gap-2">
-                                                        <div className="flex items-center gap-2">
-                                                            <Heading
-                                                                variant="h3"
-                                                                className="truncate">
-                                                                {option.name}
-                                                            </Heading>
-                                                            <OverrideIndicatorForm
-                                                                fieldName={`reviewOptions.${option.value}`}
-                                                            />
-                                                        </div>
-
-                                                        <p className="text-text-secondary text-xs">
-                                                            {option.description}
-                                                        </p>
+                                        asChild
+                                        value={option.value}>
+                                        <Button
+                                            size="lg"
+                                            variant="helper"
+                                            className="w-full items-start py-5">
+                                            <div className="flex w-full flex-row justify-between gap-6">
+                                                <div className="flex min-w-0 flex-col gap-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <Heading
+                                                            variant="h3"
+                                                            className="truncate">
+                                                            {option.name}
+                                                        </Heading>
+                                                        <OverrideIndicatorForm
+                                                            fieldName={`reviewOptions.${option.value}`}
+                                                        />
                                                     </div>
 
-                                                    <Checkbox
-                                                        decorative
-                                                        checked={isEnabled}
-                                                    />
+                                                    <p className="text-text-secondary text-xs">
+                                                        {option.description}
+                                                    </p>
                                                 </div>
-                                            </Button>
-                                        </ToggleGroup.ToggleGroupItem>
 
-                                        {showSkillButton && (
-                                            <Button
-                                                size="icon-sm"
-                                                variant="cancel"
-                                                type="button"
-                                                aria-label={`Configure ${option.name}`}
-                                                className="absolute bottom-0 right-3 top-0 my-auto h-fit"
-                                                onClick={() =>
-                                                    setConfiguringCategory(
-                                                        option.value,
-                                                    )
-                                                }>
-                                                <Settings2Icon />
-                                            </Button>
-                                        )}
-                                    </div>
+                                                <Checkbox
+                                                    decorative
+                                                    checked={isEnabled}
+                                                />
+                                            </div>
+                                        </Button>
+                                    </ToggleGroup.ToggleGroupItem>
                                 );
                             })}
                         </ToggleGroup.Root>
@@ -199,17 +164,5 @@ export const AnalysisTypes = () => {
                 </FormControl.Root>
             )}
         />
-
-        {configuringCategory && CATEGORY_SKILLS[configuringCategory] && (
-            <SkillEditorModal
-                skillName={CATEGORY_SKILLS[configuringCategory].skillName}
-                title={reviewOptionsOptions.find((o) => o.value === configuringCategory)?.name ?? configuringCategory}
-                open={true}
-                onOpenChange={(open) => {
-                    if (!open) setConfiguringCategory(null);
-                }}
-            />
-        )}
-        </>
     );
 };

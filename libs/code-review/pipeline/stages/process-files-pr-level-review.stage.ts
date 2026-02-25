@@ -95,6 +95,14 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                 businessLogicSettled[0].status === 'fulfilled'
                     ? businessLogicSettled[0].value
                     : null;
+            const businessLogicError =
+                businessLogicSettled[0].status === 'rejected'
+                    ? this.settledError(
+                          businessLogicSettled[0],
+                          'BusinessLogicValidation',
+                          context,
+                      )
+                    : undefined;
 
             if (businessLogicSettled[0].status === 'rejected') {
                 this.logger.error({
@@ -105,7 +113,13 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                 });
             }
 
-            return businessLogicContext ?? context;
+            if (!businessLogicError) {
+                return businessLogicContext ?? context;
+            }
+
+            return this.updateContext(businessLogicContext ?? context, (draft) => {
+                draft.errors.push(businessLogicError);
+            });
         }
 
         const [kodyRulesSettled, crossFileSettled, businessLogicSettled] =
@@ -129,6 +143,14 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
             businessLogicSettled.status === 'fulfilled'
                 ? businessLogicSettled.value
                 : null;
+        const businessLogicError =
+            businessLogicSettled.status === 'rejected'
+                ? this.settledError(
+                      businessLogicSettled,
+                      'BusinessLogicValidation',
+                      context,
+                  )
+                : undefined;
 
         if (businessLogicSettled.status === 'rejected') {
             this.logger.error({
@@ -169,6 +191,10 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
 
                 if (crossFileResult?.error) {
                     draft.errors.push(crossFileResult.error);
+                }
+
+                if (businessLogicError) {
+                    draft.errors.push(businessLogicError);
                 }
             },
         );
