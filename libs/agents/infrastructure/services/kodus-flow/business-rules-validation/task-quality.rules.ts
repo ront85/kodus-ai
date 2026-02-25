@@ -27,9 +27,13 @@ export function getTaskContextMissingInfoMessage(
     taskQuality: TaskQuality | undefined,
 ): string {
     const quality = normalizeTaskQuality(taskQuality);
-    return quality === 'MINIMAL'
-        ? buildMinimalContextMessage()
-        : buildEmptyContextMessage();
+    if (quality === 'MINIMAL') {
+        return buildMinimalContextMessage();
+    }
+    if (quality === 'EMPTY') {
+        return buildEmptyContextMessage();
+    }
+    return '';
 }
 
 export const TASK_QUALITY_CLASSIFICATION_GUIDE =

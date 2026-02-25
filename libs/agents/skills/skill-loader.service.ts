@@ -332,6 +332,17 @@ export class SkillLoaderService {
         skillName: string,
         fileName: string,
     ): string | null {
+        if (
+            skillName.includes('..') ||
+            skillName.includes('/') ||
+            skillName.includes('\\')
+        ) {
+            this.logger.warn(
+                `[SkillLoader] potential path traversal attempt for skill '${skillName}'.`,
+            );
+            return null;
+        }
+
         for (const baseDir of this.getSkillsBaseDirCandidates()) {
             const candidate = path.join(baseDir, skillName, fileName);
             if (fs.existsSync(candidate)) {
@@ -350,6 +361,17 @@ export class SkillLoaderService {
         skillName: string,
         directoryName: string,
     ): string | null {
+        if (
+            skillName.includes('..') ||
+            skillName.includes('/') ||
+            skillName.includes('\\')
+        ) {
+            this.logger.warn(
+                `[SkillLoader] potential path traversal attempt for skill '${skillName}'.`,
+            );
+            return null;
+        }
+
         for (const baseDir of this.getSkillsBaseDirCandidates()) {
             const candidate = path.join(baseDir, skillName, directoryName);
             if (fs.existsSync(candidate)) {

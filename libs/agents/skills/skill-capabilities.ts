@@ -24,13 +24,18 @@ export function resolveCapabilityTools(capabilities?: string[]): {
     const unknownCapabilities: string[] = [];
 
     for (const capability of capabilities) {
-        const tools = SKILL_CAPABILITY_TOOL_MAP[capability];
-        if (!tools) {
+        if (
+            Object.prototype.hasOwnProperty.call(
+                SKILL_CAPABILITY_TOOL_MAP,
+                capability,
+            )
+        ) {
+            const tools = SKILL_CAPABILITY_TOOL_MAP[capability];
+            for (const tool of tools) {
+                resolvedTools.add(tool);
+            }
+        } else {
             unknownCapabilities.push(capability);
-            continue;
-        }
-        for (const tool of tools) {
-            resolvedTools.add(tool);
         }
     }
 
