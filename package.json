@@ -234,7 +234,6 @@
         "ramda": "^0.32.0",
         "reflect-metadata": "^0.2.2",
         "rxjs": "^7.8.2",
-        "simple-git": "^3.31.1",
         "source-map-support": "^0.5.21",
         "swagger-ui-express": "^5.0.1",
         "tiktoken": "^1.0.22",

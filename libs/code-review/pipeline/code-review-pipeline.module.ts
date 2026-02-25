@@ -1,7 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 
 // Stages
-import { BusinessLogicValidationStage } from './stages/business-logic-validation.stage';
 import { AggregateResultsStage } from './stages/aggregate-result.stage';
 import { CreateFileCommentsStage } from './stages/create-file-comments.stage';
 import { CreatePrLevelCommentsStage } from './stages/create-pr-level-comments.stage';
@@ -108,7 +107,6 @@ import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.stra
         AggregateResultsStage,
         UpdateCommentsAndGenerateSummaryStage,
         RequestChangesOrApproveStage,
-        BusinessLogicValidationStage,
         ValidateSuggestionsStage,
 
         // EE Stages

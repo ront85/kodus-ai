@@ -1,8 +1,14 @@
-import { createLogger } from '@kodus/flow';
+import { createLogger, createThreadId } from '@kodus/flow';
+import { BusinessRulesValidationAgentProvider } from '@libs/agents/infrastructure/services/kodus-flow/business-rules-validation/businessRulesValidationAgent';
+import { LabelType } from '@libs/common/utils/codeManagement/labels';
+import { SeverityLevel } from '@libs/common/utils/enums/severityLevel.enum';
 import { BasePipelineStage } from '@libs/core/infrastructure/pipeline/abstracts/base-stage.abstract';
-import { PipelineError } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-context.interface';
-import { Inject, Injectable } from '@nestjs/common';
 import { StageVisibility } from '@libs/core/infrastructure/pipeline/enums/stage-visibility.enum';
+import { PipelineError } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-context.interface';
+import { DeliveryStatus } from '@libs/platformData/domain/pullRequests/enums/deliveryStatus.enum';
+import { Inject, Injectable } from '@nestjs/common';
+import * as crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 import {
     CROSS_FILE_ANALYSIS_SERVICE_TOKEN,
@@ -19,7 +25,6 @@ import {
 } from '@libs/ee/codeBase/kodyRulesPrLevelAnalysis.service';
 import { KodyRulesScope } from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
 import { CodeReviewPipelineContext } from '../context/code-review-pipeline.context';
-import { BusinessLogicValidationStage } from './business-logic-validation.stage';
 
 @Injectable()
 export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReviewPipelineContext> {
@@ -27,6 +32,15 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
     readonly stageName = 'PRLevelReviewStage';
     readonly label = 'Reviewing PR Level';
     readonly visibility = StageVisibility.PRIMARY;
+    private static readonly REQUIREMENT_KEYWORDS = [
+        'requirement',
+        'acceptance criteria',
+        'user story',
+        'given',
+        'when',
+        'then',
+    ];
+    private static readonly BUSINESS_LOGIC_TIMEOUT_MS = 300_000;
 
     constructor(
         @Inject(KODY_RULES_PR_LEVEL_ANALYSIS_SERVICE_TOKEN)
@@ -35,7 +49,7 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
         @Inject(CROSS_FILE_ANALYSIS_SERVICE_TOKEN)
         private readonly crossFileAnalysisService: CrossFileAnalysisService,
 
-        private readonly businessLogicValidationStage: BusinessLogicValidationStage,
+        private readonly businessRulesValidationAgentProvider: BusinessRulesValidationAgentProvider,
     ) {
         super();
     }
@@ -363,7 +377,102 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
     private async runBusinessLogicValidation(
         context: CodeReviewPipelineContext,
     ): Promise<CodeReviewPipelineContext> {
-        return this.businessLogicValidationStage.execute(context);
+        if (!this.shouldRunBusinessLogicValidation(context)) {
+            this.logger.log({
+                message: `Skipping BusinessLogicValidation for PR#${context.pullRequest?.number}`,
+                context: this.stageName,
+                metadata: {
+                    organizationId:
+                        context.organizationAndTeamData?.organizationId,
+                    prNumber: context.pullRequest?.number,
+                    status: 'skipped',
+                },
+            });
+            return this.updateContext(context, (draft) => {
+                draft.businessLogicResults = [];
+            });
+        }
+
+        const prBody = context.pullRequest.body ?? '';
+        const prBodyHash = this.computePrBodyHash(prBody);
+        const signals = this.detectSignals(prBody);
+
+        this.logger.log({
+            message: `Starting BusinessLogicValidation for PR#${context.pullRequest.number}`,
+            context: this.stageName,
+            metadata: {
+                organizationId: context.organizationAndTeamData?.organizationId,
+                prNumber: context.pullRequest.number,
+                signals,
+                status: 'triggered',
+            },
+        });
+
+        try {
+            const prepareContext = {
+                userQuestion: '@kody -v business-logic',
+                pullRequestNumber: context.pullRequest.number,
+                repository: context.repository,
+                pullRequestDescription: prBody,
+                platformType: context.platformType,
+                headRef: context.pullRequest?.head?.ref,
+                baseRef: context.pullRequest?.base?.ref,
+                defaultBranch: context.pullRequest?.base?.ref,
+            };
+            const thread = this.createBusinessLogicThread(context);
+
+            const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(
+                    () => reject(new Error('BusinessLogicValidation timeout')),
+                    ProcessFilesPrLevelReviewStage.BUSINESS_LOGIC_TIMEOUT_MS,
+                ),
+            );
+
+            const agentPromise =
+                this.businessRulesValidationAgentProvider.execute({
+                    organizationAndTeamData: context.organizationAndTeamData,
+                    prepareContext,
+                    thread,
+                });
+
+            const result = await Promise.race([agentPromise, timeoutPromise]);
+            const hasGap = this.resultHasGap(result);
+
+            if (!hasGap) {
+                return this.updateContext(context, (draft) => {
+                    draft.businessLogicResults = [];
+                    draft.businessLogicPrBodyHash = prBodyHash;
+                });
+            }
+
+            const suggestion: ISuggestionByPR = {
+                id: uuidv4(),
+                suggestionContent: result,
+                oneSentenceSummary:
+                    'Business logic gap detected based on PR requirements.',
+                label: LabelType.BUSINESS_LOGIC,
+                severity: SeverityLevel.MEDIUM,
+                deliveryStatus: DeliveryStatus.NOT_SENT,
+            };
+
+            return this.updateContext(context, (draft) => {
+                draft.businessLogicResults = [suggestion];
+                draft.businessLogicPrBodyHash = prBodyHash;
+            });
+        } catch (error) {
+            const pipelineError: PipelineError = {
+                stage: this.stageName,
+                substage: 'BusinessRulesValidationAgent',
+                error:
+                    error instanceof Error ? error : new Error(String(error)),
+                metadata: { prNumber: context.pullRequest.number },
+            };
+
+            return this.updateContext(context, (draft) => {
+                draft.businessLogicResults = [];
+                draft.errors.push(pipelineError);
+            });
+        }
     }
 
     private settledError(
@@ -380,5 +489,109 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                     : new Error(String(settled.reason)),
             metadata: { prNumber: context.pullRequest.number },
         };
+    }
+
+    private shouldRunBusinessLogicValidation(
+        context: CodeReviewPipelineContext,
+    ): boolean {
+        if (!context.codeReviewConfig?.reviewOptions?.business_logic) {
+            return false;
+        }
+
+        const prBody = context.pullRequest?.body ?? '';
+        if (!this.hasBusinessSignals(prBody)) {
+            return false;
+        }
+
+        const currentHash = this.computePrBodyHash(prBody);
+        const lastHash =
+            (context.pipelineMetadata?.lastExecution as any)?.businessLogicHash;
+        if (lastHash && lastHash === currentHash) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private hasBusinessSignals(body: string): boolean {
+        return (
+            this.detectTicketKeys(body).length > 0 ||
+            this.detectTaskLinks(body).length > 0 ||
+            this.detectRequirementKeywords(body).length > 0
+        );
+    }
+
+    private detectSignals(body: string): Record<string, string[]> {
+        return {
+            ticketKeys: this.detectTicketKeys(body),
+            taskLinks: this.detectTaskLinks(body),
+            requirementKeywords: this.detectRequirementKeywords(body),
+        };
+    }
+
+    private detectTicketKeys(body: string): string[] {
+        const matches = body.match(/[A-Z]{2,}-\d+/g);
+        return matches ?? [];
+    }
+
+    private detectTaskLinks(body: string): string[] {
+        const matches = body.match(/https?:\/\/[^\s)>\]"']+/g);
+        return matches ?? [];
+    }
+
+    private detectRequirementKeywords(body: string): string[] {
+        const lower = body.toLowerCase();
+        return ProcessFilesPrLevelReviewStage.REQUIREMENT_KEYWORDS.filter((kw) =>
+            lower.includes(kw),
+        );
+    }
+
+    private computePrBodyHash(body: string): string {
+        return crypto.createHash('sha256').update(body).digest('hex');
+    }
+
+    private resultHasGap(result: string): boolean {
+        if (!result || result.trim().length === 0) {
+            return false;
+        }
+
+        const lower = result.toLowerCase();
+        const noGapIndicators = [
+            'no gaps',
+            'no issues',
+            'fully compliant',
+            'no business logic gap',
+            'all requirements met',
+            'implementation is complete',
+            'no violations',
+            '✅ compliant',
+            'status: ✅',
+            '"needsmoreinfo": false',
+        ];
+        return !noGapIndicators.some((indicator) => lower.includes(indicator));
+    }
+
+    private createBusinessLogicThread(context: CodeReviewPipelineContext) {
+        try {
+            const identifiers: Record<string, string | number> = {
+                organizationId: context.organizationAndTeamData.organizationId,
+                teamId: context.organizationAndTeamData.teamId,
+                repositoryId: context.repository.id,
+                pullRequestNumber: context.pullRequest.number,
+            };
+
+            if (context.userGitId) {
+                identifiers.userId = context.userGitId;
+            }
+
+            return createThreadId(identifiers, { prefix: 'vbl' });
+        } catch (error) {
+            this.logger.warn({
+                message: `Failed to create business logic thread for PR#${context.pullRequest.number}`,
+                context: this.stageName,
+                error,
+            });
+            return undefined;
+        }
     }
 }

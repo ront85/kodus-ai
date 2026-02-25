@@ -128,7 +128,7 @@ export interface CodeReviewPipelineContext extends PipelineContext {
 
     /**
      * SHA-256 hash of the PR body at the time of the last successful business logic
-     * validation. Written by BusinessLogicValidationStage and persisted to
+     * validation. Written by ProcessFilesPrLevelReviewStage and persisted to
      * dataExecution.businessLogicHash to enable dedup on subsequent runs.
      */
     businessLogicPrBodyHash?: string;
