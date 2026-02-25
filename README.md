@@ -17,7 +17,7 @@ AI Code Review with Full Control Over Model Choice and Costs.
 [Website](https://kodus.io) · [Community](https://discord.gg/6WbWrRbsH7) · [Docs](https://docs.kodus.io) · [CLI Docs](https://docs.kodus.io/how_to_use/en/cli/overview) · **[Try Kodus Cloud »](https://app.kodus.io)**
 · **[Self-Host Guide](https://docs.kodus.io/how_to_deploy/en/deploy_kodus/generic_vm)**
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template/YOUR_TEMPLATE_SLUG)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/kodus-selfhosted?referralCode=0Dmi0j&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 ## Why Teams Choose Kodus
 
@@ -39,7 +39,7 @@ AI Code Review with Full Control Over Model Choice and Costs.
 
 ### Self-Hosted Edition
 
-- [Deploy with Railway Template](https://railway.com/new/template/YOUR_TEMPLATE_SLUG)
+- [Deploy with Railway Template](https://railway.com/deploy/kodus-selfhosted?referralCode=0Dmi0j&utm_medium=integration&utm_source=template&utm_campaign=generic)
 - [Installation Guide (CLI)](https://docs.kodus.io/how_to_deploy/en/deploy_kodus/generic_vm)
 - [Installation Guide (Docker)](https://docs.kodus.io/how_to_deploy/en/deploy_kodus/generic_vm)
 - [Join Discord for setup help](https://discord.gg/6WbWrRbsH7)
