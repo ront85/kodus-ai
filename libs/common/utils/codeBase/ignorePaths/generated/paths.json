@@ -1103,7 +1103,6 @@
         "**/backup/**",
         "**/archive/**",
         "**/deploy/**",
-        "**/staging/**",
         "**/prod/**",
         "**/bundler.js",
         "**/build.js"
