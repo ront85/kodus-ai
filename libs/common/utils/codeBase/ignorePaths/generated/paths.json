@@ -941,7 +941,6 @@
         "**/public/uploads",
         "**/instance/*",
         "**/media",
-        "**/[Ll]ibrary/**",
         "**/[Tt]emp/**",
         "**/[Bb]uild/**",
         "**/[Bb]uilds/**",
