@@ -35,6 +35,19 @@ interface WorkflowJobMessage {
     [key: string]: unknown;
 }
 
+const createErrorHandlerWithFallback = (dlqRoutingKey: string) => {
+    return (channel: any, msg: ConsumeMessage, _err: any) => {
+        if (RabbitMQErrorHandler.instance) {
+            return RabbitMQErrorHandler.instance.handle(channel, msg, _err, {
+                dlqRoutingKey,
+            });
+        }
+        if (msg) {
+            channel.ack(msg);
+        }
+    };
+};
+
 @Injectable()
 export class WorkflowJobConsumer implements OnApplicationShutdown {
     private readonly logger = createLogger(WorkflowJobConsumer.name);
@@ -63,11 +76,9 @@ export class WorkflowJobConsumer implements OnApplicationShutdown {
         routingKey: 'workflow.jobs.*.WEBHOOK_PROCESSING',
         queue: 'workflow.jobs.webhook.queue',
         errorBehavior: MessageHandlerErrorBehavior.ACK,
-        errorHandler: (channel, msg, err) =>
-            RabbitMQErrorHandler.instance?.handle(channel, msg, err, {
-                dlqRoutingKey: 'workflow.job.failed',
-            }),
+        errorHandler: createErrorHandlerWithFallback('workflow.job.failed'),
         queueOptions: {
+            channel: 'channel-webhook',
             arguments: {
                 'x-queue-type': 'quorum',
                 'x-dead-letter-exchange': 'workflow.exchange.dlx',
@@ -85,11 +96,9 @@ export class WorkflowJobConsumer implements OnApplicationShutdown {
         routingKey: 'workflow.jobs.*.WEBHOOK_PROCESSING',
         queue: 'workflow.jobs.webhook.queue',
         errorBehavior: MessageHandlerErrorBehavior.ACK,
-        errorHandler: (channel, msg, err) =>
-            RabbitMQErrorHandler.instance?.handle(channel, msg, err, {
-                dlqRoutingKey: 'workflow.job.failed',
-            }),
+        errorHandler: createErrorHandlerWithFallback('workflow.job.failed'),
         queueOptions: {
+            channel: 'channel-webhook',
             arguments: {
                 'x-queue-type': 'quorum',
                 'x-dead-letter-exchange': 'workflow.exchange.dlx',
@@ -117,11 +126,9 @@ export class WorkflowJobConsumer implements OnApplicationShutdown {
         routingKey: 'workflow.jobs.*.CODE_REVIEW',
         queue: 'workflow.jobs.code_review.queue',
         errorBehavior: MessageHandlerErrorBehavior.ACK,
-        errorHandler: (channel, msg, err) =>
-            RabbitMQErrorHandler.instance?.handle(channel, msg, err, {
-                dlqRoutingKey: 'workflow.job.failed',
-            }),
+        errorHandler: createErrorHandlerWithFallback('workflow.job.failed'),
         queueOptions: {
+            channel: 'channel-code-review',
             arguments: {
                 'x-queue-type': 'quorum',
                 'x-dead-letter-exchange': 'workflow.exchange.dlx',
@@ -134,11 +141,9 @@ export class WorkflowJobConsumer implements OnApplicationShutdown {
         routingKey: 'workflow.jobs.*.CODE_REVIEW',
         queue: 'workflow.jobs.code_review.queue',
         errorBehavior: MessageHandlerErrorBehavior.ACK,
-        errorHandler: (channel, msg, err) =>
-            RabbitMQErrorHandler.instance?.handle(channel, msg, err, {
-                dlqRoutingKey: 'workflow.job.failed',
-            }),
+        errorHandler: createErrorHandlerWithFallback('workflow.job.failed'),
         queueOptions: {
+            channel: 'channel-code-review',
             arguments: {
                 'x-queue-type': 'quorum',
                 'x-dead-letter-exchange': 'workflow.exchange.dlx',
@@ -166,11 +171,9 @@ export class WorkflowJobConsumer implements OnApplicationShutdown {
         routingKey: 'workflow.jobs.*.CHECK_SUGGESTION_IMPLEMENTATION',
         queue: 'workflow.jobs.check_implementation.queue',
         errorBehavior: MessageHandlerErrorBehavior.ACK,
-        errorHandler: (channel, msg, err) =>
-            RabbitMQErrorHandler.instance?.handle(channel, msg, err, {
-                dlqRoutingKey: 'workflow.job.failed',
-            }),
+        errorHandler: createErrorHandlerWithFallback('workflow.job.failed'),
         queueOptions: {
+            channel: 'channel-check-implementation',
             arguments: {
                 'x-queue-type': 'quorum',
                 'x-dead-letter-exchange': 'workflow.exchange.dlx',
@@ -183,11 +186,9 @@ export class WorkflowJobConsumer implements OnApplicationShutdown {
         routingKey: 'workflow.jobs.*.CHECK_SUGGESTION_IMPLEMENTATION',
         queue: 'workflow.jobs.check_implementation.queue',
         errorBehavior: MessageHandlerErrorBehavior.ACK,
-        errorHandler: (channel, msg, err) =>
-            RabbitMQErrorHandler.instance?.handle(channel, msg, err, {
-                dlqRoutingKey: 'workflow.job.failed',
-            }),
+        errorHandler: createErrorHandlerWithFallback('workflow.job.failed'),
         queueOptions: {
+            channel: 'channel-check-implementation',
             arguments: {
                 'x-queue-type': 'quorum',
                 'x-dead-letter-exchange': 'workflow.exchange.dlx',

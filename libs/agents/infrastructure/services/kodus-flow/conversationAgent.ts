@@ -59,6 +59,20 @@ export class ConversationAgentProvider extends BaseAgentProvider {
             organizationAndTeamData,
         );
 
+        if (!mcpManagerServers?.length) {
+            this.logger.warn({
+                message:
+                    'ConversationAgent: no MCP connections available for this organization/team. Skipping MCP adapter initialization.',
+                context: ConversationAgentProvider.name,
+                metadata: {
+                    organizationId: organizationAndTeamData?.organizationId,
+                    teamId: organizationAndTeamData?.teamId,
+                },
+            });
+            this.mcpAdapter = undefined;
+            return;
+        }
+
         const servers = [...mcpManagerServers];
 
         this.mcpAdapter = createMCPAdapter({

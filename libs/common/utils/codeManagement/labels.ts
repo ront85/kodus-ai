@@ -14,6 +14,7 @@ export enum LabelType {
     BUG = 'bug',
     PERFORMANCE = 'performance',
     CROSS_FILE = 'cross_file',
+    BUSINESS_LOGIC = 'business_logic',
 }
 
 enum ShieldColor {
@@ -69,6 +70,8 @@ const getLabelShield = (label: string) => {
             return `${shield}${ShieldColor.ORANGE})`;
         case LabelType.CROSS_FILE:
             return `${shield}${ShieldColor.LIGHT_PURPLE})`;
+        case LabelType.BUSINESS_LOGIC:
+            return `${shield}${ShieldColor.TEAL})`;
         default:
             return '';
     }

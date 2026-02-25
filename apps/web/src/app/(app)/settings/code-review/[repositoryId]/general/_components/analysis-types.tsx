@@ -13,10 +13,8 @@ import {
 import type { CodeReviewLabel } from "@services/parameters/types";
 import { Controller, useFormContext } from "react-hook-form";
 import { safeArray } from "src/core/utils/safe-array";
-import {
-    useCodeReviewRouteParams,
-    useCurrentConfigLevel,
-} from "src/app/(app)/settings/_hooks";
+import { useCurrentConfigLevel } from "src/app/(app)/settings/_hooks";
+import { useFeatureFlags } from "src/app/(app)/settings/_components/context";
 
 import { FormattedConfigLevel, type CodeReviewFormType } from "../../../_types";
 import { OverrideIndicatorForm } from "../../../_components/override";
@@ -29,22 +27,26 @@ interface CheckboxCardOption {
 
 export const AnalysisTypes = () => {
     const currentLevel = useCurrentConfigLevel();
+    const { businessLogic } = useFeatureFlags();
     const form = useFormContext<CodeReviewFormType>();
     const codeReviewVersion = form.watch("codeReviewVersion.value") || "v2";
     const { data: labels = [], isLoading } =
         useGetCodeReviewLabels(codeReviewVersion);
-    const {
-        v1,
-        v2,
-        isLoading: allLabelsLoading,
-        allLabels,
-    } = useGetAllCodeReviewLabels();
+    const { isLoading: allLabelsLoading, allLabels } =
+        useGetAllCodeReviewLabels();
     const initializedRef = useRef(false);
+    const isBusinessLogicEnabled = businessLogic === true;
+    const visibleLabels = safeArray<CodeReviewLabel>(labels).filter(
+        (label) => isBusinessLogicEnabled || label.type !== "business_logic",
+    );
+    const visibleAllLabels = safeArray<CodeReviewLabel>(allLabels).filter(
+        (label) => isBusinessLogicEnabled || label.type !== "business_logic",
+    );
 
     // Merge all categories ensuring boolean values - keep user's existing values
     useEffect(() => {
         if (
-            allLabels.length > 0 &&
+            visibleAllLabels.length > 0 &&
             !allLabelsLoading &&
             !initializedRef.current
         ) {
@@ -52,7 +54,7 @@ export const AnalysisTypes = () => {
             const mergedOptions = { ...currentOptions };
 
             // Add all categories from both versions with their current values or false as default
-            allLabels.forEach((label) => {
+            visibleAllLabels.forEach((label) => {
                 if (!mergedOptions[label.type]) {
                     mergedOptions[label.type] = {
                         value: false,
@@ -64,9 +66,9 @@ export const AnalysisTypes = () => {
             form.setValue("reviewOptions", mergedOptions);
             initializedRef.current = true;
         }
-    }, [allLabels.length, allLabelsLoading]); // Only run once when labels are loaded
+    }, [visibleAllLabels, allLabelsLoading, form]); // Only run once when labels are loaded
 
-    const reviewOptionsOptions: CheckboxCardOption[] = safeArray<CodeReviewLabel>(labels).map(
+    const reviewOptionsOptions: CheckboxCardOption[] = visibleLabels.map(
         (label) => ({
             value: label.type,
             name: label.name,
@@ -100,7 +102,7 @@ export const AnalysisTypes = () => {
                             onValueChange={(values) => {
                                 const currentOptions =
                                     form.getValues("reviewOptions") || {};
-                                const currentVersionOptions = safeArray<CodeReviewLabel>(labels).map(
+                                const currentVersionOptions = visibleLabels.map(
                                     (label) => label.type,
                                 );
 
@@ -127,44 +129,45 @@ export const AnalysisTypes = () => {
 
                                 field.onChange(updatedOptions);
                             }}>
-                            {reviewOptionsOptions.map((option) => (
-                                <ToggleGroup.ToggleGroupItem
-                                    asChild
-                                    key={option.value}
-                                    value={option.value}>
-                                    <Button
-                                        size="lg"
-                                        variant="helper"
-                                        className="w-full items-start py-5">
-                                        <div className="flex w-full flex-row justify-between gap-6">
-                                            <div className="flex flex-col gap-2">
-                                                <div className="flex items-center gap-2">
-                                                    <Heading
-                                                        variant="h3"
-                                                        className="truncate">
-                                                        {option.name}
-                                                    </Heading>
-                                                    <OverrideIndicatorForm 
-                                                        fieldName={`reviewOptions.${option.value}`} 
-                                                    />
+                            {reviewOptionsOptions.map((option) => {
+                                const isEnabled =
+                                    field.value?.[option.value]?.value || false;
+                                return (
+                                    <ToggleGroup.ToggleGroupItem
+                                        key={option.value}
+                                        asChild
+                                        value={option.value}>
+                                        <Button
+                                            size="lg"
+                                            variant="helper"
+                                            className="w-full items-start py-5">
+                                            <div className="flex w-full flex-row justify-between gap-6">
+                                                <div className="flex min-w-0 flex-col gap-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <Heading
+                                                            variant="h3"
+                                                            className="truncate">
+                                                            {option.name}
+                                                        </Heading>
+                                                        <OverrideIndicatorForm
+                                                            fieldName={`reviewOptions.${option.value}`}
+                                                        />
+                                                    </div>
+
+                                                    <p className="text-text-secondary text-xs">
+                                                        {option.description}
+                                                    </p>
                                                 </div>
 
-                                                <p className="text-text-secondary text-xs">
-                                                    {option.description}
-                                                </p>
+                                                <Checkbox
+                                                    decorative
+                                                    checked={isEnabled}
+                                                />
                                             </div>
-
-                                            <Checkbox
-                                                decorative
-                                                checked={
-                                                    field.value?.[option.value]
-                                                        ?.value || false
-                                                }
-                                            />
-                                        </div>
-                                    </Button>
-                                </ToggleGroup.ToggleGroupItem>
-                            ))}
+                                        </Button>
+                                    </ToggleGroup.ToggleGroupItem>
+                                );
+                            })}
                         </ToggleGroup.Root>
                     </FormControl.Input>
                 </FormControl.Root>

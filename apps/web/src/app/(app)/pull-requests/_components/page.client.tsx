@@ -21,6 +21,9 @@ export function PullRequestsPageClient() {
     const [suggestionsFilter, setSuggestionsFilter] = useState<
         "all" | "true" | "false"
     >("all");
+    const [authorPolicy, setAuthorPolicy] = useState<
+        "all" | "reviewable" | "excluded"
+    >("reviewable");
 
     const debouncedTitle = useDebounce(pullRequestTitle, 400);
     const debouncedNumber = useDebounce(pullRequestNumber, 400);
@@ -48,6 +51,7 @@ export function PullRequestsPageClient() {
             pullRequestTitle: normalizedTitle ? normalizedTitle : undefined,
             pullRequestNumber: normalizedNumber ? normalizedNumber : undefined,
             hasSentSuggestions: hasSentSuggestionsParam,
+            authorPolicy,
         },
         { pageSize: 30 },
     );
@@ -157,6 +161,10 @@ export function PullRequestsPageClient() {
                             suggestionsFilter={suggestionsFilter}
                             onSuggestionsFilterChange={(value) =>
                                 setSuggestionsFilter(value)
+                            }
+                            authorPolicy={authorPolicy}
+                            onAuthorPolicyChange={(value) =>
+                                setAuthorPolicy(value)
                             }
                         />
                     </div>

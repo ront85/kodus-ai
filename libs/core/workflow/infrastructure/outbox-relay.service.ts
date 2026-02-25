@@ -48,7 +48,7 @@ const OUTBOX_BACKOFF: BackoffOptions = {
     multiplier: 2, // Exponential
 };
 
-const DEFAULT_OUTBOX_MAX_ATTEMPTS = 3;
+const DEFAULT_OUTBOX_MAX_ATTEMPTS = 10;
 const DEFAULT_OUTBOX_PUBLISH_TIMEOUT_MS = 15000;
 
 function parsePositiveIntEnv(envKey: string, fallback: number): number {
@@ -165,6 +165,15 @@ export class OutboxRelayService
      * Returns the number of successfully processed messages (for adaptive polling).
      */
     async processOutbox(): Promise<number> {
+        // Avoid burning retries while broker is known to be disconnected.
+        if (!this.messageBroker.isConnected()) {
+            this.logger.warn({
+                message: 'RabbitMQ disconnected, skipping outbox relay cycle',
+                context: OutboxRelayService.name,
+            });
+            return 0;
+        }
+
         // Claim a batch of messages atomically
         const messages = await this.outboxRepository.claimBatch(
             this.BATCH_SIZE,

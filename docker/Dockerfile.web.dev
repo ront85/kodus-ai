@@ -1,8 +1,6 @@
 # Development stage for kodus-web (Next.js)
 FROM docker.io/library/node:22.22.0-slim
 
-RUN apt-get update && apt-get install -y curl
-
 WORKDIR /usr/src/app
 
 ENV WEB_NODE_ENV=development
@@ -16,7 +14,7 @@ COPY package*.json yarn.lock ./
 # Install dependencies
 RUN yarn install --frozen-lockfile
 
-# Copy the rest of the source code
+# Keep a local fallback for scenarios without bind mount.
 COPY . .
 
 EXPOSE 3000

@@ -346,18 +346,16 @@ export class PullRequestController {
         // Device tracking (opt-in)
         let deviceResult: { deviceToken?: string } | undefined;
         if (deviceId && organizationId) {
-            deviceResult =
-                await this.cliDeviceService.validateOrRegisterDevice({
+            deviceResult = await this.cliDeviceService.validateOrRegisterDevice(
+                {
                     deviceId,
                     deviceToken,
                     organizationId,
                     userAgent,
-                });
+                },
+            );
             if (deviceResult?.deviceToken && res) {
-                res.setHeader(
-                    'x-kodus-device-token',
-                    deviceResult.deviceToken,
-                );
+                res.setHeader('x-kodus-device-token', deviceResult.deviceToken);
             }
         }
 
@@ -526,8 +524,7 @@ export class PullRequestController {
             format,
             suggestionsCount:
                 fileSuggestions.length + prLevelSuggestions.length,
-            filters:
-                severity || category ? { severity, category } : undefined,
+            filters: severity || category ? { severity, category } : undefined,
         });
 
         const payload = {

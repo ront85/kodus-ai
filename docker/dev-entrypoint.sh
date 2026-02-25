@@ -24,12 +24,54 @@ sed -e "s/__CLOUD_MODE__/${CLOUD_MODE}/g" \
 # Fingerprint of dependency manifests used to detect stale node_modules volume.
 DEPS_FINGERPRINT=$(node -e "const fs=require('fs'); const crypto=require('crypto'); const h=crypto.createHash('sha256'); h.update(fs.readFileSync('package.json')); h.update('\\n'); h.update(fs.readFileSync('yarn.lock')); process.stdout.write(h.digest('hex'));")
 DEPS_STAMP_FILE="node_modules/.deps-fingerprint"
+DEPS_LOCK_DIR="node_modules/.deps-install.lock"
+
+acquire_deps_lock() {
+  mkdir -p node_modules
+  WAIT_SECONDS=0
+  until mkdir "$DEPS_LOCK_DIR" 2>/dev/null; do
+    WAIT_SECONDS=$((WAIT_SECONDS + 2))
+    if [ "$WAIT_SECONDS" -ge 360 ]; then
+      echo "✖ Timeout waiting for dependency install lock ($DEPS_LOCK_DIR)"
+      exit 1
+    fi
+    echo "▶ Waiting for dependency lock... (${WAIT_SECONDS}s)"
+    sleep 2
+  done
+}
+
+release_deps_lock() {
+  rm -rf "$DEPS_LOCK_DIR"
+}
 
 install_deps() {
+  FORCE_CLEAN="${1:-false}"
+  acquire_deps_lock
+  trap 'release_deps_lock' EXIT INT TERM
+
+  # Another service may have installed deps while we were waiting for the lock.
+  if [ "$FORCE_CLEAN" != "true" ] && [ -x node_modules/.bin/nest ] && [ -f "$DEPS_STAMP_FILE" ]; then
+    LOCKED_INSTALLED_FINGERPRINT=$(cat "$DEPS_STAMP_FILE" || true)
+    if [ "$LOCKED_INSTALLED_FINGERPRINT" = "$DEPS_FINGERPRINT" ]; then
+      echo "▶ Dependencies already synchronized by another service."
+      release_deps_lock
+      trap - EXIT INT TERM
+      return
+    fi
+  fi
+
+  if [ "$FORCE_CLEAN" = "true" ]; then
+    rm -rf node_modules
+    mkdir -p node_modules
+  fi
+
   echo "▶ Installing deps (yarn --frozen-lockfile)…"
   yarn install --frozen-lockfile
   mkdir -p node_modules
   printf "%s" "$DEPS_FINGERPRINT" > "$DEPS_STAMP_FILE"
+
+  release_deps_lock
+  trap - EXIT INT TERM
 }
 
 # 1. Install dependencies if necessary
@@ -51,15 +93,13 @@ fi
 # 1b. Ensure @nestjs/common exports are valid (guard against broken node_modules)
 if ! node -e "const { Module } = require('@nestjs/common'); process.exit(typeof Module === 'function' ? 0 : 1)"; then
   echo "▶ @nestjs/common export invalid; reinstalling deps..."
-  rm -rf node_modules
-  install_deps
+  install_deps true
 fi
 
 # 1c. Ensure zod v4 runtime files are present (guard against partial/broken installs)
 if [ ! -f node_modules/zod/v4/core/util.js ]; then
   echo "▶ zod runtime files missing; reinstalling deps..."
-  rm -rf node_modules
-  install_deps
+  install_deps true
 fi
 
 # 2. Run Migrations and Seeds (if configured)

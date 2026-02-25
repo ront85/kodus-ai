@@ -87,16 +87,19 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
 
         // Aplicar filtro ignorePaths
         const ignorePaths = context.codeReviewConfig.ignorePaths || [];
-        const filteredFiles = filesToProcess?.filter(
-            (file) => !isFileMatchingGlob(file.filename, ignorePaths),
-        );
-        const ignoredList = filesToProcess?.filter((file) =>
+        const filteredFiles =
+            filesToProcess?.filter(
+                (file) => !isFileMatchingGlob(file.filename, ignorePaths),
+            ) || [];
+        const ignoredList =
+            filesToProcess?.filter((file) =>
             isFileMatchingGlob(file.filename, ignorePaths),
-        );
+        ) || [];
+        const filesToAnalyze = filteredFiles;
 
         const validation = this.validateFiles(
             filesToProcess,
-            filteredFiles,
+            filesToAnalyze,
             ignorePaths,
         );
 
@@ -109,7 +112,7 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
                 context: FetchChangedFilesStage.name,
                 metadata: {
                     organizationAndTeamData: context?.organizationAndTeamData,
-                    filesCount: filteredFiles?.length || 0,
+                    filesCount: filesToAnalyze?.length || 0,
                     totalFilesBeforeFilter: filesToProcess?.length || 0,
                     ignorePaths,
                     technicalReason,
@@ -127,13 +130,13 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
         }
 
         this.logger.log({
-            message: `Found ${filteredFiles.length} files to analyze for PR#${context.pullRequest.number} (${filesToProcess?.length || 0} total, ${(filesToProcess?.length || 0) - filteredFiles.length} ignored)`,
+            message: `Found ${filesToAnalyze.length} files to analyze for PR#${context.pullRequest.number} (${filesToProcess?.length || 0} total, ${(filesToProcess?.length || 0) - filteredFiles.length} ignored)`,
             context: this.stageName,
             metadata: {
                 organizationAndTeamData: context.organizationAndTeamData,
                 repository: context.repository.name,
                 pullRequestNumber: context.pullRequest.number,
-                filesCount: filteredFiles.length,
+                filesCount: filesToAnalyze.length,
                 totalFilesBeforeFilter: filesToProcess?.length || 0,
                 ignoredFilesCount:
                     (filesToProcess?.length || 0) - filteredFiles.length,
@@ -146,7 +149,7 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
                 context.organizationAndTeamData,
                 context.repository,
                 context.pullRequest,
-                filteredFiles,
+                filesToAnalyze,
             );
 
         const filesWithLineNumbers =
@@ -156,9 +159,6 @@ export class FetchChangedFilesStage extends BasePipelineStage<CodeReviewPipeline
 
         return this.updateContext(context, (draft) => {
             draft.changedFiles = filesWithLineNumbers;
-            draft.pipelineMetadata = {
-                ...draft.pipelineMetadata,
-            };
             draft.pullRequest.stats = stats;
             draft.ignoredFiles = ignoredList?.map((f) => f.filename) || [];
         });

@@ -134,7 +134,8 @@ export class UsersController {
     @ApiBearerAuth('jwt')
     @ApiOperation({
         summary: 'Save marketing survey',
-        description: 'Persist referral source and primary goal for the authenticated user.',
+        description:
+            'Persist referral source and primary goal for the authenticated user.',
     })
     @ApiOkResponse({ description: 'Survey saved successfully' })
     public async saveMarketingSurvey(

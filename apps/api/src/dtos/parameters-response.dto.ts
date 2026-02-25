@@ -45,6 +45,9 @@ export class CodeReviewOptionsDto {
 
     @ApiProperty()
     cross_file: boolean;
+
+    @ApiProperty({ required: false })
+    business_logic?: boolean;
 }
 
 export class SeverityLimitsDto {

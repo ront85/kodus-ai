@@ -5,6 +5,7 @@ import { PlatformDataModule } from '@libs/platformData/platformData.module';
 import { PermissionsModule } from '@libs/identity/modules/permissions.module';
 import { CodeReviewExecutionModule } from '@libs/code-review/modules/codeReviewExecution.module';
 import { IntegrationConfigCoreModule } from '@libs/integrations/modules/config-core.module';
+import { OrganizationParametersModule } from '@libs/organization/modules/organizationParameters.module';
 
 @Module({
     imports: [
@@ -13,6 +14,7 @@ import { IntegrationConfigCoreModule } from '@libs/integrations/modules/config-c
         forwardRef(() => IntegrationConfigCoreModule),
         forwardRef(() => PermissionsModule),
         forwardRef(() => CodeReviewExecutionModule),
+        forwardRef(() => OrganizationParametersModule),
     ],
     providers: [GetEnrichedPullRequestsUseCase],
     exports: [GetEnrichedPullRequestsUseCase],

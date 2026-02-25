@@ -282,6 +282,7 @@ export const reviewOptionsSchema = z.object({
     performance: z.boolean(),
     security: z.boolean(),
     cross_file: z.boolean(),
+    business_logic: z.boolean().optional(),
 });
 
 export interface ReviewOptions {
@@ -289,6 +290,7 @@ export interface ReviewOptions {
     performance?: boolean;
     security?: boolean;
     cross_file?: boolean;
+    business_logic?: boolean;
 }
 
 export interface SummaryConfig {

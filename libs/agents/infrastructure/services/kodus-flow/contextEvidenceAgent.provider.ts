@@ -76,6 +76,20 @@ export class ContextEvidenceAgentProvider extends BaseAgentProvider {
             organizationAndTeamData,
         );
 
+        if (!mcpManagerServers?.length) {
+            this.logger.warn({
+                message:
+                    'ContextEvidenceAgent: no MCP connections available for this organization/team. Skipping MCP adapter initialization.',
+                context: ContextEvidenceAgentProvider.name,
+                metadata: {
+                    organizationId: organizationAndTeamData?.organizationId,
+                    teamId: organizationAndTeamData?.teamId,
+                },
+            });
+            this.mcpAdapter = undefined;
+            return;
+        }
+
         const servers = [...mcpManagerServers];
 
         this.mcpAdapter = createMCPAdapter({
