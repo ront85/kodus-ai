@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import yaml from 'js-yaml';
 
 import { Injectable, Logger } from '@nestjs/common';
+import { z } from 'zod';
 
 import { SkillNotFoundError } from './skill.errors';
 
@@ -26,6 +28,28 @@ export interface SkillMeta {
     requiredMcps?: SkillRequiredMcp[];
 }
 
+const SkillFrontmatterSchema = z
+    .object({
+        name: z.string().optional(),
+        description: z.string().optional(),
+        metadata: z
+            .object({
+                version: z.union([z.string(), z.number()]).optional(),
+            })
+            .optional(),
+        'allowed-tools': z.array(z.string()).optional(),
+        'required-mcps': z
+            .array(
+                z.object({
+                    category: z.string(),
+                    label: z.string(),
+                    examples: z.string().optional(),
+                }),
+            )
+            .optional(),
+    })
+    .passthrough();
+
 @Injectable()
 export class SkillLoaderService {
     private readonly logger = new Logger(SkillLoaderService.name);
@@ -44,7 +68,9 @@ export class SkillLoaderService {
      */
     loadSkillMetaFromFilesystem(skillName: string): SkillMeta {
         const skillPath = this.resolveSkillFilePath(skillName, 'SKILL.md');
-        if (!skillPath) return {};
+        if (!skillPath) {
+            return {};
+        }
         const raw = fs.readFileSync(skillPath, 'utf-8');
         return this.parseFrontmatter(raw).meta;
     }
@@ -80,14 +106,17 @@ export class SkillLoaderService {
      */
     private loadReferences(skillName: string): string {
         const refsDir = this.resolveSkillDirectoryPath(skillName, 'references');
-        if (!refsDir) return '';
-
+        if (!refsDir) {
+            return '';
+        }
         const files = fs
             .readdirSync(refsDir)
             .filter((f) => f.endsWith('.md'))
             .sort();
 
-        if (files.length === 0) return '';
+        if (files.length === 0) {
+            return '';
+        }
 
         this.logger.log(
             `[SkillLoader] loading ${files.length} reference file(s) for skill '${skillName}'`,
@@ -109,81 +138,40 @@ export class SkillLoaderService {
      */
     private parseFrontmatter(raw: string): { body: string; meta: SkillMeta } {
         const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-        if (!match) return { body: raw, meta: {} };
+        if (!match) {
+            return { body: raw, meta: {} };
+        }
 
         const yamlStr = match[1];
         const body = match[2].trimStart();
+        let frontmatter: unknown;
+        try {
+            frontmatter = yaml.load(yamlStr) ?? {};
+        } catch {
+            this.logger.warn(
+                `[SkillLoader] invalid YAML frontmatter detected. Falling back to empty metadata.`,
+            );
+            return { body, meta: {} };
+        }
 
-        const name = yamlStr.match(/^name:\s*(.+)$/m)?.[1]?.trim();
-        const description = yamlStr
-            .match(/^description:\s*(.+)$/m)?.[1]
-            ?.trim();
-
-        const metadataVersion = yamlStr
-            .match(
-                /metadata:\s*\n(?:[ \t]+.+\n)*?[ \t]+version:\s*["']?([^"'\n]+)["']?/m,
-            )?.[1]
-            ?.trim();
-
-        // Parse allowed-tools as a flat YAML list
-        const toolsMatch = yamlStr.match(
-            /^allowed-tools:\s*\n((?:[ \t]+-[ \t]+\S+[ \t]*\n?)+)/m,
-        );
-        const allowedTools = toolsMatch
-            ? (toolsMatch[1].match(/\S+(?=\s*$)/gm) ?? [])
-            : undefined;
-
-        // Parse required-mcps as a list of objects with category/label/examples
-        const requiredMcps = this.parseRequiredMcps(yamlStr);
+        const parsed = SkillFrontmatterSchema.safeParse(frontmatter);
+        if (!parsed.success) {
+            this.logger.warn(
+                `[SkillLoader] frontmatter schema validation failed. Falling back to empty metadata.`,
+            );
+            return { body, meta: {} };
+        }
 
         return {
             body,
             meta: {
-                name,
-                description,
-                version: metadataVersion,
-                allowedTools,
-                requiredMcps,
+                name: parsed.data.name,
+                description: parsed.data.description,
+                version: parsed.data.metadata?.version?.toString(),
+                allowedTools: parsed.data['allowed-tools'],
+                requiredMcps: parsed.data['required-mcps'],
             },
         };
-    }
-
-    /**
-     * Parse the required-mcps YAML block:
-     *
-     *   required-mcps:
-     *     - category: task-management
-     *       label: Task Management
-     *       examples: Jira, Linear, Notion
-     */
-    private parseRequiredMcps(yamlStr: string): SkillRequiredMcp[] | undefined {
-        const blockMatch = yamlStr.match(
-            /^required-mcps:\s*\n((?:[ \t]{2,}.*(?:\n|$))*)/m,
-        );
-        if (!blockMatch || !blockMatch[1].trim()) return undefined;
-
-        const block = blockMatch[1].trimEnd();
-        const items: SkillRequiredMcp[] = [];
-
-        const itemBlocks = block.split(/\n(?=[ \t]*-[ \t]+)/);
-
-        for (const itemBlock of itemBlocks) {
-            const normalized = itemBlock.replace(/^[ \t]*-[ \t]*/, '');
-            const category = normalized
-                .match(/(?:^|\n)[ \t]*category:\s*(.+)/)?.[1]
-                ?.trim();
-            const label = normalized
-                .match(/(?:^|\n)[ \t]*label:\s*(.+)/)?.[1]
-                ?.trim();
-            const examples = normalized
-                .match(/(?:^|\n)[ \t]*examples:\s*(.+)/)?.[1]
-                ?.trim();
-            if (category && label) {
-                items.push({ category, label, ...(examples && { examples }) });
-            }
-        }
-
-        return items.length > 0 ? items : undefined;
     }
 
     private resolveSkillFilePath(

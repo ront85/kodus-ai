@@ -24,36 +24,63 @@ export async function runBlueprint<T extends BlueprintContext>(
     let ctx = options.context;
     const completedSteps: string[] = [];
     const log = options.logger;
+    const onStepMetric = options.onStepMetric;
 
     for (const step of options.steps) {
+        const startedAt = Date.now();
+        const emitMetric = (
+            status: 'success' | 'failed' | 'skipped',
+            errorMessage?: string,
+        ) => {
+            onStepMetric?.({
+                stepName: step.name,
+                stepType: step.type,
+                status,
+                durationMs: Date.now() - startedAt,
+                ...(errorMessage ? { errorMessage } : {}),
+            });
+        };
+
         log?.log(`[blueprint] running step: ${step.name} (${step.type})`);
 
-        if (step.type === 'deterministic') {
-            ctx = await step.fn(ctx);
-            completedSteps.push(step.name);
-        } else if (step.type === 'gate') {
-            const passed = step.condition(ctx);
-            if (!passed) {
-                log?.log(
-                    `[blueprint] gate '${step.name}' failed — short-circuiting`,
+        try {
+            if (step.type === 'deterministic') {
+                ctx = await step.fn(ctx);
+                completedSteps.push(step.name);
+                emitMetric('success');
+            } else if (step.type === 'gate') {
+                const passed = step.condition(ctx);
+                if (!passed) {
+                    log?.log(
+                        `[blueprint] gate '${step.name}' failed — short-circuiting`,
+                    );
+                    ctx = step.onFail(ctx);
+                    emitMetric('skipped');
+                    return { context: ctx, completedSteps, skippedAt: step.name };
+                }
+                completedSteps.push(step.name);
+                emitMetric('success');
+            } else if (step.type === 'llm') {
+                ctx = await options.runLLMStep(step, ctx);
+                completedSteps.push(step.name);
+                emitMetric('success');
+            } else if (step.type === 'format') {
+                ctx = step.fn(ctx);
+                completedSteps.push(step.name);
+                emitMetric('success');
+            } else if (step.type === 'parallel') {
+                // Parallel steps are not handled by the runner — they require ISkillRunner.
+                // If encountered here it means the blueprint was wired incorrectly.
+                throw new Error(
+                    `[blueprint] Parallel step '${(step as any).name}' cannot be executed by runBlueprint directly. ` +
+                        `Use ISkillRunner.runParallel() instead.`,
                 );
-                ctx = step.onFail(ctx);
-                return { context: ctx, completedSteps, skippedAt: step.name };
             }
-            completedSteps.push(step.name);
-        } else if (step.type === 'llm') {
-            ctx = await options.runLLMStep(step, ctx);
-            completedSteps.push(step.name);
-        } else if (step.type === 'format') {
-            ctx = step.fn(ctx);
-            completedSteps.push(step.name);
-        } else if (step.type === 'parallel') {
-            // Parallel steps are not handled by the runner — they require ISkillRunner.
-            // If encountered here it means the blueprint was wired incorrectly.
-            throw new Error(
-                `[blueprint] Parallel step '${(step as any).name}' cannot be executed by runBlueprint directly. ` +
-                    `Use ISkillRunner.runParallel() instead.`,
-            );
+        } catch (error) {
+            const errorMessage =
+                error instanceof Error ? error.message : String(error);
+            emitMetric('failed', errorMessage);
+            throw error;
         }
     }
 

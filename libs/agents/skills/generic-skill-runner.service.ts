@@ -12,7 +12,12 @@ import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/
 import { ObservabilityService } from '@libs/core/log/observability.service';
 import { MCPManagerService } from '@libs/mcp-server/services/mcp-manager.service';
 
-import { SkillLoaderService } from './skill-loader.service';
+import { RequiredMcpPreflightError } from './skill.errors';
+import {
+    SkillLoaderService,
+    SkillMeta,
+    SkillRequiredMcp,
+} from './skill-loader.service';
 
 export interface SkillFetcherResult {
     raw: string;
@@ -41,6 +46,8 @@ export interface SkillRunInput {
 @Injectable()
 export class GenericSkillRunnerService {
     private readonly logger = new Logger(GenericSkillRunnerService.name);
+    private readonly instructionsCache = new Map<string, string>();
+    private readonly metaCache = new Map<string, SkillMeta>();
 
     constructor(
         private readonly skillLoaderService: SkillLoaderService,
@@ -57,12 +64,21 @@ export class GenericSkillRunnerService {
         llmAdapter: LLMAdapter,
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<SDKOrchestrator> {
-        const meta =
-            this.skillLoaderService.loadSkillMetaFromFilesystem(skillName);
-        const mcpAdapter = await this.createMCPAdapter(
+        const meta = this.getSkillMeta(skillName);
+        const mcpManagerServers = await this.mcpManagerService?.getConnections(
+            organizationAndTeamData,
+        );
+
+        this.preflightRequiredMcps(
+            skillName,
+            meta.requiredMcps,
+            mcpManagerServers,
+        );
+
+        const mcpAdapter = this.createMCPAdapter(
             skillName,
             meta.allowedTools,
-            organizationAndTeamData,
+            mcpManagerServers,
         );
 
         const orchestration = await createOrchestration({
@@ -108,8 +124,7 @@ export class GenericSkillRunnerService {
         skillName: string,
         llmAdapter: LLMAdapter,
     ): Promise<SDKOrchestrator> {
-        const instructions =
-            this.skillLoaderService.loadInstructions(skillName);
+        const instructions = this.getSkillInstructions(skillName);
 
         const orchestration = await createOrchestration({
             tenantId: `kodus-skill-analyzer-${skillName}`,
@@ -138,17 +153,54 @@ export class GenericSkillRunnerService {
 
     // ─── Private helpers ──────────────────────────────────────────────────────
 
-    private async createMCPAdapter(
+    private getSkillMeta(skillName: string): SkillMeta {
+        const cached = this.metaCache.get(skillName);
+        if (cached) {
+            return cached;
+        }
+
+        const meta = this.skillLoaderService.loadSkillMetaFromFilesystem(skillName);
+        this.metaCache.set(skillName, meta);
+        return meta;
+    }
+
+    private getSkillInstructions(skillName: string): string {
+        const cached = this.instructionsCache.get(skillName);
+        if (cached) {
+            return cached;
+        }
+
+        const instructions = this.skillLoaderService.loadInstructions(skillName);
+        this.instructionsCache.set(skillName, instructions);
+        return instructions;
+    }
+
+    private preflightRequiredMcps(
+        skillName: string,
+        requiredMcps: SkillRequiredMcp[] | undefined,
+        mcpManagerServers: any[] | undefined,
+    ) {
+        if (!requiredMcps?.length) {
+            return;
+        }
+
+        const externalConnections = (mcpManagerServers ?? []).filter(
+            (server) => server.provider !== 'kodusmcp',
+        );
+
+        if (!externalConnections.length) {
+            throw new RequiredMcpPreflightError(skillName, requiredMcps);
+        }
+    }
+
+    private createMCPAdapter(
         skillName: string,
         allowedTools: string[] | undefined,
-        organizationAndTeamData: OrganizationAndTeamData,
+        mcpManagerServers: any[] | undefined,
     ) {
-        const mcpManagerServers =
-            await this.mcpManagerService?.getConnections(
-                organizationAndTeamData,
-            );
-
-        if (!mcpManagerServers?.length) return null;
+        if (!mcpManagerServers?.length) {
+            return null;
+        }
 
         const requiredTools = allowedTools?.length
             ? allowedTools
@@ -156,7 +208,9 @@ export class GenericSkillRunnerService {
 
         const filteredServers = mcpManagerServers
             .filter((server) => {
-                if (server.provider !== 'kodusmcp') return true;
+                if (server.provider !== 'kodusmcp') {
+                    return true;
+                }
                 return requiredTools.some((tool) =>
                     server.allowedTools.includes(tool),
                 );
@@ -173,7 +227,9 @@ export class GenericSkillRunnerService {
                 return server;
             });
 
-        if (!filteredServers.length) return null;
+        if (!filteredServers.length) {
+            return null;
+        }
 
         return createMCPAdapter({
             servers: filteredServers,

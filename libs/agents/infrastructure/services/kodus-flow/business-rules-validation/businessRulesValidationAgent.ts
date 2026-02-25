@@ -1,7 +1,6 @@
 import { Thread, createLogger } from '@kodus/flow';
-import { SDKOrchestrator } from '@kodus/flow/dist/orchestration';
 import { LLMModelProvider, PromptRunnerService } from '@kodus/kodus-common/llm';
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, Optional } from '@nestjs/common';
 
 import { ParametersKey } from '@libs/core/domain/enums/parameters-key.enum';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
@@ -15,10 +14,15 @@ import { BaseAgentProvider } from '../base-agent.provider';
 import { ObservabilityService } from '@libs/core/log/observability.service';
 
 import { runBlueprint } from '@libs/shared/blueprint/blueprint.runner';
-import { LLMStep } from '@libs/shared/blueprint/blueprint.types';
+import {
+    BlueprintStepMetric,
+    LLMStep,
+} from '@libs/shared/blueprint/blueprint.types';
 import { GenericSkillRunnerService } from '../../../../skills/generic-skill-runner.service';
 import { createBusinessRulesBlueprint } from './blueprint';
 import { BusinessRulesContext, ValidationResult } from './types';
+import { SDKOrchestrator } from '@kodus/flow/dist/orchestration';
+import { MetricsCollectorService } from '@libs/core/infrastructure/metrics/metrics-collector.service';
 
 const SKILL_NAME = 'business-rules-validation';
 
@@ -46,6 +50,7 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
         private readonly parametersService: IParametersService,
         observabilityService: ObservabilityService,
         private readonly genericSkillRunner: GenericSkillRunnerService,
+        @Optional() private readonly metricsCollector?: MetricsCollectorService,
     ) {
         super(
             promptRunnerService,
@@ -84,11 +89,15 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
 
         await this.fetchBYOKConfig(context.organizationAndTeamData);
 
-        const fetcher = await this.genericSkillRunner.createFetcherOrchestration(
-            SKILL_NAME,
-            super.createLLMAdapter('BusinessRulesValidation', 'businessRulesFetcher'),
-            context.organizationAndTeamData,
-        );
+        const fetcher =
+            await this.genericSkillRunner.createFetcherOrchestration(
+                SKILL_NAME,
+                super.createLLMAdapter(
+                    'BusinessRulesValidation',
+                    'businessRulesFetcher',
+                ),
+                context.organizationAndTeamData,
+            );
 
         const initialCtx: BusinessRulesContext = {
             organizationAndTeamData: context.organizationAndTeamData,
@@ -101,6 +110,11 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
             steps: createBusinessRulesBlueprint(fetcher),
             context: initialCtx,
             runLLMStep: (step, ctx) => this.runAnalyzer(step, ctx),
+            onStepMetric: (metric) =>
+                this.recordStepMetric(
+                    metric,
+                    context.organizationAndTeamData as OrganizationAndTeamData,
+                ),
             logger: {
                 log: (msg) =>
                     this.logger.log({
@@ -132,6 +146,40 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
         });
 
         return result.context.formattedResponse ?? '';
+    }
+
+    private recordStepMetric(
+        metric: BlueprintStepMetric,
+        organizationAndTeamData: OrganizationAndTeamData,
+    ) {
+        const labels = {
+            skill: SKILL_NAME,
+            step: metric.stepName,
+            stepType: metric.stepType,
+            status: metric.status,
+        };
+
+        this.metricsCollector?.recordHistogram(
+            'kodus_skill_step_duration_ms',
+            metric.durationMs,
+            labels,
+        );
+        this.metricsCollector?.recordCounter('kodus_skill_step_total', 1, labels);
+
+        this.logger.log({
+            message: 'Business rules step metric',
+            context: BusinessRulesValidationAgentProvider.name,
+            serviceName: BusinessRulesValidationAgentProvider.name,
+            metadata: {
+                ...labels,
+                durationMs: metric.durationMs,
+                organizationId: organizationAndTeamData?.organizationId,
+                teamId: organizationAndTeamData?.teamId,
+                ...(metric.errorMessage
+                    ? { errorMessage: metric.errorMessage }
+                    : {}),
+            },
+        });
     }
 
     // ─── LLM step handler ─────────────────────────────────────────────────────
@@ -230,9 +278,7 @@ Follow the instructions in your system prompt exactly. Return ONLY a JSON object
         };
     }
 
-    private extractFieldsFromString(
-        text: string,
-    ): Partial<ValidationResult> {
+    private extractFieldsFromString(text: string): Partial<ValidationResult> {
         const fields: Partial<ValidationResult> = {};
 
         const needsMoreInfoMatch = text.match(
@@ -247,9 +293,7 @@ Follow the instructions in your system prompt exactly. Return ONLY a JSON object
             fields.missingInfo = missingInfoMatch[1];
         }
 
-        const summaryMatch = text.match(
-            /"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/,
-        );
+        const summaryMatch = text.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
         if (summaryMatch) {
             fields.summary = summaryMatch[1]
                 .replace(/\\n/g, '\n')

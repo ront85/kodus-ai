@@ -117,10 +117,19 @@ export interface BlueprintRunnerOptions<T extends BlueprintContext> {
      * - Writing results back to the returned context
      */
     runLLMStep: (step: LLMStep, ctx: T) => Promise<T>;
+    onStepMetric?: (metric: BlueprintStepMetric) => void;
     logger?: {
         log: (msg: string) => void;
         error: (msg: string, err?: unknown) => void;
     };
+}
+
+export interface BlueprintStepMetric {
+    stepName: string;
+    stepType: 'deterministic' | 'gate' | 'llm' | 'format' | 'parallel';
+    status: 'success' | 'failed' | 'skipped';
+    durationMs: number;
+    errorMessage?: string;
 }
 
 export interface BlueprintResult<T extends BlueprintContext> {

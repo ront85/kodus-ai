@@ -3,7 +3,13 @@ import { SDKOrchestrator } from '@kodus/flow/dist/orchestration';
 
 import { BlueprintStep } from '@libs/shared/blueprint/blueprint.types';
 
-import { BusinessRulesContext, TaskQuality } from './types';
+import { BusinessRulesContext } from './types';
+import {
+    canProceedWithBusinessRulesAnalysis,
+    getTaskContextMissingInfoMessage,
+    normalizeTaskQuality,
+    TASK_QUALITY_CLASSIFICATION_GUIDE,
+} from './task-quality.rules';
 
 const SKILL_NAME = 'business-rules-validation';
 
@@ -44,14 +50,11 @@ export function createBusinessRulesBlueprint(
             type: 'gate',
             name: 'validateContext',
             condition: (ctx) =>
-                ctx.taskQuality === 'PARTIAL' ||
-                ctx.taskQuality === 'COMPLETE',
+                canProceedWithBusinessRulesAnalysis(ctx.taskQuality),
             onFail: (ctx): BusinessRulesContext => {
-                const quality = ctx.taskQuality ?? 'EMPTY';
-                const missingInfo =
-                    quality === 'EMPTY'
-                        ? buildEmptyContextMessage()
-                        : buildMinimalContextMessage();
+                const missingInfo = getTaskContextMissingInfoMessage(
+                    ctx.taskQuality,
+                );
                 return {
                     ...ctx,
                     validationResult: {
@@ -82,7 +85,7 @@ USER REQUEST: ${ctx.prepareContext?.userQuestion ?? 'Analyze business rules comp
 Use available tools to:
 1. Get the PR diff and PR description
 2. Get the linked task/ticket context
-3. Assess taskQuality: EMPTY (no task found), MINIMAL (title only), PARTIAL (some description), COMPLETE (description + acceptance criteria)
+3. Assess taskQuality: ${TASK_QUALITY_CLASSIFICATION_GUIDE}
 
 Return ONLY a JSON object with prDiff, prBody, taskContext, and taskQuality.`;
 }
@@ -100,8 +103,7 @@ function parseFetcherResult(
             prDiff: (parsed as any)?.prDiff ?? '',
             prBody: (parsed as any)?.prBody ?? '',
             taskContext: (parsed as any)?.taskContext ?? '',
-            taskQuality:
-                ((parsed as any)?.taskQuality as TaskQuality) ?? 'EMPTY',
+            taskQuality: normalizeTaskQuality((parsed as any)?.taskQuality),
         };
     } catch {
         return {
@@ -109,47 +111,7 @@ function parseFetcherResult(
             prDiff: '',
             prBody: '',
             taskContext: '',
-            taskQuality: 'EMPTY',
+            taskQuality: normalizeTaskQuality(undefined),
         };
     }
-}
-
-// ─── Gate failure messages ────────────────────────────────────────────────────
-
-function buildEmptyContextMessage(): string {
-    return `## 🤔 Need Task Information
-
-I couldn't find any task information associated with this pull request. To perform a proper business rules validation, I need context about what this PR is supposed to implement.
-
-### 🔍 What I need to validate:
-- Task title and description
-- Acceptance criteria or business requirements
-- Expected behavior and business rules
-
-### 💡 Examples of how to provide it:
-- Link a Jira/Linear/GitHub issue in the PR description
-- Add a task URL in the PR body
-- Include acceptance criteria directly in the PR description
-
-### ⚠️ Important:
-Business rules validation requires understanding **what** should be implemented, not just **what** was changed.`;
-}
-
-function buildMinimalContextMessage(): string {
-    return `## 🤔 Insufficient Task Context
-
-I found a task linked to this PR, but it only contains minimal information (title only, no description or acceptance criteria). To perform a meaningful business rules validation, I need more details.
-
-### 🔍 What I need to validate:
-- Business requirements and acceptance criteria
-- Expected behavior and business rules
-- Edge cases and constraints to consider
-
-### 💡 How to improve the task context:
-- Add a description to the linked ticket
-- Include acceptance criteria or business rules
-- Describe the expected behavior after the change
-
-### ⚠️ Important:
-A task title alone is not sufficient to determine whether the implementation is correct or complete.`;
 }
