@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createMCPAdapter, MCPRegistry } from '../../../src/adapters/mcp/index.js';
+import {
+    createMCPAdapter,
+    MCPRegistry,
+} from '../../../src/adapters/mcp/index.js';
 
 describe('MCP Adapter connection state', () => {
     afterEach(() => {
