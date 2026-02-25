@@ -19,10 +19,22 @@ import {
     LLMStep,
 } from '@libs/shared/blueprint/blueprint.types';
 import { GenericSkillRunnerService } from '../../../../skills/generic-skill-runner.service';
+import {
+    isMcpConnectivityError,
+    McpConnectionUnavailableError,
+    RequiredMcpPreflightError,
+    SkillInputContractViolationError,
+    SkillOutputContractViolationError,
+} from '../../../../skills/skill.errors';
 import { createBusinessRulesBlueprint } from './blueprint';
+import {
+    buildMcpConnectionFailureFeedback,
+    buildRequiredMcpFeedback,
+} from './required-mcp-feedback';
 import { BusinessRulesContext, ValidationResult } from './types';
 import { SDKOrchestrator } from '@kodus/flow/dist/orchestration';
 import { MetricsCollectorService } from '@libs/core/infrastructure/metrics/metrics-collector.service';
+import { TASK_QUALITY_ANALYZER_POLICY } from './task-quality.rules';
 
 const SKILL_NAME = 'business-rules-validation';
 
@@ -66,14 +78,16 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
         prepareContext?: any;
         thread?: Thread;
     }): Promise<string> {
-        if (!context.organizationAndTeamData) {
+        const normalizedContext = this.normalizeInputContext(context);
+
+        if (!normalizedContext.organizationAndTeamData) {
             throw new Error(
                 'Organization and team data is required for business rules validation.',
             );
         }
 
         const userLanguage = await this.getLanguage(
-            context.organizationAndTeamData,
+            normalizedContext.organizationAndTeamData,
         );
 
         this.logger.log({
@@ -82,63 +96,211 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
             serviceName: BusinessRulesValidationAgentProvider.name,
             metadata: {
                 userLanguage,
-                organizationId: context.organizationAndTeamData?.organizationId,
-                teamId: context.organizationAndTeamData?.teamId,
+                organizationId:
+                    normalizedContext.organizationAndTeamData?.organizationId,
+                teamId: normalizedContext.organizationAndTeamData?.teamId,
             },
         });
 
-        await this.fetchBYOKConfig(context.organizationAndTeamData);
+        try {
+            this.genericSkillRunner.validateInputContract(
+                SKILL_NAME,
+                normalizedContext,
+            );
+        } catch (error) {
+            if (error instanceof SkillInputContractViolationError) {
+                this.logger.warn({
+                    message:
+                        'Business rules validation skipped due to input contract violation',
+                    context: BusinessRulesValidationAgentProvider.name,
+                    serviceName: BusinessRulesValidationAgentProvider.name,
+                    metadata: {
+                        organizationId:
+                            normalizedContext.organizationAndTeamData
+                                ?.organizationId,
+                        teamId:
+                            normalizedContext.organizationAndTeamData?.teamId,
+                        missingFields: error.metadata?.missingFields,
+                    },
+                });
+                return this.buildContractViolationFeedback(
+                    userLanguage,
+                    'input',
+                    error.metadata?.missingFields as string[] | undefined,
+                );
+            }
+            throw error;
+        }
 
-        const fetcher =
-            await this.genericSkillRunner.createFetcherOrchestration(
+        await this.fetchBYOKConfig(normalizedContext.organizationAndTeamData);
+
+        let fetcher: SDKOrchestrator;
+        try {
+            fetcher = await this.genericSkillRunner.createFetcherOrchestration(
                 SKILL_NAME,
                 super.createLLMAdapter(
                     'BusinessRulesValidation',
                     'businessRulesFetcher',
                 ),
-                context.organizationAndTeamData,
+                normalizedContext.organizationAndTeamData,
             );
+        } catch (error) {
+            if (error instanceof RequiredMcpPreflightError) {
+                const feedback = buildRequiredMcpFeedback({
+                    requiredMcps: error.requiredMcps,
+                    userLanguage,
+                    availableProviders: error.availableProviders,
+                });
+
+                this.logger.warn({
+                    message:
+                        'Business rules validation skipped due to missing required MCP integrations',
+                    context: BusinessRulesValidationAgentProvider.name,
+                    serviceName: BusinessRulesValidationAgentProvider.name,
+                    metadata: {
+                        organizationId:
+                            normalizedContext.organizationAndTeamData
+                                ?.organizationId,
+                        teamId:
+                            normalizedContext.organizationAndTeamData?.teamId,
+                        requiredMcps: error.requiredMcps,
+                    },
+                });
+
+                return feedback;
+            }
+            if (error instanceof McpConnectionUnavailableError) {
+                const feedback = buildMcpConnectionFailureFeedback({
+                    userLanguage,
+                    availableProviders: error.availableProviders,
+                });
+
+                this.logger.warn({
+                    message:
+                        'Business rules validation skipped due to MCP connection failure during fetcher initialization',
+                    context: BusinessRulesValidationAgentProvider.name,
+                    serviceName: BusinessRulesValidationAgentProvider.name,
+                    metadata: {
+                        organizationId:
+                            normalizedContext.organizationAndTeamData
+                                ?.organizationId,
+                        teamId:
+                            normalizedContext.organizationAndTeamData?.teamId,
+                        errorMessage:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                    },
+                });
+
+                return feedback;
+            }
+            throw error;
+        }
 
         const initialCtx: BusinessRulesContext = {
-            organizationAndTeamData: context.organizationAndTeamData,
+            organizationAndTeamData: normalizedContext.organizationAndTeamData,
             userLanguage,
-            thread: context.thread,
-            prepareContext: context.prepareContext,
+            thread: normalizedContext.thread,
+            prepareContext: normalizedContext.prepareContext,
         };
 
-        const result = await runBlueprint<BusinessRulesContext>({
-            steps: createBusinessRulesBlueprint(fetcher),
-            context: initialCtx,
-            runLLMStep: (step, ctx) => this.runAnalyzer(step, ctx),
-            onStepMetric: (metric) =>
-                this.recordStepMetric(
-                    metric,
-                    context.organizationAndTeamData as OrganizationAndTeamData,
-                ),
-            logger: {
-                log: (msg) =>
-                    this.logger.log({
-                        message: msg,
-                        context: BusinessRulesValidationAgentProvider.name,
-                        serviceName: BusinessRulesValidationAgentProvider.name,
-                    }),
-                error: (msg, err) =>
-                    this.logger.error({
-                        message: msg,
-                        context: BusinessRulesValidationAgentProvider.name,
-                        serviceName: BusinessRulesValidationAgentProvider.name,
-                        metadata: { error: err },
-                    }),
-            },
-        });
+        let result: Awaited<
+            ReturnType<typeof runBlueprint<BusinessRulesContext>>
+        >;
+        try {
+            result = await runBlueprint<BusinessRulesContext>({
+                steps: createBusinessRulesBlueprint(fetcher),
+                context: initialCtx,
+                runLLMStep: (step, ctx) => this.runAnalyzer(step, ctx),
+                onStepMetric: (metric) =>
+                    this.recordStepMetric(
+                        metric,
+                        normalizedContext.organizationAndTeamData as OrganizationAndTeamData,
+                    ),
+                logger: {
+                    log: (msg) =>
+                        this.logger.log({
+                            message: msg,
+                            context: BusinessRulesValidationAgentProvider.name,
+                            serviceName:
+                                BusinessRulesValidationAgentProvider.name,
+                        }),
+                    error: (msg, err) =>
+                        this.logger.error({
+                            message: msg,
+                            context: BusinessRulesValidationAgentProvider.name,
+                            serviceName:
+                                BusinessRulesValidationAgentProvider.name,
+                            metadata: { error: err },
+                        }),
+                },
+            });
+        } catch (error) {
+            if (
+                error instanceof McpConnectionUnavailableError ||
+                isMcpConnectivityError(error)
+            ) {
+                const feedback = buildMcpConnectionFailureFeedback({
+                    userLanguage,
+                    availableProviders:
+                        error instanceof McpConnectionUnavailableError
+                            ? error.availableProviders
+                            : undefined,
+                });
+
+                this.logger.warn({
+                    message:
+                        'Business rules validation failed due to MCP connection error while executing blueprint',
+                    context: BusinessRulesValidationAgentProvider.name,
+                    serviceName: BusinessRulesValidationAgentProvider.name,
+                    metadata: {
+                        organizationId:
+                            normalizedContext.organizationAndTeamData
+                                ?.organizationId,
+                        teamId:
+                            normalizedContext.organizationAndTeamData?.teamId,
+                        errorMessage:
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                    },
+                });
+
+                return feedback;
+            }
+            if (error instanceof SkillOutputContractViolationError) {
+                this.logger.error({
+                    message:
+                        'Business rules validation failed due to output contract violation',
+                    context: BusinessRulesValidationAgentProvider.name,
+                    serviceName: BusinessRulesValidationAgentProvider.name,
+                    metadata: {
+                        organizationId:
+                            normalizedContext.organizationAndTeamData
+                                ?.organizationId,
+                        teamId:
+                            normalizedContext.organizationAndTeamData?.teamId,
+                        missingFields: error.metadata?.missingFields,
+                    },
+                });
+                return this.buildContractViolationFeedback(
+                    userLanguage,
+                    'output',
+                    error.metadata?.missingFields as string[] | undefined,
+                );
+            }
+            throw error;
+        }
 
         this.logger.log({
             message: 'Business rules validation completed',
             context: BusinessRulesValidationAgentProvider.name,
             serviceName: BusinessRulesValidationAgentProvider.name,
             metadata: {
-                organizationId: context.organizationAndTeamData?.organizationId,
-                teamId: context.organizationAndTeamData?.teamId,
+                organizationId:
+                    normalizedContext.organizationAndTeamData?.organizationId,
+                teamId: normalizedContext.organizationAndTeamData?.teamId,
                 completedSteps: result.completedSteps,
                 skippedAt: result.skippedAt,
                 responseLength: result.context.formattedResponse?.length ?? 0,
@@ -164,7 +326,11 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
             metric.durationMs,
             labels,
         );
-        this.metricsCollector?.recordCounter('kodus_skill_step_total', 1, labels);
+        this.metricsCollector?.recordCounter(
+            'kodus_skill_step_total',
+            1,
+            labels,
+        );
 
         this.logger.log({
             message: 'Business rules step metric',
@@ -205,6 +371,12 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
                 userContext: {
                     organizationAndTeamData:
                         ctx.organizationAndTeamData as OrganizationAndTeamData,
+                    validationContext: {
+                        prepareContext: ctx.prepareContext,
+                        taskQuality: ctx.taskQuality,
+                        hasTaskContext: Boolean(ctx.taskContext),
+                        hasPrDiff: Boolean(ctx.prDiff),
+                    },
                 },
             },
         );
@@ -212,6 +384,7 @@ export class BusinessRulesValidationAgentProvider extends BaseAgentProvider {
         const validationResult = this.parseValidationResult(
             analysisResult.result,
         );
+        this.genericSkillRunner.validateOutputContract(SKILL_NAME, validationResult);
 
         const formattedResponse = validationResult.needsMoreInfo
             ? (validationResult.missingInfo ??
@@ -243,6 +416,9 @@ PR_DESCRIPTION:
 ${ctx.prBody ?? '(not available)'}
 
 USER LANGUAGE: ${ctx.userLanguage}
+
+TASK_QUALITY_POLICY:
+${TASK_QUALITY_ANALYZER_POLICY}
 
 Follow the instructions in your system prompt exactly. Return ONLY a JSON object.`;
     }
@@ -319,5 +495,68 @@ Follow the instructions in your system prompt exactly. Return ONLY a JSON object
         } catch {
             return 'en-US';
         }
+    }
+
+    private normalizeInputContext(context: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        prepareContext?: any;
+        thread?: Thread;
+    }): {
+        organizationAndTeamData: OrganizationAndTeamData;
+        prepareContext?: any;
+        thread?: Thread;
+    } {
+        if (!context?.prepareContext || typeof context.prepareContext !== 'object') {
+            return context;
+        }
+
+        const nestedPullRequestNumber =
+            context.prepareContext?.pullRequest?.pullRequestNumber;
+
+        if (
+            context.prepareContext.pullRequestNumber === undefined &&
+            nestedPullRequestNumber !== undefined
+        ) {
+            return {
+                ...context,
+                prepareContext: {
+                    ...context.prepareContext,
+                    pullRequestNumber: nestedPullRequestNumber,
+                },
+            };
+        }
+
+        return context;
+    }
+
+    private buildContractViolationFeedback(
+        userLanguage: string,
+        phase: 'input' | 'output',
+        missingFields: string[] | undefined,
+    ): string {
+        void userLanguage;
+
+        const fields =
+            missingFields && missingFields.length > 0
+                ? missingFields.join(', ')
+                : 'unknown';
+
+        if (phase === 'input') {
+            return `## ⚠️ Missing Validation Context
+
+I couldn't start the skill because required context fields are missing: \`${fields}\`.
+
+### How to fix
+- Ensure the event includes organization, team, repository, and pull request number.
+- Run again: \`@kody -v business-logic\``;
+        }
+
+        return `## ⚠️ Invalid Skill Response
+
+The analysis step returned an incomplete response and failed output contract validation.
+
+Missing fields: \`${fields}\`.
+
+Please try again in a moment.`;
     }
 }

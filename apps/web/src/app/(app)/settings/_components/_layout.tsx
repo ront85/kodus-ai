@@ -32,6 +32,7 @@ import { getMCPPlugins } from "@services/mcp-manager/fetch";
 import { MCPServiceUnavailableError } from "@services/mcp-manager/utils";
 import { usePermission } from "@services/permissions/hooks";
 import { Action, ResourceType } from "@services/permissions/types";
+import { FEATURE_FLAGS } from "src/core/config/feature-flags";
 import { useSelectedTeamId } from "src/core/providers/selected-team-context";
 import { safeArray } from "src/core/utils/safe-array";
 
@@ -42,6 +43,7 @@ import {
     AutomationCodeReviewConfigProvider,
     DefaultCodeReviewConfigProvider,
     PlatformConfigProvider,
+    useFeatureFlags,
 } from "./context";
 import { PerRepository } from "./per-repository/repository";
 
@@ -53,8 +55,16 @@ const routes = [
     { label: "PR Summary", href: "pr-summary" },
     { label: "Kody Rules", href: "kody-rules" },
     { label: "Custom Messages", href: "custom-messages" },
-    { label: "Business Rules", href: "business-rules" },
-] satisfies Array<{ label: string; href: string }>;
+    {
+        label: "Business Rules",
+        href: "business-rules",
+        featureFlag: "businessLogic",
+    },
+] satisfies Array<{
+    label: string;
+    href: string;
+    featureFlag?: keyof typeof FEATURE_FLAGS;
+}>;
 
 export const SettingsLayout = ({ children }: React.PropsWithChildren) => {
     const pathname = usePathname();
@@ -63,6 +73,7 @@ export const SettingsLayout = ({ children }: React.PropsWithChildren) => {
     const defaultConfig = useSuspenseGetDefaultCodeReviewParameter();
     const platformConfig = useSuspenseGetParameterPlatformConfigs(teamId);
     const { repositoryId, pageName, directoryId } = useCodeReviewRouteParams();
+    const featureFlags = useFeatureFlags();
 
     const globalOverrideCount = countConfigOverrides(
         configValue.configs,
@@ -137,6 +148,16 @@ export const SettingsLayout = ({ children }: React.PropsWithChildren) => {
 
         return routes;
     }, [canReadGitSettings, canReadBilling, canReadPlugins, isMCPAvailable]);
+
+    const settingsRoutes = useMemo(
+        () =>
+            routes.filter(
+                (route) =>
+                    !route.featureFlag ||
+                    featureFlags?.[route.featureFlag] === true,
+            ),
+        [featureFlags],
+    );
 
     if (repositoryId && repositoryId !== "global") {
         const repository = safeArray(configValue?.repositories).find(
@@ -226,7 +247,7 @@ export const SettingsLayout = ({ children }: React.PropsWithChildren) => {
                                         <CollapsibleContent>
                                             <SidebarMenuItem>
                                                 <SidebarMenuSub>
-                                                    {routes.map(
+                                                    {settingsRoutes.map(
                                                         ({ label, href }) => {
                                                             const active =
                                                                 repositoryId ===
@@ -268,7 +289,7 @@ export const SettingsLayout = ({ children }: React.PropsWithChildren) => {
                                 )}
 
                                 <PerRepository
-                                    routes={routes}
+                                    routes={settingsRoutes}
                                     configValue={configValue}
                                     platformConfig={platformConfig}
                                 />

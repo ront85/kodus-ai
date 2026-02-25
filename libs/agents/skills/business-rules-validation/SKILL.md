@@ -1,9 +1,36 @@
 ---
+api-version: skills.kodus.ai/v1
+kind: Skill
 name: business-rules-validation
 description: Validate PR code changes against task requirements to identify missing, forgotten, or overlooked business logic implementations
+capabilities:
+  - pr.metadata.read
+  - pr.diff.read
+  - task.context.read
 allowed-tools:
   - KODUS_GET_PULL_REQUEST
   - KODUS_GET_PULL_REQUEST_DIFF
+fetcher-policy:
+  tool-mode: any
+  allow-without-tools: false
+execution-policy:
+  on-missing-mcp: fail
+  on-mcp-connect-error: fail
+  fetcher-timeout-ms: 120000
+  analyzer-timeout-ms: 120000
+  fetcher-max-iterations: 4
+  analyzer-max-iterations: 1
+contracts:
+  input:
+    required-context-fields:
+      - organizationAndTeamData.organizationId
+      - organizationAndTeamData.teamId
+      - prepareContext.pullRequestNumber
+      - prepareContext.repository.id
+  output:
+    required-fields:
+      - needsMoreInfo
+      - summary
 required-mcps:
   - category: task-management
     label: Task Management
@@ -25,14 +52,8 @@ Every validation must be grounded in specific business requirements from the ext
 - **PR_DIFF**: Code changes for this pull request
 - **TASK_QUALITY**: `EMPTY` | `MINIMAL` | `PARTIAL` | `COMPLETE` — quality assessment of task context
 
-## Validation Rules
-
-- `TASK_QUALITY = EMPTY` → `needsMoreInfo = true` — no business context to validate against
-- `TASK_QUALITY = MINIMAL` → `needsMoreInfo = true` — only a title/summary, insufficient for validation
-- Only PR description available (no external task) → `needsMoreInfo = true`
-- `TASK_QUALITY = PARTIAL` or `COMPLETE` → proceed with full gap analysis
-
-**NEVER** proceed with validation using only PR description as task context.
+`TASK_QUALITY` is classified by the runtime deterministic stage. Do not reclassify it.
+Apply the task-quality policy exactly as provided in the user prompt.
 
 ## Critical Analysis Questions
 

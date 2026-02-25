@@ -14,6 +14,7 @@ import type { CodeReviewLabel } from "@services/parameters/types";
 import { Controller, useFormContext } from "react-hook-form";
 import { safeArray } from "src/core/utils/safe-array";
 import { useCurrentConfigLevel } from "src/app/(app)/settings/_hooks";
+import { useFeatureFlags } from "src/app/(app)/settings/_components/context";
 
 import { FormattedConfigLevel, type CodeReviewFormType } from "../../../_types";
 import { OverrideIndicatorForm } from "../../../_components/override";
@@ -26,6 +27,7 @@ interface CheckboxCardOption {
 
 export const AnalysisTypes = () => {
     const currentLevel = useCurrentConfigLevel();
+    const { businessLogic } = useFeatureFlags();
     const form = useFormContext<CodeReviewFormType>();
     const codeReviewVersion = form.watch("codeReviewVersion.value") || "v2";
     const { data: labels = [], isLoading } =
@@ -33,11 +35,18 @@ export const AnalysisTypes = () => {
     const { isLoading: allLabelsLoading, allLabels } =
         useGetAllCodeReviewLabels();
     const initializedRef = useRef(false);
+    const isBusinessLogicEnabled = businessLogic === true;
+    const visibleLabels = safeArray<CodeReviewLabel>(labels).filter(
+        (label) => isBusinessLogicEnabled || label.type !== "business_logic",
+    );
+    const visibleAllLabels = safeArray<CodeReviewLabel>(allLabels).filter(
+        (label) => isBusinessLogicEnabled || label.type !== "business_logic",
+    );
 
     // Merge all categories ensuring boolean values - keep user's existing values
     useEffect(() => {
         if (
-            allLabels.length > 0 &&
+            visibleAllLabels.length > 0 &&
             !allLabelsLoading &&
             !initializedRef.current
         ) {
@@ -45,7 +54,7 @@ export const AnalysisTypes = () => {
             const mergedOptions = { ...currentOptions };
 
             // Add all categories from both versions with their current values or false as default
-            allLabels.forEach((label) => {
+            visibleAllLabels.forEach((label) => {
                 if (!mergedOptions[label.type]) {
                     mergedOptions[label.type] = {
                         value: false,
@@ -57,9 +66,9 @@ export const AnalysisTypes = () => {
             form.setValue("reviewOptions", mergedOptions);
             initializedRef.current = true;
         }
-    }, [allLabels.length, allLabelsLoading, form]); // Only run once when labels are loaded
+    }, [visibleAllLabels, allLabelsLoading, form]); // Only run once when labels are loaded
 
-    const reviewOptionsOptions: CheckboxCardOption[] = safeArray<CodeReviewLabel>(labels).map(
+    const reviewOptionsOptions: CheckboxCardOption[] = visibleLabels.map(
         (label) => ({
             value: label.type,
             name: label.name,
@@ -93,7 +102,7 @@ export const AnalysisTypes = () => {
                             onValueChange={(values) => {
                                 const currentOptions =
                                     form.getValues("reviewOptions") || {};
-                                const currentVersionOptions = safeArray<CodeReviewLabel>(labels).map(
+                                const currentVersionOptions = visibleLabels.map(
                                     (label) => label.type,
                                 );
 

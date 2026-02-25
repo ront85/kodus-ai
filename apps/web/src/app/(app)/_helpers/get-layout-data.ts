@@ -25,6 +25,7 @@ export const getLayoutData = cache(
             byokConfig,
             tokenUsagePageFeatureFlag,
             codeReviewDryRunFeatureFlag,
+            businessLogicFeatureFlag,
             committableSuggestionsFeatureFlag,
             ssoFeatureFlag,
             cliKeysFeatureFlag,
@@ -41,6 +42,9 @@ export const getLayoutData = cache(
             isFeatureEnabled({ feature: FEATURE_FLAGS.codeReviewDryRun }).catch(
                 () => false,
             ),
+            isFeatureEnabled({
+                feature: FEATURE_FLAGS.businessLogic,
+            }).catch(() => false),
             isFeatureEnabled({
                 feature: FEATURE_FLAGS.committableSuggestions,
                 identifier: "organization",
@@ -63,6 +67,7 @@ export const getLayoutData = cache(
             featureFlags: {
                 tokenUsagePage: tokenUsagePageFeatureFlag,
                 codeReviewDryRun: codeReviewDryRunFeatureFlag,
+                businessLogic: businessLogicFeatureFlag,
                 committableSuggestions: committableSuggestionsFeatureFlag,
                 sso: ssoFeatureFlag,
                 cliKeys: cliKeysFeatureFlag,

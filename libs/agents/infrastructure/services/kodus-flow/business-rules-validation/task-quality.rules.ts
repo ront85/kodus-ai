@@ -35,6 +35,12 @@ export function getTaskContextMissingInfoMessage(
 export const TASK_QUALITY_CLASSIFICATION_GUIDE =
     'EMPTY (no task found), MINIMAL (title only), PARTIAL (some description), COMPLETE (description + acceptance criteria)';
 
+export const TASK_QUALITY_ANALYZER_POLICY = `- EMPTY => needsMoreInfo = true
+- MINIMAL => needsMoreInfo = true
+- PARTIAL => proceed with full gap analysis
+- COMPLETE => proceed with full gap analysis
+- Never proceed using only PR description as task context.`;
+
 function buildEmptyContextMessage(): string {
     return `## 🤔 Need Task Information
 

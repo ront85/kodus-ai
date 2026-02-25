@@ -11,11 +11,17 @@ import { useGetSkillMeta } from "@services/skills/hooks";
 import { AlertTriangleIcon, CheckCircleIcon, PlugIcon } from "lucide-react";
 
 import { CodeReviewPagesBreadcrumb } from "../../_components/breadcrumb";
+import { useFeatureFlags } from "../../../_components/context";
 
 const SKILL_NAME = "business-rules-validation";
 
 export default function BusinessRules() {
+    const { businessLogic } = useFeatureFlags();
     const { data: meta } = useGetSkillMeta(SKILL_NAME);
+
+    if (businessLogic !== true) {
+        return null;
+    }
 
     const { data: plugins = [], isLoading: pluginsLoading } = useQuery({
         queryKey: ["mcp-plugins-business-rules"],

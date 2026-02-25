@@ -1,6 +1,26 @@
+import { Thread } from '@kodus/flow';
+
+import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
 import { BlueprintContext } from '@libs/shared/blueprint/blueprint.types';
 
 export type TaskQuality = 'EMPTY' | 'MINIMAL' | 'PARTIAL' | 'COMPLETE';
+
+export interface BusinessRulesPrepareContext extends Record<string, unknown> {
+    userQuestion?: string;
+    pullRequestNumber?: number;
+    pullRequestDescription?: string;
+    repository?: {
+        id?: string;
+        name?: string;
+        defaultBranch?: string;
+    };
+    pullRequest?: {
+        pullRequestNumber?: number;
+        headRef?: string;
+        baseRef?: string;
+    };
+    taskContext?: string;
+}
 
 export interface ValidationResult {
     needsMoreInfo: boolean;
@@ -14,6 +34,9 @@ export interface ValidationResult {
  * Each field is optional — it gets populated by the corresponding step.
  */
 export interface BusinessRulesContext extends BlueprintContext {
+    organizationAndTeamData: OrganizationAndTeamData;
+    thread?: Thread;
+    prepareContext?: BusinessRulesPrepareContext;
     /** Raw PR diff text fetched by fetchPRContext step */
     prDiff?: string;
     /** PR body/description fetched by fetchPRContext step */

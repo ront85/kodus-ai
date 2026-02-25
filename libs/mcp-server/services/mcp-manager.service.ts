@@ -272,15 +272,14 @@ export class MCPManagerService {
         let headers: Record<string, string> = {};
         let type: string = 'http';
         if (connection.provider === 'custom') {
-            const integration: MCPIntegrationInterface =
-                await this.axiosMCPManagerService.get(
-                    `mcp/integration/custom/${connection.integrationId}`,
-                    {
-                        headers: this.getAuthHeaders({
-                            organizationId: connection.organizationId,
-                        }),
-                    },
-                );
+            const integration: any = await this.axiosMCPManagerService.get(
+                `mcp/integration/custom/${connection.integrationId}`,
+                {
+                    headers: this.getAuthHeaders({
+                        organizationId: connection.organizationId,
+                    }),
+                },
+            );
 
             if (!integration) {
                 throw new Error(
