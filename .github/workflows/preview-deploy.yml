@@ -139,18 +139,50 @@ jobs:
             - name: Determine API URL
               id: api-url
               run: |
+                  BACKEND_CHANGED="${{ needs.detect-changes.outputs.backend }}"
                   RAILWAY_URL="${{ needs.resolve-backend-url.outputs.api_url }}"
-                  if [ -n "$RAILWAY_URL" ]; then
-                    echo "url=$RAILWAY_URL" >> $GITHUB_OUTPUT
-                    echo "Using Railway backend: $RAILWAY_URL"
+
+                  if [ "$BACKEND_CHANGED" = "true" ]; then
+                    if [ -z "$RAILWAY_URL" ]; then
+                      echo "::error::Backend changed, but Railway preview URL could not be resolved."
+                      exit 1
+                    fi
+
+                    API_HOST="$RAILWAY_URL"
+                    API_HOST="${API_HOST#https://}"
+                    API_HOST="${API_HOST#http://}"
+                    API_HOST="${API_HOST%/}"
+                    echo "url=$API_HOST" >> $GITHUB_OUTPUT
+                    echo "Using Railway backend: https://$API_HOST"
                   else
-                    echo "url=${{ vars.QA_API_URL }}" >> $GITHUB_OUTPUT
-                    echo "Using QA backend: ${{ vars.QA_API_URL }}"
+                    API_HOST="${{ vars.QA_API_URL }}"
+                    API_HOST="${API_HOST#https://}"
+                    API_HOST="${API_HOST#http://}"
+                    API_HOST="${API_HOST%/}"
+                    echo "url=$API_HOST" >> $GITHUB_OUTPUT
+                    echo "Using QA backend: https://$API_HOST"
                   fi
 
             - name: Pull Vercel environment
               working-directory: apps/web
               run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+
+            - name: Override API host in pulled Vercel env
+              working-directory: apps/web
+              run: |
+                  ENV_FILE=".vercel/.env.preview.local"
+
+                  if [ ! -f "$ENV_FILE" ]; then
+                    echo "::error::Expected $ENV_FILE after 'vercel pull'."
+                    exit 1
+                  fi
+
+                  cp "$ENV_FILE" "$ENV_FILE.bak"
+                  grep -v '^WEB_HOSTNAME_API=' "$ENV_FILE.bak" > "$ENV_FILE" || true
+                  echo "WEB_HOSTNAME_API=${{ steps.api-url.outputs.url }}" >> "$ENV_FILE"
+
+                  echo "Injected WEB_HOSTNAME_API in $ENV_FILE"
+                  grep '^WEB_HOSTNAME_API=' "$ENV_FILE"
 
             - name: Build project
               working-directory: apps/web
