@@ -941,7 +941,6 @@
         "**/public/uploads",
         "**/instance/*",
         "**/media",
-        "**/[Ll]ibrary/**",
         "**/[Tt]emp/**",
         "**/[Bb]uild/**",
         "**/[Bb]uilds/**",
@@ -1104,7 +1103,6 @@
         "**/backup/**",
         "**/archive/**",
         "**/deploy/**",
-        "**/staging/**",
         "**/prod/**",
         "**/bundler.js",
         "**/build.js"
