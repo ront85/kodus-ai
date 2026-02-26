@@ -162,6 +162,12 @@ export class GetModelsByProviderUseCase {
     }
 
     private async getAnthropicModels(apiKey?: string): Promise<ModelResponse> {
+        // If no server-side API key is configured (BYOK-only deployments),
+        // return a curated static list rather than failing with 401.
+        if (!apiKey) {
+            return this.getAnthropicStaticModels();
+        }
+
         try {
             const response = await axios.get<AnthropicResponse>(
                 'https://api.anthropic.com/v1/models',
@@ -176,16 +182,55 @@ export class GetModelsByProviderUseCase {
 
             return {
                 provider: BYOKProvider.ANTHROPIC,
-                models: response.data.data.map((model: AnthropicModel) => ({
-                    id: model.id,
-                    name: model.display_name || model.id,
-                })),
+                models: response.data.data.map((model: AnthropicModel) => {
+                    const capabilities = getModelCapabilities(model.id);
+                    return {
+                        id: model.id,
+                        name: model.display_name || model.id,
+                        ...(capabilities.supportsReasoning && {
+                            supportsReasoning: true,
+                            reasoningConfig: capabilities.reasoningConfig,
+                        }),
+                    };
+                }),
             };
         } catch (error) {
-            throw new BadRequestException(
-                `Error fetching Anthropic models: ${(error as Error).message}`,
-            );
+            // Fall back to static list on any auth/network error
+            this.logger.warn({
+                message: `Anthropic models API failed (${(error as Error).message}), returning static list`,
+                context: GetModelsByProviderUseCase.name,
+            });
+            return this.getAnthropicStaticModels();
         }
+    }
+
+    private getAnthropicStaticModels(): ModelResponse {
+        const staticModels = [
+            { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
+            { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
+            { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+            { id: 'claude-opus-4-0', name: 'Claude Opus 4' },
+            { id: 'claude-sonnet-4-0', name: 'Claude Sonnet 4' },
+            { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet' },
+            { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
+            { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
+            { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus' },
+        ];
+
+        return {
+            provider: BYOKProvider.ANTHROPIC,
+            models: staticModels.map(({ id, name }) => {
+                const capabilities = getModelCapabilities(id);
+                return {
+                    id,
+                    name,
+                    ...(capabilities.supportsReasoning && {
+                        supportsReasoning: true,
+                        reasoningConfig: capabilities.reasoningConfig,
+                    }),
+                };
+            }),
+        };
     }
 
     private async getGeminiModels(apiKey?: string): Promise<ModelResponse> {
