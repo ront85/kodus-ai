@@ -179,7 +179,7 @@ export class BYOKProviderService {
             }
             // Validate if apiKey is valid JSON
             try {
-                JSON.parse(providerConfig.apiKey);
+                JSON.parse(providerConfig.apiKey ?? '');
             } catch {
                 errors.push(
                     'apiKey must be a valid JSON service account key for Google Vertex AI',
