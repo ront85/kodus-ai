@@ -45,13 +45,26 @@ export const ByokKeyInput = () => {
 
                         {foundProvider.subscriptionTokenInstructions && (
                             <div className="bg-card-lv2 text-text-secondary rounded-md p-3 text-xs">
-                                <p>{foundProvider.subscriptionTokenInstructions}</p>
+                                <p className="font-medium mb-1.5">How to get your token:</p>
+                                {foundProvider.subscriptionTokenInstructions
+                                    .split("\n")
+                                    .map((line, i) => (
+                                        <p key={i} className={line === "" ? "mt-2" : "leading-relaxed"}>
+                                            {line.startsWith("Run:") ? (
+                                                <>
+                                                    {line.replace("Run:", "").trimStart() === "" ? null : (
+                                                        <>Run: <code className="bg-card-lv3 rounded px-1 font-mono">{line.replace(/^Run:\s*/, "")}</code></>
+                                                    )}
+                                                </>
+                                            ) : line}
+                                        </p>
+                                    ))}
                                 {foundProvider.subscriptionTokenSetupUrl && (
                                     <a
                                         href={foundProvider.subscriptionTokenSetupUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="text-primary mt-1 inline-flex items-center gap-1 underline">
+                                        className="text-primary mt-2 inline-flex items-center gap-1 underline">
                                         View setup docs
                                         <ExternalLinkIcon className="h-3 w-3" />
                                     </a>

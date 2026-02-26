@@ -34,7 +34,7 @@ export class ProviderService {
             requiresBaseUrl: false,
             supportsSubscriptionToken: true,
             subscriptionTokenSetupUrl: 'https://docs.anthropic.com/en/docs/claude-code/setup-token',
-            subscriptionTokenInstructions: 'Run `claude setup-token` in your terminal (requires Claude Code with Pro/Max/Team subscription) and paste the token here.',
+            subscriptionTokenInstructions: '1. Open your terminal\n2. Run: claude setup-token\n3. Copy the token that starts with sk-ant-oat01-\n4. Paste it in the field above\n\nRequires Claude Code CLI with a Pro, Max, or Team subscription.',
         },
         [BYOKProvider.GOOGLE_GEMINI]: {
             id: BYOKProvider.GOOGLE_GEMINI,
