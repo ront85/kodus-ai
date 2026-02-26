@@ -150,6 +150,24 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult)
     })
 
+    it('should handle error when ignoreBotsUseCase fails', async () => {
+        const mockResult = { success: true, status: 'Integration Github Create with Success' };
+        mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
+        mockAuthIntegrationService.findOne.mockResolvedValue({
+            uuid: 'auth-integrattion-uuid',
+        });
+        MockIgnoreBotsUseCase.execute.mockRejectedValue(new Error('bot ignore failed'));
+
+        const result = await useCase.execute({
+            integrationType: PlatformType.GITHUB,
+            authMode: AuthMode.TOKEN,
+            token: 'ghp_test_token',
+            organizationAndTeamData: { teamId: 'team-uuid-123' },
+        });
+        expect(result).toEqual(mockResult);
+    });
+
+
 
 
 
@@ -235,7 +253,25 @@ describe('CreateIntegrationUseCase', () => {
             PlatformType.GITLAB,
         );
         expect(result).toEqual(mockResult)
-    })
+    });
+
+    it('should handle error when ignoreBotsUseCase fails', async () => {
+        const mockResult = { success: true, status: 'Integration Gitlab Create with Success' };
+        mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
+        mockAuthIntegrationService.findOne.mockResolvedValue({
+            uuid: 'auth-integrattion-uuid',
+        });
+        MockIgnoreBotsUseCase.execute.mockRejectedValue(new Error('bot ignore failed'));
+
+        const result = await useCase.execute({
+            integrationType: PlatformType.GITLAB,
+            authMode: AuthMode.TOKEN,
+            token: 'ghp_test_token',
+            organizationAndTeamData: { teamId: 'team-uuid-123' },
+        });
+        expect(result).toEqual(mockResult);
+    });
+
 
 
 
@@ -274,6 +310,24 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult);
     });
 
+    it('should handle error when ignoreBotsUseCase fails', async () => {
+        const mockResult = { success: true, status: 'Integration Github Create with Success' };
+        mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
+        mockAuthIntegrationService.findOne.mockResolvedValue({
+            uuid: 'auth-integrattion-uuid',
+        });
+        MockIgnoreBotsUseCase.execute.mockRejectedValue(new Error('bot ignore failed'));
+
+        const result = await useCase.execute({
+            integrationType: PlatformType.BITBUCKET,
+            authMode: AuthMode.TOKEN,
+            token: 'ghp_test_token',
+            organizationAndTeamData: { teamId: 'team-uuid-123' },
+        });
+        expect(result).toEqual(mockResult);
+    });
+
+
 
 
 
@@ -310,6 +364,28 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult);
     });
 
+    it('should handle error when ignoreBotsUseCase fails', async () => {
+        const mockResult = { success: true, status: 'Integration Github Create with Success' };
+        mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
+        mockAuthIntegrationService.findOne.mockResolvedValue({
+            uuid: 'auth-integrattion-uuid',
+        });
+        MockIgnoreBotsUseCase.execute.mockRejectedValue(new Error('bot ignore failed'));
+
+        const result = await useCase.execute({
+            integrationType: PlatformType.AZURE_REPOS,
+            authMode: AuthMode.TOKEN,
+            token: 'ghp_test_token',
+            organizationAndTeamData: { teamId: 'team-uuid-123' },
+        });
+        expect(result).toEqual(mockResult);
+    });
+
+
+
+
+
+
     // testa a integração via token pelo forjeto
     it('should create Forgejo integration with token', async () => {
         const mockResult = {
@@ -342,4 +418,41 @@ describe('CreateIntegrationUseCase', () => {
         );
         expect(result).toEqual(mockResult);
     });
+
+    it('should handle error when ignoreBotsUseCase fails', async () => {
+        const mockResult = { success: true, status: 'Integration Github Create with Success' };
+        mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
+        mockAuthIntegrationService.findOne.mockResolvedValue({
+            uuid: 'auth-integrattion-uuid',
+        });
+        MockIgnoreBotsUseCase.execute.mockRejectedValue(new Error('bot ignore failed'));
+
+        const result = await useCase.execute({
+            integrationType: PlatformType.FORGEJO,
+            authMode: AuthMode.TOKEN,
+            token: 'ghp_test_token',
+            organizationAndTeamData: { teamId: 'team-uuid-123' },
+        });
+        expect(result).toEqual(mockResult);
+    });
+
+
+
+    it('should handle error when registerIntegrationLog fails', async () => {
+        const mockResult = { success: true, status: 'Integration Github Create with Success' };
+        mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
+        mockAuthIntegrationService.findOne.mockResolvedValue({
+            uuid: 'auth-integration-uuid',
+        });
+        mockCodeReviewSettingsLogService.registerIntegrationLog.mockRejectedValue(new Error('Log failed'));
+        
+        const result = await useCase.execute({
+            integrationType: PlatformType.GITHUB,
+            authMode: AuthMode.TOKEN,
+            token: 'ghp_test_token',
+            organizationAndTeamData: { teamId: 'team-uuid-123' },
+        });
+        expect(result).toEqual(mockResult);
+    });
+
 });
