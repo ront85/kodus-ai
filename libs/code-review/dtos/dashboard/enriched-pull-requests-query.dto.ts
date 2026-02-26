@@ -6,8 +6,10 @@ import {
     Max,
     IsBoolean,
     IsInt,
+    IsIn,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { PULL_REQUEST_AUTHOR_POLICIES } from './pull-request-author-policy.constants';
 
 export class EnrichedPullRequestsQueryDto {
     @IsOptional()
@@ -65,4 +67,14 @@ export class EnrichedPullRequestsQueryDto {
     @IsString()
     @ApiPropertyOptional()
     teamId?: string;
+
+    @IsOptional()
+    @IsString()
+    @IsIn(PULL_REQUEST_AUTHOR_POLICIES)
+    @ApiPropertyOptional({
+        enum: PULL_REQUEST_AUTHOR_POLICIES,
+        description:
+            'Filter pull requests by author policy: all, reviewable (not excluded), or excluded.',
+    })
+    authorPolicy?: (typeof PULL_REQUEST_AUTHOR_POLICIES)[number];
 }

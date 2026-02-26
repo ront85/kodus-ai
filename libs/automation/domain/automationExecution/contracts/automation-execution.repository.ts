@@ -33,6 +33,7 @@ export interface IAutomationExecutionRepository {
         skip?: number;
         take?: number;
         order?: 'ASC' | 'DESC';
+        includeTotal?: boolean;
     }): Promise<{
         data: AutomationExecutionEntity[];
         total: number;

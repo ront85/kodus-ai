@@ -462,6 +462,12 @@ export class AutomationCodeReviewService implements Omit<
             });
         }
 
+        if (result.businessLogicPrBodyHash) {
+            Object.assign(baseData, {
+                businessLogicHash: result.businessLogicPrBodyHash,
+            });
+        }
+
         return baseData;
     }
 }

@@ -75,6 +75,10 @@ class ReviewOptionsDto {
     @IsOptional()
     @IsBoolean()
     cross_file?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    business_logic?: boolean;
 }
 
 class SummaryConfigDto {

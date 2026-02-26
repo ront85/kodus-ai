@@ -86,6 +86,13 @@ export function createMCPAdapter(config: MCPAdapterConfig): MCPAdapter {
                 await this.disconnect();
             }
 
+            if (!config.servers.length) {
+                isConnected = false;
+                throw new Error(
+                    'No MCP servers configured. Unable to establish MCP connection.',
+                );
+            }
+
             const promises = config.servers.map((server) =>
                 registry.register(server).catch((error) => {
                     if (config.onError) {
@@ -99,6 +106,9 @@ export function createMCPAdapter(config: MCPAdapterConfig): MCPAdapter {
 
             const rejected = results.filter(
                 (result) => result.status === 'rejected',
+            );
+            const successful = results.filter(
+                (result) => result.status === 'fulfilled',
             );
 
             if (rejected.length > 0) {
@@ -114,6 +124,13 @@ export function createMCPAdapter(config: MCPAdapterConfig): MCPAdapter {
                         error: result.reason,
                     });
                 }
+            }
+
+            if (successful.length === 0) {
+                isConnected = false;
+                throw new Error(
+                    'Failed to connect to any MCP server. Check MCP server health and credentials.',
+                );
             }
 
             isConnected = true;

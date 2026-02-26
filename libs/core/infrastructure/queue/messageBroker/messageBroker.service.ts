@@ -22,6 +22,10 @@ export class MessageBrokerService implements IMessageBrokerService {
         }
     }
 
+    isConnected(): boolean {
+        return !!this.amqpConnection?.connected;
+    }
+
     async publishMessage(
         config: BrokerConfig,
         message: MessagePayload,

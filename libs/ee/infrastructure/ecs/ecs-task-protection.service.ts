@@ -5,16 +5,27 @@ import { catchError, firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { ITaskProtectionService } from '@libs/core/workflow/domain/contracts/task-protection.service.contract';
 
+const DEFAULT_ECS_TASK_PROTECTION_TIMEOUT_MS = 5000;
+
 @Injectable()
 export class EcsTaskProtectionService implements ITaskProtectionService {
     private readonly logger = new Logger(EcsTaskProtectionService.name);
     private readonly ecsAgentUri: string | undefined;
+    private readonly requestTimeoutMs: number;
 
     constructor(
         private readonly httpService: HttpService,
         private readonly configService: ConfigService,
     ) {
         this.ecsAgentUri = this.configService.get<string>('API_ECS_AGENT_URI');
+        const configuredTimeout = this.configService.get<string>(
+            'API_ECS_TASK_PROTECTION_TIMEOUT_MS',
+        );
+        const parsedTimeout = Number.parseInt(configuredTimeout ?? '', 10);
+        this.requestTimeoutMs =
+            Number.isFinite(parsedTimeout) && parsedTimeout > 0
+                ? parsedTimeout
+                : DEFAULT_ECS_TASK_PROTECTION_TIMEOUT_MS;
     }
 
     async protectTask(expiresInMinutes: number): Promise<void> {
@@ -28,10 +39,14 @@ export class EcsTaskProtectionService implements ITaskProtectionService {
         try {
             await firstValueFrom(
                 this.httpService
-                    .put(`${this.ecsAgentUri}/task-protection/v1/state`, {
-                        ProtectionEnabled: true,
-                        ExpiresInMinutes: expiresInMinutes,
-                    })
+                    .put(
+                        `${this.ecsAgentUri}/task-protection/v1/state`,
+                        {
+                            ProtectionEnabled: true,
+                            ExpiresInMinutes: expiresInMinutes,
+                        },
+                        { timeout: this.requestTimeoutMs },
+                    )
                     .pipe(
                         catchError((error: AxiosError) => {
                             this.logger.error(
@@ -63,9 +78,13 @@ export class EcsTaskProtectionService implements ITaskProtectionService {
         try {
             await firstValueFrom(
                 this.httpService
-                    .put(`${this.ecsAgentUri}/task-protection/v1/state`, {
-                        ProtectionEnabled: false,
-                    })
+                    .put(
+                        `${this.ecsAgentUri}/task-protection/v1/state`,
+                        {
+                            ProtectionEnabled: false,
+                        },
+                        { timeout: this.requestTimeoutMs },
+                    )
                     .pipe(
                         catchError((error: AxiosError) => {
                             this.logger.error(

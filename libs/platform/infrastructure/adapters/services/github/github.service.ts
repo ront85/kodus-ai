@@ -2748,7 +2748,6 @@ export class GithubService
         );
 
         const octokit = await this.instanceOctokit(organizationAndTeamData);
-
         const files = await octokit.paginate(octokit.rest.pulls.listFiles, {
             owner: githubAuthDetail?.org,
             repo: repository?.name,
@@ -5654,7 +5653,6 @@ This is an experimental feature that generates committable changes. Review the d
     }): Promise<string> {
         const {
             suggestion,
-            repository,
             includeHeader = true,
             includeFooter = true,
             language,

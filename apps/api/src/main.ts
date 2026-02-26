@@ -23,7 +23,10 @@ import { ObservabilityService } from '@libs/core/log/observability.service';
 
 import { ApiModule } from './api.module';
 import { LoggerWrapperService } from '@libs/core/log/loggerWrapper.service';
-import { buildDocsConfig, createDocsBasicAuthMiddleware } from './docs/docs-guard';
+import {
+    buildDocsConfig,
+    createDocsBasicAuthMiddleware,
+} from './docs/docs-guard';
 import { ApiErrorDto } from './dtos/api-error.dto';
 
 declare const module: any;

@@ -209,17 +209,19 @@ export class AutomationExecutionRepository implements IAutomationExecutionReposi
         skip?: number;
         take?: number;
         order?: 'ASC' | 'DESC';
+        includeTotal?: boolean;
     }): Promise<{ data: AutomationExecutionEntity[]; total: number }> {
         const {
             organizationAndTeamData,
             repositoryIds,
             repositoryName,
             pullRequestNumber,
-            pullRequestTitle,
+            pullRequestTitle: _pullRequestTitle,
             prFilters,
             skip = 0,
             take = 30,
             order = 'DESC',
+            includeTotal = true,
         } = params;
 
         try {
@@ -311,10 +313,13 @@ export class AutomationExecutionRepository implements IAutomationExecutionReposi
                 queryBuilder.andWhere(`(${prConditions})`, prParams);
             }
 
-            const total = await queryBuilder.getCount();
+            let total = 0;
+            if (includeTotal) {
+                total = await queryBuilder.getCount();
 
-            if (total === 0) {
-                return { data: [], total: 0 };
+                if (total === 0) {
+                    return { data: [], total: 0 };
+                }
             }
 
             const executions = await queryBuilder

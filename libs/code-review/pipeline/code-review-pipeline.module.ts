@@ -21,6 +21,7 @@ import { ValidatePrerequisitesStage } from './stages/validate-prerequisites.stag
 // EE Stages
 
 // Interfaces
+import { AgentsModule } from '@libs/agents/modules/agents.module';
 import { AIEngineModule } from '@libs/ai-engine/modules/ai-engine.module';
 import { AutomationModule } from '@libs/automation/modules/automation.module';
 import { PIPELINE_CHECKS_SERVICE_TOKEN } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-checks-service.interface';
@@ -63,6 +64,7 @@ import { CodeReviewPipelineStrategy } from './strategy/code-review-pipeline.stra
         forwardRef(() => PullRequestsModule),
         forwardRef(() => ParametersModule),
         forwardRef(() => OrganizationParametersModule),
+        forwardRef(() => AgentsModule),
         forwardRef(() => AIEngineModule),
         forwardRef(() => PlatformModule),
         forwardRef(() => KodyFineTuningContextModule),

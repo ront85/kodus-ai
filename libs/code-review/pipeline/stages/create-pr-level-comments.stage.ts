@@ -82,7 +82,10 @@ export class CreatePrLevelCommentsStage extends BasePipelineStage<CodeReviewPipe
             }
 
             // Verificar se há sugestões de nível de PR para processar
-            const prLevelSuggestions = context?.validSuggestionsByPR || [];
+            const prLevelSuggestions = [
+                ...(context?.validSuggestionsByPR ?? []),
+                ...(context?.businessLogicResults ?? []),
+            ];
 
             if (prLevelSuggestions.length === 0) {
                 this.logger.log({
@@ -94,7 +97,7 @@ export class CreatePrLevelCommentsStage extends BasePipelineStage<CodeReviewPipe
                         prNumber: context.pullRequest.number,
                     },
                 });
-                return this.updateContext(context, (draft) => {});
+                return context;
             }
 
             try {
