@@ -206,15 +206,14 @@ export class GetModelsByProviderUseCase {
 
     private getAnthropicStaticModels(): ModelResponse {
         const staticModels = [
-            { id: 'claude-opus-4-5', name: 'Claude Opus 4.5' },
-            { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
-            { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
-            { id: 'claude-opus-4-0', name: 'Claude Opus 4' },
-            { id: 'claude-sonnet-4-0', name: 'Claude Sonnet 4' },
+            { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5' },
+            { id: 'claude-sonnet-4-5-20251101', name: 'Claude Sonnet 4.5' },
+            { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
+            { id: 'claude-opus-4-0-20250514', name: 'Claude Opus 4' },
+            { id: 'claude-sonnet-4-0-20250514', name: 'Claude Sonnet 4' },
             { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet' },
             { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
             { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
-            { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus' },
         ];
 
         return {
