@@ -14,6 +14,7 @@ import {
 } from "@components/ui/tooltip";
 import type { CodeReviewTimelineItem } from "@services/pull-requests";
 import { buildPullRequestUrl } from "@services/pull-requests";
+import { useGetTimezone } from "@services/organizationParameters/hooks";
 import { ChevronDownIcon, ExternalLinkIcon, GitBranchIcon } from "lucide-react";
 import { cn } from "src/core/utils/components";
 
@@ -22,6 +23,21 @@ import type { PullRequestExecutionGroup } from "./types";
 interface PrListItemProps {
     group: PullRequestExecutionGroup;
 }
+
+const formatDateTime = (dateString: string, timezone: string | null) => {
+    const tz = timezone || "UTC";
+    try {
+        const date = new Date(dateString);
+        const year = date.toLocaleString("en-CA", { timeZone: tz, year: "numeric" });
+        const month = date.toLocaleString("en-CA", { timeZone: tz, month: "2-digit" });
+        const day = date.toLocaleString("en-CA", { timeZone: tz, day: "2-digit" });
+        const hour = date.toLocaleString("en-GB", { timeZone: tz, hour: "2-digit", hour12: false });
+        const minute = date.toLocaleString("en-GB", { timeZone: tz, minute: "2-digit" });
+        return `${year}-${month}-${day} ${hour}:${minute.padStart(2, "0")}`;
+    } catch {
+        return dateString;
+    }
+};
 
 const formatTimeAgo = (dateString: string) => {
     const now = new Date();
@@ -45,14 +61,14 @@ const formatTimeAgo = (dateString: string) => {
     return `${diffInMonths} month${diffInMonths > 1 ? "s" : ""} ago`;
 };
 
-const TimeAgoDisplay = ({ dateString }: { dateString: string }) => {
+const TimeAgoDisplay = ({ dateString, timezone }: { dateString: string; timezone: string | null }) => {
     const [displayedTime, setDisplayedTime] = useState(dateString);
 
     useEffect(() => {
         setDisplayedTime(formatTimeAgo(dateString));
     }, [dateString]);
 
-    return <>{displayedTime}</>;
+    return <>{displayedTime} · {formatDateTime(dateString, timezone)}</>;
 };
 
 const formatDuration = (start: string, end?: string | null) => {
@@ -287,6 +303,7 @@ const isAutomationStartMessage = (message: string) => {
 
 export const PrListItem = ({ group }: PrListItemProps) => {
     const { latest, executions, reviewCount } = group;
+    const timezone = useGetTimezone();
     const [isOpen, setIsOpen] = useState(false);
     const [collapsedReviews, setCollapsedReviews] = useState<Set<number>>(
         () => new Set(executions.slice(1).map((_, i) => i + 1)),
@@ -386,7 +403,7 @@ export const PrListItem = ({ group }: PrListItemProps) => {
                 </TableCell>
                 <TableCell className="w-32">
                     <span className="text-text-tertiary text-sm tabular-nums">
-                        <TimeAgoDisplay dateString={latest.createdAt} />
+                        <TimeAgoDisplay dateString={latest.createdAt} timezone={timezone} />
                     </span>
                 </TableCell>
                 <TableCell className="w-20 text-center">
@@ -541,6 +558,7 @@ export const PrListItem = ({ group }: PrListItemProps) => {
                                                             dateString={
                                                                 executionStartedAt
                                                             }
+                                                            timezone={timezone}
                                                         />
                                                     </span>
                                                 )}
@@ -700,6 +718,12 @@ export const PrListItem = ({ group }: PrListItemProps) => {
                                                                                         {
                                                                                             stageInfo.duration
                                                                                         }
+                                                                                    </p>
+                                                                                )}
+                                                                                {item.createdAt &&
+                                                                                    !isAutomationStart && (
+                                                                                    <p className="text-text-tertiary text-xs tabular-nums">
+                                                                                        Started: {formatDateTime(item.createdAt, timezone)}
                                                                                     </p>
                                                                                 )}
                                                                                 {item.status ===
