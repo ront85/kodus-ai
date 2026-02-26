@@ -82,6 +82,9 @@ const PROPERTY_CONFIGS: Record<string, PropertyConfig> = {
     'showStatusFeedback': {
         actionDescription: 'Show Status Feedback',
     },
+    'crossFileDependenciesAnalysis': {
+        actionDescription: 'Crossfile Dependencies Analysis',
+    },
     //#endregion
 
     //#region Suggestion Control

@@ -33,6 +33,19 @@ export class CollectCrossFileContextStage extends BasePipelineStage<CodeReviewPi
     protected async executeStage(
         context: CodeReviewPipelineContext,
     ): Promise<CodeReviewPipelineContext> {
+        // Guard: skip if crossFileDependenciesAnalysis is disabled
+        if (context.codeReviewConfig?.crossFileDependenciesAnalysis === false) {
+            this.logger.log({
+                message: `Skipping cross-file context collection: crossFileDependenciesAnalysis is disabled for PR#${context?.pullRequest?.number}`,
+                context: this.stageName,
+                metadata: {
+                    organizationAndTeamData: context?.organizationAndTeamData,
+                    prNumber: context?.pullRequest?.number,
+                },
+            });
+            return context;
+        }
+        
         // Guard: skip if no changed files
         if (!context?.changedFiles?.length) {
             this.logger.log({

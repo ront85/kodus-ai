@@ -63,6 +63,9 @@ import { KodyRulesValidationService } from '../kodyRules/service/kody-rules-vali
 const GLOBAL_IGNORE_PATHS_CACHE_KEY = 'global:ignore_paths';
 const GLOBAL_IGNORE_PATHS_CACHE_TTL = 43200000; // 12 hours
 
+const IP_E2B_CACHE_KEY = 'global:ip_e2b';
+const IP_E2B_CACHE_TTL = 604800000; // 1 week
+
 @Injectable()
 export default class CodeBaseConfigService implements ICodeBaseConfigService {
     private readonly logger = createLogger(CodeBaseConfigService.name);
@@ -729,6 +732,62 @@ export default class CodeBaseConfigService implements ICodeBaseConfigService {
             return globalIgnorePathsJson?.paths ?? [];
         }
     }
+
+    async getE2BIpAddress(): Promise<string | null> {
+        try {
+            const cachedData = await this.cacheService.getFromCache<{
+                ip: string;
+                updatedAt: string;
+            }>(IP_E2B_CACHE_KEY);
+
+            if (cachedData) {
+                const dbUpdatedAt =
+                    await this.globalParametersService.findUpdatedAtByKey(
+                        GlobalParametersKey.IP_E2B,
+                    );
+
+                if (
+                    !dbUpdatedAt ||
+                    new Date(cachedData.updatedAt) >= new Date(dbUpdatedAt)
+                ) {
+                    return cachedData.ip;
+                }
+            }
+
+            const globalParameters =
+                await this.globalParametersService.findByKey(
+                    GlobalParametersKey.IP_E2B,
+                );
+
+            if (globalParameters?.configValue?.ip) {
+                const ip = globalParameters.configValue.ip as string;
+
+                await this.cacheService.addToCache(
+                    IP_E2B_CACHE_KEY,
+                    {
+                        ip,
+                        updatedAt:
+                            globalParameters.updatedAt?.toISOString() ??
+                            new Date().toISOString(),
+                    },
+                    IP_E2B_CACHE_TTL,
+                );
+
+                return ip;
+            }
+
+            return null;
+        } catch (error) {
+            this.logger.error({
+                message: 'Error getting E2B IP address',
+                context: CodeBaseConfigService.name,
+                error,
+            });
+
+            return null;
+        }
+    }
+
     private resolveConfigByDirectories(
         organizationAndTeamData: OrganizationAndTeamData,
         repoConfig: RepositoryCodeReviewConfig,
