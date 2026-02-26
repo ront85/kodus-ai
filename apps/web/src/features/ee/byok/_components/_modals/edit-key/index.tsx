@@ -66,7 +66,6 @@ export const BYOKEditKeyModal = ({
     const { isValid, isSubmitting } = form.formState;
 
     const provider = form.watch("provider");
-    const model = form.watch("model");
 
     const handleSubmit = form.handleSubmit(async (formData) => {
         await onSave({
@@ -167,6 +166,17 @@ export const BYOKEditKeyModal = ({
                                     <ErrorBoundary
                                         onReset={reset}
                                         resetKeys={[provider]}
+                                        fallbackRender={() => null}>
+                                        <Suspense fallback={null}>
+                                            <ByokKeyInput />
+                                        </Suspense>
+                                    </ErrorBoundary>
+                                )}
+
+                                {provider && (
+                                    <ErrorBoundary
+                                        onReset={reset}
+                                        resetKeys={[provider]}
                                         fallbackRender={({
                                             resetErrorBoundary,
                                         }) => (
@@ -211,44 +221,6 @@ export const BYOKEditKeyModal = ({
                                         </Suspense>
                                     </ErrorBoundary>
                                 )}
-
-                                {model?.trim().length > 0 &&
-                                    (showKeyInput ? (
-                                        <ErrorBoundary
-                                            onReset={reset}
-                                            resetKeys={[provider, model]}
-                                            fallbackRender={() => null}>
-                                            <Suspense fallback={null}>
-                                                <ByokKeyInput />
-                                            </Suspense>
-                                        </ErrorBoundary>
-                                    ) : (
-                                        <FormControl.Root>
-                                            <FormControl.Label>
-                                                Key
-                                            </FormControl.Label>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-text-secondary flex items-center gap-2 text-sm">
-                                                    <KeyRoundIcon size={14} />
-                                                    {config?.apiKey}
-                                                </span>
-                                                <Button
-                                                    type="button"
-                                                    variant="tertiary"
-                                                    size="xs"
-                                                    leftIcon={
-                                                        <PencilIcon
-                                                            size={12}
-                                                        />
-                                                    }
-                                                    onClick={() =>
-                                                        setShowKeyInput(true)
-                                                    }>
-                                                    Change key
-                                                </Button>
-                                            </div>
-                                        </FormControl.Root>
-                                    ))}
 
                                 {model?.trim().length > 0 && (
                                     <ByokAdvancedSettings />
