@@ -137,6 +137,7 @@ export const SelectRepositoriesModal = (props: {
 
         setUploadProgress({ current: 0, total: 0 });
         router.push("/settings/git");
+        router.refresh();
     });
 
     const hasChanges = useMemo(() => {
