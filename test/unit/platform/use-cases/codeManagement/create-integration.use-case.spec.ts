@@ -66,6 +66,7 @@ describe('CreateIntegrationUseCase', () => {
         );
     });
 
+    // testa a integração via token pelo github
     it('should create Github integration with token', async () => {
         const mockResult = {
             success: true,
@@ -98,6 +99,7 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult);
     });
 
+    // testa a integração via auth pelo github
     it('should use OAuth as default authMode when not provided', async () => {
         const mockResult = { success: true, status: 'Integration Github Create with OAuth' };
         mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
@@ -120,9 +122,38 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult);
     });
 
+    // testa a integração via organizationId pelo github
+    it('should use organizationId from request when not providend in params', async () => {
+        const mockResult = {
+            success: true,
+            status: 'Integration Github Create with Success'
+        };
+        mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
+        mockAuthIntegrationService.findOne.mockResolvedValue({
+            uuid: 'auth-integration-uuid',
+        });
+
+        const result = await useCase.execute({
+            integrationType: PlatformType.GITHUB,
+            authMode: AuthMode.TOKEN,
+            token: 'ghp_test_token',
+        });
+        expect(mockCodeManagementService.createAuthIntegration).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                organizationAndTeamData: {
+                    organizationId: 'org-uuid-123',
+                    teamId: undefined,
+                },
+            }),
+            PlatformType.GITHUB,
+        );
+        expect(result).toEqual(mockResult)
+    })
 
 
 
+
+    // testa a integração via token pelo gitlab
     it('should create Gitlab integration with token', async () => {
         const mockResult = {
             success: true,
@@ -155,6 +186,7 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult);
     });
 
+    // testa a integração via auth pelo gilab
     it('should use OAuth as default authMode when not provided', async () => {
         const mockResult = { success: true, status: 'Integration Gitlab Create with OAuth' };
         mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
@@ -177,8 +209,39 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult);
     });
 
+    // testa a integração via organizationId pelo gitlab
+    it('should use organizationId from request when not providend in params', async () => {
+        const mockResult = {
+            success: true,
+            status: 'Integration Gitlab Create with Success'
+        };
+        mockCodeManagementService.createAuthIntegration.mockResolvedValue(mockResult);
+        mockAuthIntegrationService.findOne.mockResolvedValue({
+            uuid: 'auth-integration-uuid',
+        });
+
+        const result = await useCase.execute({
+            integrationType: PlatformType.GITLAB,
+            authMode: AuthMode.TOKEN,
+            token: 'ghp_test_token',
+        });
+        expect(mockCodeManagementService.createAuthIntegration).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                organizationAndTeamData: {
+                    organizationId: 'org-uuid-123',
+                    teamId: undefined,
+                },
+            }),
+            PlatformType.GITLAB,
+        );
+        expect(result).toEqual(mockResult)
+    })
 
 
+
+
+
+    // testa a integração via token pelo bitbucket
     it('should create Bitbucket integration with token', async () => {
         const mockResult = {
             success: true,
@@ -211,6 +274,10 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult);
     });
 
+
+
+
+    // testa a integração via token pelo azure repos
     it('should create Azure Repos integration with token', async () => {
         const mockResult = {
             success: true,
@@ -243,6 +310,7 @@ describe('CreateIntegrationUseCase', () => {
         expect(result).toEqual(mockResult);
     });
 
+    // testa a integração via token pelo forjeto
     it('should create Forgejo integration with token', async () => {
         const mockResult = {
             success: true,
