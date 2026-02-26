@@ -5,7 +5,7 @@ import { AdapterBuildParams, ProviderAdapter } from './types';
 
 export class OpenAIAdapter implements ProviderAdapter {
     build(params: AdapterBuildParams): ChatOpenAI {
-        const { model, apiKey, baseURL, options } = params;
+        const { model, apiKey, subscriptionToken, baseURL, options } = params;
         const resolved = resolveModelOptions(model, {
             temperature: options?.temperature,
             maxTokens: options?.maxTokens,
@@ -24,7 +24,7 @@ export class OpenAIAdapter implements ProviderAdapter {
 
         const payload: ConstructorParameters<typeof ChatOpenAI>[0] = {
             model,
-            apiKey,
+            apiKey: subscriptionToken ? 'subscription-token' : apiKey,
             ...(resolved.resolvedMaxTokens
                 ? { maxTokens: resolved.resolvedMaxTokens }
                 : {}),
@@ -53,6 +53,13 @@ export class OpenAIAdapter implements ProviderAdapter {
             callbacks: options?.callbacks,
             configuration: {
                 ...(baseURL ? { baseURL } : {}),
+                ...(subscriptionToken
+                    ? {
+                          defaultHeaders: {
+                              Authorization: `Bearer ${subscriptionToken}`,
+                          },
+                      }
+                    : {}),
             },
         };
 

@@ -104,6 +104,8 @@ export const ByokProviderSelect = ({
                                             model: "",
                                             apiKey: "",
                                             provider: v,
+                                            credentialType: "api_key",
+                                            subscriptionToken: "",
                                             baseURL: r.requiresBaseUrl
                                                 ? ""
                                                 : null,

@@ -3,7 +3,8 @@ import { Callbacks } from '@langchain/core/callbacks/manager';
 
 export interface AdapterBuildParams {
     model: string;
-    apiKey: string;
+    apiKey?: string;
+    subscriptionToken?: string;
     baseURL?: string;
     options?: {
         temperature?: number;

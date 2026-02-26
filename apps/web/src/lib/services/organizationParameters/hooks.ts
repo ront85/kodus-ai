@@ -14,6 +14,9 @@ export function useSuspenseGetLLMProviders() {
             name: string;
             requiresApiKey: boolean;
             requiresBaseUrl: boolean;
+            supportsSubscriptionToken: boolean;
+            subscriptionTokenSetupUrl?: string;
+            subscriptionTokenInstructions?: string;
         }>;
     }>(ORGANIZATION_PARAMETERS_PATHS.GET_PROVIDERS_LIST);
 }

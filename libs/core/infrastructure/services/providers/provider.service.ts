@@ -8,6 +8,9 @@ export interface ProviderInfo {
     supported: boolean;
     requiresApiKey: boolean;
     requiresBaseUrl: boolean;
+    supportsSubscriptionToken: boolean;
+    subscriptionTokenSetupUrl?: string;
+    subscriptionTokenInstructions?: string;
 }
 
 @Injectable()
@@ -20,6 +23,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.ANTHROPIC]: {
             id: BYOKProvider.ANTHROPIC,
@@ -28,6 +32,9 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: true,
+            subscriptionTokenSetupUrl: 'https://docs.anthropic.com/en/docs/claude-code/setup-token',
+            subscriptionTokenInstructions: 'Run `claude setup-token` in your terminal (requires Claude Code with Pro/Max/Team subscription) and paste the token here.',
         },
         [BYOKProvider.GOOGLE_GEMINI]: {
             id: BYOKProvider.GOOGLE_GEMINI,
@@ -36,6 +43,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         // [BYOKProvider.GOOGLE_VERTEX]: {
         //     id: BYOKProvider.GOOGLE_VERTEX,
@@ -44,6 +52,7 @@ export class ProviderService {
         //     supported: true,
         //     requiresApiKey: true,
         //     requiresBaseUrl: false,
+        //     supportsSubscriptionToken: false,
         // },
         [BYOKProvider.OPEN_ROUTER]: {
             id: BYOKProvider.OPEN_ROUTER,
@@ -52,6 +61,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.NOVITA]: {
             id: BYOKProvider.NOVITA,
@@ -60,6 +70,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.OPENAI_COMPATIBLE]: {
             id: BYOKProvider.OPENAI_COMPATIBLE,
@@ -68,6 +79,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: true,
+            supportsSubscriptionToken: false,
         },
     };
 

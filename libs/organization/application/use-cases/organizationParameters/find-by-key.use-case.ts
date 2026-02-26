@@ -36,51 +36,60 @@ export class FindByKeyOrganizationParametersUseCase implements IUseCase {
                 return null;
             }
 
-            // Process BYOK configuration by masking API keys
+            // Process BYOK configuration by masking credentials
             if (
                 organizationParametersKey ===
                 OrganizationParametersKey.BYOK_CONFIG
             ) {
                 const configValue = parameter.configValue;
 
+                const hasMainCredential =
+                    configValue?.main?.apiKey ||
+                    configValue?.main?.subscriptionToken;
+                const hasFallbackCredential =
+                    configValue?.fallback?.apiKey ||
+                    configValue?.fallback?.subscriptionToken;
+
                 if (
                     configValue &&
                     typeof configValue === 'object' &&
-                    (configValue.main?.apiKey || configValue.fallback?.apiKey)
+                    (hasMainCredential || hasFallbackCredential)
                 ) {
                     try {
                         const processedConfig = { ...configValue };
 
-                        // Process main if it exists and has apiKey
-                        if (configValue.main?.apiKey) {
-                            const decryptedMainApiKey = decrypt(
-                                configValue.main.apiKey,
-                            );
-                            const maskedMainApiKey =
-                                this.maskApiKey(decryptedMainApiKey);
-
+                        if (configValue.main) {
                             processedConfig.main = {
                                 ...configValue.main,
-                                apiKey: maskedMainApiKey,
+                                ...(configValue.main.apiKey
+                                    ? {
+                                          apiKey: this.maskApiKey(
+                                              decrypt(configValue.main.apiKey),
+                                          ),
+                                      }
+                                    : {}),
+                                ...(configValue.main.subscriptionToken
+                                    ? { subscriptionToken: undefined }
+                                    : {}),
                             };
-                        } else {
-                            processedConfig.main = null;
                         }
 
-                        if (configValue.fallback?.apiKey) {
-                            const decryptedFallbackApiKey = decrypt(
-                                configValue.fallback.apiKey,
-                            );
-                            const maskedFallbackApiKey = this.maskApiKey(
-                                decryptedFallbackApiKey,
-                            );
-
+                        if (configValue.fallback) {
                             processedConfig.fallback = {
                                 ...configValue.fallback,
-                                apiKey: maskedFallbackApiKey,
+                                ...(configValue.fallback.apiKey
+                                    ? {
+                                          apiKey: this.maskApiKey(
+                                              decrypt(
+                                                  configValue.fallback.apiKey,
+                                              ),
+                                          ),
+                                      }
+                                    : {}),
+                                ...(configValue.fallback.subscriptionToken
+                                    ? { subscriptionToken: undefined }
+                                    : {}),
                             };
-                        } else {
-                            processedConfig.fallback = null;
                         }
 
                         return {
@@ -91,7 +100,7 @@ export class FindByKeyOrganizationParametersUseCase implements IUseCase {
                         };
                     } catch (error) {
                         this.logger.error({
-                            message: 'Error decrypting API key',
+                            message: 'Error decrypting credential',
                             context:
                                 FindByKeyOrganizationParametersUseCase.name,
                             error: error,

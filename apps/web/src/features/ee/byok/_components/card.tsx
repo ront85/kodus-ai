@@ -111,10 +111,14 @@ const ConfigTable = ({ config }: { config: BYOKConfig }) => (
         <Separator className="bg-card-lv2 my-2" />
 
         <FormControl.Root className="flex flex-row justify-between">
-            <FormControl.Label>Key</FormControl.Label>
+            <FormControl.Label>
+                {config.credentialType === "subscription_token"
+                    ? "OAuth Token"
+                    : "API Key"}
+            </FormControl.Label>
             <FormControl.Input>
                 <span className="text-text-secondary text-sm">
-                    {config?.apiKey}
+                    ••••••• (configured)
                 </span>
             </FormControl.Input>
         </FormControl.Root>

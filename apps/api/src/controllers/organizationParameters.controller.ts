@@ -179,6 +179,9 @@ export class OrganizationParametersController {
                 description: provider.description,
                 requiresApiKey: provider.requiresApiKey,
                 requiresBaseUrl: provider.requiresBaseUrl,
+                supportsSubscriptionToken: provider.supportsSubscriptionToken,
+                subscriptionTokenSetupUrl: provider.subscriptionTokenSetupUrl,
+                subscriptionTokenInstructions: provider.subscriptionTokenInstructions,
             })),
         };
     }

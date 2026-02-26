@@ -1,5 +1,6 @@
 import {
     BYOKConfig,
+    BYOKCredentialType,
     LLMModelProvider,
     PromptBuilder,
     PromptRunnerService,
@@ -45,35 +46,75 @@ export class BYOKPromptRunnerService {
             });
 
         if (this.byokConfig?.main) {
-            const apiKey = decrypt(this.byokConfig.main.apiKey);
-            const fallbackApiKey = decrypt(this.byokConfig?.fallback?.apiKey);
+            const mainCreds = this.resolveCredentials(this.byokConfig.main);
+            const fallbackCfg = this.byokConfig?.fallback;
+            const fallbackCreds = fallbackCfg
+                ? this.resolveCredentials(fallbackCfg)
+                : null;
+
+            const hasFallback = fallbackCreds !== null && fallbackCfg && (
+                fallbackCreds.credentialType === BYOKCredentialType.SUBSCRIPTION_TOKEN
+                    ? !!fallbackCreds.subscriptionToken
+                    : !!fallbackCreds.apiKey
+            );
 
             analysisBuilder = analysisBuilder
                 .setBYOKConfig({
                     provider: this.byokConfig.main.provider,
-                    apiKey: apiKey,
+                    apiKey: mainCreds.apiKey,
+                    subscriptionToken: mainCreds.subscriptionToken,
+                    chatgptAccountId: mainCreds.chatgptAccountId,
                     model: this.byokConfig.main.model,
                     baseURL: this.byokConfig.main.baseURL,
                     temperature: this.byokConfig.main.temperature,
                     maxOutputTokens: this.byokConfig.main.maxOutputTokens,
                 })
                 .setBYOKFallbackConfig(
-                    this.byokConfig?.fallback?.apiKey
+                    hasFallback && fallbackCfg
                         ? {
-                              provider: this.byokConfig.fallback.provider,
-                              apiKey: fallbackApiKey,
-                              model: this.byokConfig.fallback.model,
-                              baseURL: this.byokConfig.fallback.baseURL,
-                              temperature:
-                                  this.byokConfig.fallback.temperature,
-                              maxOutputTokens:
-                                  this.byokConfig.fallback.maxOutputTokens,
+                              provider: fallbackCfg.provider,
+                              apiKey: fallbackCreds.apiKey,
+                              subscriptionToken: fallbackCreds.subscriptionToken,
+                              chatgptAccountId: fallbackCreds.chatgptAccountId,
+                              model: fallbackCfg.model,
+                              baseURL: fallbackCfg.baseURL,
+                              temperature: fallbackCfg.temperature,
+                              maxOutputTokens: fallbackCfg.maxOutputTokens,
                           }
                         : null,
                 );
         }
 
         return analysisBuilder;
+    }
+
+    private resolveCredentials(
+        cfg: NonNullable<BYOKConfig['main']> | NonNullable<BYOKConfig['fallback']>,
+    ): {
+        credentialType: BYOKCredentialType;
+        apiKey?: string;
+        subscriptionToken?: string;
+        chatgptAccountId?: string;
+    } {
+        if (cfg.credentialType === BYOKCredentialType.SUBSCRIPTION_TOKEN) {
+            if (cfg.tokenExpiresAt && Date.now() >= cfg.tokenExpiresAt - 60_000) {
+                const isOpenAI = cfg.provider === 'openai';
+                throw new Error(
+                    isOpenAI
+                        ? 'BYOK_TOKEN_EXPIRED: Your OpenAI subscription token has expired. Run openai auth login again and update it in Organization Settings > LLM Provider.'
+                        : 'BYOK_TOKEN_EXPIRED: Your Claude subscription token has expired and could not be auto-refreshed. Re-run `claude setup-token` again and update it in Organization Settings > LLM Provider.',
+                );
+            }
+            return {
+                credentialType: BYOKCredentialType.SUBSCRIPTION_TOKEN,
+                subscriptionToken: decrypt(cfg.subscriptionToken),
+                chatgptAccountId: cfg.chatgptAccountId,
+            };
+        }
+        return {
+            credentialType: BYOKCredentialType.API_KEY,
+            apiKey: decrypt(cfg.apiKey),
+        };
     }
 
     /**

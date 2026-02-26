@@ -21,6 +21,7 @@ import { FormProvider, useForm } from "react-hook-form";
 import type { BYOKConfig } from "../../../_types";
 import { ByokAdvancedSettings } from "./_components/advanced-settings";
 import { ByokBaseURLInput } from "./_components/baseurl-input";
+import { CredentialTypeToggle } from "./_components/credential-type-toggle";
 import { ByokKeyInput } from "./_components/key-input";
 import { ByokModelSelect, ByokManualModelInput } from "./_components/models";
 import { ByokProviderSelect } from "./_components/provider";
@@ -51,7 +52,10 @@ export const BYOKEditKeyModal = ({
             provider: config?.provider,
             model: config?.model,
             baseURL: config?.baseURL,
+            credentialType: config?.credentialType ?? "api_key",
+            subscriptionToken: "",
             apiKey: "",
+            isEditing,
             temperature: config?.temperature ?? null,
             maxInputTokens: config?.maxInputTokens ?? null,
             maxConcurrentRequests: config?.maxConcurrentRequests ?? null,
@@ -64,15 +68,24 @@ export const BYOKEditKeyModal = ({
     const provider = form.watch("provider");
     const model = form.watch("model");
 
-    const handleSubmit = form.handleSubmit(async (data) => {
+    const handleSubmit = form.handleSubmit(async (formData) => {
         await onSave({
-            ...data,
-            apiKey: data.apiKey || undefined!,
-            baseURL: data.baseURL || undefined,
-            temperature: data.temperature ?? undefined,
-            maxInputTokens: data.maxInputTokens ?? undefined,
-            maxConcurrentRequests: data.maxConcurrentRequests ?? undefined,
-            maxOutputTokens: data.maxOutputTokens ?? undefined,
+            provider: formData.provider,
+            model: formData.model,
+            credentialType: formData.credentialType,
+            apiKey:
+                formData.credentialType === "api_key"
+                    ? formData.apiKey
+                    : undefined,
+            subscriptionToken:
+                formData.credentialType === "subscription_token"
+                    ? formData.subscriptionToken
+                    : undefined,
+            baseURL: formData.baseURL || undefined,
+            temperature: formData.temperature ?? undefined,
+            maxInputTokens: formData.maxInputTokens ?? undefined,
+            maxConcurrentRequests: formData.maxConcurrentRequests ?? undefined,
+            maxOutputTokens: formData.maxOutputTokens ?? undefined,
         });
         magicModal.hide();
     });
@@ -135,6 +148,7 @@ export const BYOKEditKeyModal = ({
                                                 setShowKeyInput(true)
                                             }
                                         />
+                                        <CredentialTypeToggle />
                                     </Suspense>
                                 </ErrorBoundary>
 

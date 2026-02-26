@@ -13,10 +13,15 @@ export enum BYOKProvider {
     NOVITA = 'novita',
 }
 
+export enum BYOKCredentialType {
+    API_KEY = 'api_key',
+    SUBSCRIPTION_TOKEN = 'subscription_token',
+}
+
 export interface BYOKConfig {
     main: {
         provider: BYOKProvider;
-        apiKey: string;
+        apiKey?: string;
         model: string;
         baseURL?: string;
         disableReasoning?: boolean;
@@ -24,16 +29,26 @@ export interface BYOKConfig {
         maxInputTokens?: number;
         maxConcurrentRequests?: number;
         maxOutputTokens?: number;
+        credentialType?: BYOKCredentialType;
+        subscriptionToken?: string;
+        refreshToken?: string;
+        tokenExpiresAt?: number;
+        chatgptAccountId?: string;
     };
     fallback?: {
         provider: BYOKProvider;
-        apiKey: string;
+        apiKey?: string;
         model: string;
         baseURL?: string;
         temperature?: number;
         maxInputTokens?: number;
         maxConcurrentRequests?: number;
         maxOutputTokens?: number;
+        credentialType?: BYOKCredentialType;
+        subscriptionToken?: string;
+        refreshToken?: string;
+        tokenExpiresAt?: number;
+        chatgptAccountId?: string;
     };
 }
 
@@ -54,7 +69,7 @@ export class BYOKProviderService {
             disableReasoning?: boolean;
         },
     ): BaseChatModel {
-        const { provider, apiKey, model, baseURL, disableReasoning } =
+        const { provider, apiKey, subscriptionToken, model, baseURL, disableReasoning } =
             config.main;
         const adapter = getAdapter(provider);
 
@@ -67,6 +82,7 @@ export class BYOKProviderService {
         const modelInstance = adapter.build({
             model,
             apiKey,
+            subscriptionToken,
             baseURL:
                 provider === BYOKProvider.OPENAI_COMPATIBLE
                     ? baseURL
@@ -120,9 +136,11 @@ export class BYOKProviderService {
         region: any;
         projectId: any;
         provider: BYOKProvider;
-        apiKey: string;
+        apiKey?: string;
         model: string;
         baseURL?: string;
+        credentialType?: BYOKCredentialType;
+        subscriptionToken?: string;
     }): { isValid: boolean; errors: string[] } {
         const errors: string[] = [];
 
@@ -130,8 +148,14 @@ export class BYOKProviderService {
             errors.push('Provider is required');
         }
 
-        if (!providerConfig.apiKey) {
-            errors.push('API key is required');
+        if (providerConfig.credentialType === BYOKCredentialType.SUBSCRIPTION_TOKEN) {
+            if (!providerConfig.subscriptionToken) {
+                errors.push('Subscription token is required');
+            }
+        } else {
+            if (!providerConfig.apiKey) {
+                errors.push('API key is required');
+            }
         }
 
         if (!providerConfig.model) {

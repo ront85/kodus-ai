@@ -37,7 +37,7 @@ export class LLMProviderService {
 
     getLLMProvider(options: LLMProviderOptions): LLMProviderReturn {
         try {
-            if (options.byokConfig?.main?.apiKey) {
+            if (options.byokConfig?.main && (options.byokConfig.main.apiKey || options.byokConfig.main.subscriptionToken)) {
                 const byokProvider =
                     this.byokProviderService.createBYOKProvider(
                         options.byokConfig,
@@ -166,7 +166,7 @@ export class LLMProviderService {
 
             return llm;
         } catch (error) {
-            if (options.byokConfig?.main?.apiKey) {
+            if (options.byokConfig?.main && (options.byokConfig.main.apiKey || options.byokConfig.main.subscriptionToken)) {
                 this.logger.error({
                     message: 'BYOK provider failed - propagating error',
                     metadata: {
