@@ -114,6 +114,7 @@ export type CodeReviewGlobalConfig = {
         };
     };
     enableCommittableSuggestions: boolean;
+    crossFileDependenciesAnalysis: boolean;
 };
 
 export type CodeReviewBaseConfig = {

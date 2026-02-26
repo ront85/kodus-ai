@@ -403,6 +403,10 @@ class CodeReviewConfigWithoutLLMProviderDto {
     @IsOptional()
     @IsBoolean()
     enableCommittableSuggestions?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    crossFileDependenciesAnalysis?: boolean;
 }
 
 export class CreateOrUpdateCodeReviewParameterDto {

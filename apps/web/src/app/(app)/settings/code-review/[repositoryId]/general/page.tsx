@@ -33,6 +33,7 @@ import {
 } from "../../../_hooks";
 import { AutomatedReviewActive } from "./_components/automated-review-active";
 import { BaseBranches } from "./_components/base-branches";
+import { CrossfileDependenciesAnalysis } from "./_components/crossfile-dependencies-analysis";
 import { EnableCommittableSuggestions } from "./_components/enable-committable-suggestions";
 import { IgnorePaths } from "./_components/ignore-paths";
 import { IgnoredTitleKeywords } from "./_components/ignored-title-keywords";
@@ -229,6 +230,9 @@ export default function General() {
                 <ShowStatusFeedback />
                 <AsyncBoundary errorVariant="minimal">
                     <EnableCommittableSuggestions />
+                </AsyncBoundary>
+                <AsyncBoundary errorVariant="minimal">
+                    <CrossfileDependenciesAnalysis />
                 </AsyncBoundary>
                 <IgnorePaths />
                 <IgnoredTitleKeywords />

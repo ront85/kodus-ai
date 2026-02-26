@@ -33,6 +33,10 @@ import {
     ParametersStoredResponseDto,
 } from '../dtos/parameters-response.dto';
 
+import {
+    CODE_BASE_CONFIG_SERVICE_TOKEN,
+    ICodeBaseConfigService,
+} from '@libs/code-review/domain/contracts/CodeBaseConfigService.contract';
 import { CodeReviewVersion } from '@libs/core/infrastructure/config/types/general/codeReview.type';
 import { UserRequest } from '@libs/core/infrastructure/config/types/http/user-request.type';
 import { ApplyCodeReviewPresetUseCase } from '@libs/code-review/application/use-cases/configuration/apply-code-review-preset.use-case';
@@ -85,6 +89,9 @@ export class ParametersController {
         private readonly getDefaultConfigUseCase: GetDefaultConfigUseCase,
         private readonly getCodeReviewParameterUseCase: GetCodeReviewParameterUseCase,
         private readonly applyCodeReviewPresetUseCase: ApplyCodeReviewPresetUseCase,
+
+        @Inject(CODE_BASE_CONFIG_SERVICE_TOKEN)
+        private readonly codeBaseConfigService: ICodeBaseConfigService,
     ) {}
 
     //#region Parameters
@@ -447,5 +454,24 @@ export class ParametersController {
             ...body,
             organizationId,
         });
+    }
+
+    @Get('/e2b-ip')
+    @UseGuards(PolicyGuard)
+    @CheckPolicies(
+        checkPermissions({
+            action: Action.Read,
+            resource: ResourceType.CodeReviewSettings,
+        }),
+    )
+    @ApiOperation({
+        summary: 'Get E2B IP address',
+        description:
+            'Return the E2B sandbox IP address for Git IP whitelisting.',
+    })
+    @ApiOkResponse({ description: 'E2B IP address' })
+    public async getE2BIpAddress() {
+        const ip = await this.codeBaseConfigService.getE2BIpAddress();
+        return { ip };
     }
 }

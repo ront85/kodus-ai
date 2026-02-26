@@ -39,4 +39,6 @@ export interface ICodeBaseConfigService {
         directoryPath?: string;
         defaultBranch?: string;
     }): Promise<KodusConfigFile | undefined>;
+
+    getE2BIpAddress(): Promise<string | null>;
 }
