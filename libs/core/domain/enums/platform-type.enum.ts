@@ -1,6 +1,6 @@
 export enum PlatformType {
     INTERNAL = 'INTERNAL',
-    GITLABGITHUB = 'GITHUB',
+    GITHUB = 'GITHUB',
     GITLAB = 'GITLAB',
     JIRA = 'JIRA',
     SLACK = 'SLACK',

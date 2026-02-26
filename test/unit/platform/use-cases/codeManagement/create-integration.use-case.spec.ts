@@ -7,8 +7,6 @@ import { IgnoreBotsUseCase } from '@libs/organization/application/use-cases/orga
 import { CODE_REVIEW_SETTINGS_LOG_SERVICE_TOKEN } from '@libs/ee/codeReviewSettingsLog/domain/contracts/codeReviewSettingsLog.service.contract';
 import { PlatformType } from '@libs/core/domain/enums/platform-type.enum';
 import { AuthMode } from '@libs/platform/domain/platformIntegrations/enums/codeManagement/authMode.enum';
-import { success } from 'zod';
-import { IntegrationCategory } from '@libs/core/domain/enums';
 
 describe('CreateIntegrationUseCase', () => {
     let useCase: CreateIntegrationUseCase;
