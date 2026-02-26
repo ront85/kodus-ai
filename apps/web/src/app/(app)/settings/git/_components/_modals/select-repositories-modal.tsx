@@ -197,7 +197,7 @@ export const SelectRepositoriesModal = (props: {
                             }>
                             {uploadProgress.total > 0
                                 ? `Saving... ${uploadProgress.current}/${uploadProgress.total}`
-                                : "Edit repositories"}
+                                : "Save selected repositories"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
