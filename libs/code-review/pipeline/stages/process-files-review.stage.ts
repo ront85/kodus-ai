@@ -35,6 +35,7 @@ import {
     IFinalAnalysisResult,
 } from '@libs/core/infrastructure/config/types/general/codeReview.type';
 import { createOptimizedBatches } from '@libs/common/utils/batch.helper';
+import pLimit from 'p-limit';
 import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
@@ -444,9 +445,18 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 TaskStatus.TASK_STATUS_FAILED;
         }
 
+        const maxConcurrent =
+            context?.codeReviewConfig?.byokConfig?.main?.maxConcurrentRequests;
+        const concurrencyLimit =
+            maxConcurrent != null && maxConcurrent > 0
+                ? Math.min(maxConcurrent, this.MAX_BATCH_SIZE)
+                : this.MAX_BATCH_SIZE;
+
+        const limit = pLimit(concurrencyLimit);
+
         const results = await Promise.allSettled(
             preparedFiles.map(({ fileContext }) =>
-                this.executeFileAnalysis(fileContext),
+                limit(() => this.executeFileAnalysis(fileContext)),
             ),
         );
 
