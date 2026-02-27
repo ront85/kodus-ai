@@ -12,6 +12,7 @@ export const ByokKeyInput = () => {
 
     const provider = form.watch("provider");
     const credentialType = form.watch("credentialType") ?? "api_key";
+    const isEditing = form.watch("isEditing") ?? false;
     const foundProvider = providers.find((p) => p.id === provider);
 
     if (!foundProvider?.requiresApiKey) return null;
@@ -58,7 +59,7 @@ export const ByokKeyInput = () => {
                                 value={field.value ?? ""}
                                 onChange={field.onChange}
                                 className="max-h-56 min-h-32 font-mono text-xs"
-                                placeholder="sk-ant-oat01-..."
+                                placeholder={isEditing ? "Already configured — paste a new token to replace" : "sk-ant-oat01-..."}
                             />
                         </FormControl.Input>
 
@@ -93,7 +94,7 @@ export const ByokKeyInput = () => {
                             value={field.value ?? ""}
                             onChange={field.onChange}
                             className="max-h-56 min-h-32"
-                            placeholder="Provide your key"
+                            placeholder={isEditing ? "Already configured — paste a new key to replace" : "Provide your key"}
                         />
                     </FormControl.Input>
 

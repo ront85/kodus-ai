@@ -67,7 +67,11 @@ const ModelInput = ({
 }) => {
     const form = useFormContext<EditKeyForm>();
     const provider = form.watch("provider");
+    const credentialType = form.watch("credentialType");
+    const apiKey = form.watch("apiKey");
+    const subscriptionToken = form.watch("subscriptionToken");
     const baseURL = form.watch("baseURL");
+    const isEditing = form.watch("isEditing");
 
     return (
         <Controller
@@ -90,8 +94,11 @@ const ModelInput = ({
                                 form.reset({
                                     model: ev.target.value,
                                     provider,
-                                    apiKey: "",
-                                    baseURL: baseURL,
+                                    credentialType,
+                                    apiKey,
+                                    subscriptionToken,
+                                    baseURL,
+                                    isEditing,
                                 });
                             }}
                         />
@@ -123,6 +130,8 @@ const ModelSelect = ({
     const credentialType = form.watch("credentialType");
     const apiKey = form.watch("apiKey");
     const subscriptionToken = form.watch("subscriptionToken");
+    const baseURL = form.watch("baseURL");
+    const isEditing = form.watch("isEditing");
     const { models } = useSuspenseGetLLMProviderModels({
         provider,
         apiKey: credentialType !== "subscription_token" ? apiKey : undefined,
@@ -206,8 +215,11 @@ const ModelSelect = ({
                                         form.reset({
                                             model: v,
                                             provider,
-                                            apiKey: "",
-                                            baseURL: null,
+                                            credentialType,
+                                            apiKey,
+                                            subscriptionToken,
+                                            baseURL,
+                                            isEditing,
                                         });
 
                                         resetErrorBoundary();
