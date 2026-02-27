@@ -105,7 +105,7 @@ export class E2BSandboxService {
     private async createSandbox(
         apiKey: string,
     ): Promise<{ sandbox: Sandbox; usedTemplate: boolean }> {
-        const templateId = this.configService.get<string>('E2B_TEMPLATE_ID');
+        const templateId = this.configService.get<string>('API_E2B_TEMPLATE_ID');
 
         if (templateId) {
             try {

@@ -228,10 +228,10 @@ describe('E2BSandboxService', () => {
             expect(typeof result.cleanup).toBe('function');
         });
 
-        it('should use template ID when E2B_TEMPLATE_ID is configured', async () => {
+        it('should use template ID when API_E2B_TEMPLATE_ID is configured', async () => {
             service = await createService({
                 API_E2B_KEY: 'key',
-                E2B_TEMPLATE_ID: 'kodus-sandbox',
+                API_E2B_TEMPLATE_ID: 'kodus-sandbox',
             });
             const { mockRun, Sandbox } = setupSandboxMock();
 
@@ -261,7 +261,7 @@ describe('E2BSandboxService', () => {
         it('should fallback to default sandbox when template creation fails', async () => {
             service = await createService({
                 API_E2B_KEY: 'key',
-                E2B_TEMPLATE_ID: 'bad-template',
+                API_E2B_TEMPLATE_ID: 'bad-template',
             });
 
             const mockRun = jest.fn().mockResolvedValue({ stdout: '', stderr: '' });
