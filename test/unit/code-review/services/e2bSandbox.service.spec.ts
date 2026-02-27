@@ -228,6 +228,74 @@ describe('E2BSandboxService', () => {
             expect(typeof result.cleanup).toBe('function');
         });
 
+        it('should use template ID when API_E2B_TEMPLATE_ID is configured', async () => {
+            service = await createService({
+                API_E2B_KEY: 'key',
+                API_E2B_TEMPLATE_ID: 'kodus-sandbox',
+            });
+            const { mockRun, Sandbox } = setupSandboxMock();
+
+            await service.createSandboxWithRepo(defaultParams);
+
+            expect(Sandbox.create).toHaveBeenCalledWith('kodus-sandbox', {
+                timeoutMs: 5 * 60 * 1000,
+                apiKey: 'key',
+            });
+
+            // Should NOT run apt-get install when using template
+            const commands = mockRun.mock.calls.map((c: any[]) => c[0]);
+            expect(commands.some((cmd: string) => cmd.includes('apt-get'))).toBe(false);
+        });
+
+        it('should install git and ripgrep via apt-get when no template is configured', async () => {
+            service = await createService({ API_E2B_KEY: 'key' });
+            const { mockRun } = setupSandboxMock();
+
+            await service.createSandboxWithRepo(defaultParams);
+
+            const firstCall = mockRun.mock.calls[0];
+            expect(firstCall[0]).toContain('git');
+            expect(firstCall[0]).toContain('ripgrep');
+        });
+
+        it('should fallback to default sandbox when template creation fails', async () => {
+            service = await createService({
+                API_E2B_KEY: 'key',
+                API_E2B_TEMPLATE_ID: 'bad-template',
+            });
+
+            const mockRun = jest.fn().mockResolvedValue({ stdout: '', stderr: '' });
+            const mockKill = jest.fn().mockResolvedValue(undefined);
+            const fallbackSandbox = {
+                commands: { run: mockRun },
+                kill: mockKill,
+            };
+
+            const { Sandbox } = require('e2b');
+            Sandbox.create
+                .mockRejectedValueOnce(new Error('Template not found'))
+                .mockResolvedValueOnce(fallbackSandbox);
+
+            const result = await service.createSandboxWithRepo(defaultParams);
+
+            // Should have tried template first, then fallback
+            expect(Sandbox.create).toHaveBeenCalledTimes(2);
+            expect(Sandbox.create).toHaveBeenNthCalledWith(1, 'bad-template', {
+                timeoutMs: 5 * 60 * 1000,
+                apiKey: 'key',
+            });
+            expect(Sandbox.create).toHaveBeenNthCalledWith(2, {
+                timeoutMs: 5 * 60 * 1000,
+                apiKey: 'key',
+            });
+
+            // Should install deps via apt-get since fallback doesn't have template
+            const commands = mockRun.mock.calls.map((c: any[]) => c[0]);
+            expect(commands.some((cmd: string) => cmd.includes('apt-get'))).toBe(true);
+
+            expect(result.remoteCommands).toBeDefined();
+        });
+
     });
 
     // ─── cleanup ────────────────────────────────────────────────────────────
