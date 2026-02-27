@@ -5,6 +5,7 @@ export interface AdapterBuildParams {
     model: string;
     apiKey?: string;
     subscriptionToken?: string;
+    chatgptAccountId?: string;
     baseURL?: string;
     options?: {
         temperature?: number;

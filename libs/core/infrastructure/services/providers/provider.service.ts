@@ -23,7 +23,9 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
-            supportsSubscriptionToken: false,
+            supportsSubscriptionToken: true,
+            subscriptionTokenSetupUrl: 'https://platform.openai.com/docs/codex',
+            subscriptionTokenInstructions: '1. Install OpenAI CLI: npm install -g openai\n2. Run: openai auth login\n3. Open: ~/.config/openai/auth.json\n4. Copy the access_token value (starts with eyJ...)\n5. Paste it in the field above\n\nRequires ChatGPT Plus or Pro subscription.',
         },
         [BYOKProvider.ANTHROPIC]: {
             id: BYOKProvider.ANTHROPIC,

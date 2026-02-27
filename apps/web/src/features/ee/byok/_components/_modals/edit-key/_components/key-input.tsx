@@ -59,7 +59,7 @@ export const ByokKeyInput = () => {
                                 value={field.value ?? ""}
                                 onChange={field.onChange}
                                 className="max-h-56 min-h-32 font-mono text-xs"
-                                placeholder={isEditing ? "Already configured — paste a new token to replace" : "sk-ant-oat01-..."}
+                                placeholder={isEditing ? "Already configured — paste a new token to replace" : provider === "openai" ? "eyJ..." : "sk-ant-oat01-..."}
                             />
                         </FormControl.Input>
 
@@ -70,7 +70,9 @@ export const ByokKeyInput = () => {
                         )}
 
                         <p className="text-text-tertiary text-xs">
-                            Tokens expire after ~8 hours. Re-enter a new token when it expires.
+                            {provider === "openai"
+                                ? "Tokens expire in ~1 hour. Re-run openai auth login and update when it expires."
+                                : "Tokens expire after ~8 hours. Re-enter a new token when it expires."}
                         </p>
                     </FormControl.Root>
                 )}

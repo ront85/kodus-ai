@@ -69,7 +69,7 @@ export class BYOKProviderService {
             disableReasoning?: boolean;
         },
     ): BaseChatModel {
-        const { provider, apiKey, subscriptionToken, model, baseURL, disableReasoning } =
+        const { provider, apiKey, subscriptionToken, chatgptAccountId, model, baseURL, disableReasoning } =
             config.main;
         const adapter = getAdapter(provider);
 
@@ -83,6 +83,7 @@ export class BYOKProviderService {
             model,
             apiKey,
             subscriptionToken,
+            chatgptAccountId,
             baseURL:
                 provider === BYOKProvider.OPENAI_COMPATIBLE
                     ? baseURL

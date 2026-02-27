@@ -26,6 +26,7 @@ export interface BYOKProviderConfig {
     provider: BYOKProvider;
     apiKey?: string;
     subscriptionToken?: string;
+    chatgptAccountId?: string;
     model: string;
     baseURL?: string;
     projectId?: string;

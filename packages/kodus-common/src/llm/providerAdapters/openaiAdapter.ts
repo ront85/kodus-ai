@@ -5,7 +5,7 @@ import { AdapterBuildParams, ProviderAdapter } from './types';
 
 export class OpenAIAdapter implements ProviderAdapter {
     build(params: AdapterBuildParams): ChatOpenAI {
-        const { model, apiKey, subscriptionToken, baseURL, options } = params;
+        const { model, apiKey, subscriptionToken, chatgptAccountId, baseURL, options } = params;
         const resolved = resolveModelOptions(model, {
             temperature: options?.temperature,
             maxTokens: options?.maxTokens,
@@ -24,7 +24,7 @@ export class OpenAIAdapter implements ProviderAdapter {
 
         const payload: ConstructorParameters<typeof ChatOpenAI>[0] = {
             model,
-            apiKey: subscriptionToken ? 'subscription-token' : apiKey,
+            apiKey: subscriptionToken ? 'chatgpt-oauth' : apiKey,
             ...(resolved.resolvedMaxTokens
                 ? { maxTokens: resolved.resolvedMaxTokens }
                 : {}),
@@ -52,14 +52,19 @@ export class OpenAIAdapter implements ProviderAdapter {
                 : {}),
             callbacks: options?.callbacks,
             configuration: {
-                ...(baseURL ? { baseURL } : {}),
                 ...(subscriptionToken
                     ? {
+                          // LangChain ChatOpenAI appends /responses to baseURL when useResponsesApi=true
+                          // Setting baseURL to .../codex routes calls to /codex/responses
+                          baseURL: 'https://chatgpt.com/backend-api/codex',
                           defaultHeaders: {
                               Authorization: `Bearer ${subscriptionToken}`,
+                              ...(chatgptAccountId ? { 'ChatGPT-Account-Id': chatgptAccountId } : {}),
+                              'openai-beta': 'responses=experimental',
+                              'openai-originator': 'codex_cli_rs',
                           },
                       }
-                    : {}),
+                    : { ...(baseURL ? { baseURL } : {}) }),
             },
         };
 
