@@ -194,8 +194,10 @@ export class OrganizationParametersController {
     @ApiOkResponse({ type: OrganizationProviderModelsResponseDto })
     public async listModels(
         @Query('provider') provider: string,
+        @Query('apiKey') apiKey?: string,
+        @Query('subscriptionToken') subscriptionToken?: string,
     ): Promise<ModelResponse> {
-        return await this.getModelsByProviderUseCase.execute(provider);
+        return await this.getModelsByProviderUseCase.execute(provider, { apiKey, subscriptionToken });
     }
 
     @Delete('/delete-byok-config')

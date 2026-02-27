@@ -120,7 +120,14 @@ const ModelSelect = ({
     const form = useFormContext<EditKeyForm>();
     const [open, setOpen] = useState(false);
     const provider = form.watch("provider");
-    const { models } = useSuspenseGetLLMProviderModels({ provider });
+    const credentialType = form.watch("credentialType");
+    const apiKey = form.watch("apiKey");
+    const subscriptionToken = form.watch("subscriptionToken");
+    const { models } = useSuspenseGetLLMProviderModels({
+        provider,
+        apiKey: credentialType !== "subscription_token" ? apiKey : undefined,
+        subscriptionToken: credentialType === "subscription_token" ? subscriptionToken : undefined,
+    });
     const { reset: resetErrorBoundary } = useQueryErrorResetBoundary();
 
     const { providers } = useSuspenseGetLLMProviders();

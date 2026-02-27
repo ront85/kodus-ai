@@ -23,12 +23,22 @@ export function useSuspenseGetLLMProviders() {
 
 export function useSuspenseGetLLMProviderModels({
     provider,
+    apiKey,
+    subscriptionToken,
 }: {
     provider: string;
+    apiKey?: string;
+    subscriptionToken?: string;
 }) {
     return useSuspenseFetch<{ models: Array<{ id: string; name: string }> }>(
         ORGANIZATION_PARAMETERS_PATHS.GET_PROVIDER_MODELS_LIST,
-        { params: { provider } },
+        {
+            params: {
+                provider,
+                ...(apiKey ? { apiKey } : {}),
+                ...(subscriptionToken ? { subscriptionToken } : {}),
+            },
+        },
     );
 }
 

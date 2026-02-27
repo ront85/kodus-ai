@@ -80,7 +80,10 @@ export class GetModelsByProviderUseCase {
 
     constructor(private readonly providerService: ProviderService) {}
 
-    async execute(provider: string): Promise<ModelResponse> {
+    async execute(
+        provider: string,
+        userCredentials?: { apiKey?: string; subscriptionToken?: string },
+    ): Promise<ModelResponse> {
         if (!this.providerService.isProviderSupported(provider)) {
             throw new BadRequestException(`Unsupported provider: ${provider}`);
         }
@@ -89,30 +92,39 @@ export class GetModelsByProviderUseCase {
 
         switch (byokProvider) {
             case BYOKProvider.OPENAI:
-                return this.getOpenAIModels(process.env.API_OPEN_AI_API_KEY);
+                return this.getOpenAIModels(
+                    userCredentials?.apiKey || process.env.API_OPEN_AI_API_KEY,
+                );
 
             case BYOKProvider.ANTHROPIC:
                 return this.getAnthropicModels(
-                    process.env.API_ANTHROPIC_API_KEY,
+                    userCredentials?.apiKey || process.env.API_ANTHROPIC_API_KEY,
+                    userCredentials?.subscriptionToken,
                 );
 
             case BYOKProvider.GOOGLE_GEMINI:
-                return this.getGeminiModels(process.env.API_GOOGLE_AI_API_KEY);
+                return this.getGeminiModels(
+                    userCredentials?.apiKey || process.env.API_GOOGLE_AI_API_KEY,
+                );
 
             case BYOKProvider.GOOGLE_VERTEX:
-                return this.getVertexModels(process.env.API_GOOGLE_AI_API_KEY);
+                return this.getVertexModels(
+                    userCredentials?.apiKey || process.env.API_GOOGLE_AI_API_KEY,
+                );
 
             case BYOKProvider.OPEN_ROUTER:
                 return this.getOpenRouterModels(
-                    process.env.API_OPEN_ROUTER_API_KEY,
+                    userCredentials?.apiKey || process.env.API_OPEN_ROUTER_API_KEY,
                 );
 
             case BYOKProvider.NOVITA:
-                return this.getNovitaModels(process.env.API_NOVITA_AI_API_KEY);
+                return this.getNovitaModels(
+                    userCredentials?.apiKey || process.env.API_NOVITA_AI_API_KEY,
+                );
 
             case BYOKProvider.OPENAI_COMPATIBLE:
                 return this.getOpenAICompatibleModels(
-                    process.env.API_OPEN_AI_API_KEY,
+                    userCredentials?.apiKey || process.env.API_OPEN_AI_API_KEY,
                     process.env.API_OPENAI_FORCE_BASE_URL ||
                         'https://api.openai.com',
                 );
@@ -161,23 +173,33 @@ export class GetModelsByProviderUseCase {
         }
     }
 
-    private async getAnthropicModels(apiKey?: string): Promise<ModelResponse> {
-        // If no server-side API key is configured (BYOK-only deployments),
-        // return a curated static list rather than failing with 401.
-        if (!apiKey) {
+    private async getAnthropicModels(apiKey?: string, subscriptionToken?: string): Promise<ModelResponse> {
+        // If no credential at all, return static list
+        if (!apiKey && !subscriptionToken) {
             return this.getAnthropicStaticModels();
         }
 
         try {
+            const headers: Record<string, string> = {
+                'anthropic-version': '2023-06-01',
+                'Content-Type': 'application/json',
+            };
+
+            if (subscriptionToken) {
+                headers['Authorization'] = `Bearer ${subscriptionToken}`;
+                headers['anthropic-beta'] = [
+                    'claude-code-20250219',
+                    'oauth-2025-04-20',
+                    'fine-grained-tool-streaming-2025-05-14',
+                    'interleaved-thinking-2025-05-14',
+                ].join(',');
+            } else {
+                headers['x-api-key'] = apiKey!;
+            }
+
             const response = await axios.get<AnthropicResponse>(
                 'https://api.anthropic.com/v1/models',
-                {
-                    headers: {
-                        'x-api-key': apiKey,
-                        'anthropic-version': '2023-06-01',
-                        'Content-Type': 'application/json',
-                    },
-                },
+                { headers },
             );
 
             return {
