@@ -123,6 +123,10 @@ export class GetModelsByProviderUseCase {
 
         switch (byokProvider) {
             case BYOKProvider.OPENAI:
+                // Subscription token = Codex via ChatGPT Plus — return static Codex model list
+                if (credentials?.subscriptionToken) {
+                    return this.getOpenAICodexStaticModels();
+                }
                 return this.getOpenAIModels(
                     credentials?.apiKey || process.env.API_OPEN_AI_API_KEY,
                 );
@@ -165,6 +169,32 @@ export class GetModelsByProviderUseCase {
                     `Unsupported provider: ${provider}`,
                 );
         }
+    }
+
+    private getOpenAICodexStaticModels(): ModelResponse {
+        const codexModels = [
+            { id: 'codex-mini-latest', name: 'Codex Mini (latest)' },
+            { id: 'o4-mini', name: 'o4 Mini' },
+            { id: 'o3', name: 'o3' },
+            { id: 'o3-mini', name: 'o3 Mini' },
+            { id: 'gpt-4.1', name: 'GPT-4.1' },
+            { id: 'gpt-4o', name: 'GPT-4o' },
+        ];
+
+        return {
+            provider: BYOKProvider.OPENAI,
+            models: codexModels.map(({ id, name }) => {
+                const capabilities = getModelCapabilities(id);
+                return {
+                    id,
+                    name,
+                    ...(capabilities.supportsReasoning && {
+                        supportsReasoning: true,
+                        reasoningConfig: capabilities.reasoningConfig,
+                    }),
+                };
+            }),
+        };
     }
 
     private async getOpenAIModels(apiKey?: string): Promise<ModelResponse> {
