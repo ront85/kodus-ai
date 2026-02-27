@@ -1,11 +1,18 @@
 import {
     BYOKProvider,
+    BYOKCredentialType,
     getModelCapabilities,
     ReasoningConfig,
 } from '@kodus/kodus-common/llm';
 import { ProviderService } from '@libs/core/infrastructure/services/providers/provider.service';
+import { decrypt } from '@libs/common/utils/crypto';
+import { OrganizationParametersKey } from '@libs/core/domain/enums';
+import {
+    IOrganizationParametersService,
+    ORGANIZATION_PARAMETERS_SERVICE_TOKEN,
+} from '@libs/organization/domain/organizationParameters/contracts/organizationParameters.service.contract';
 import { createLogger } from '@kodus/flow';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import axios from 'axios';
 
 // Interfaces for API responses
@@ -78,14 +85,38 @@ export interface ModelResponse {
 export class GetModelsByProviderUseCase {
     private readonly logger = createLogger(GetModelsByProviderUseCase.name);
 
-    constructor(private readonly providerService: ProviderService) {}
+    constructor(
+        private readonly providerService: ProviderService,
+        @Inject(ORGANIZATION_PARAMETERS_SERVICE_TOKEN)
+        private readonly organizationParametersService: IOrganizationParametersService,
+    ) {}
 
     async execute(
         provider: string,
-        userCredentials?: { apiKey?: string; subscriptionToken?: string },
+        userCredentials?: { apiKey?: string; subscriptionToken?: string; organizationId?: string },
     ): Promise<ModelResponse> {
         if (!this.providerService.isProviderSupported(provider)) {
             throw new BadRequestException(`Unsupported provider: ${provider}`);
+        }
+
+        // If no inline credentials but organizationId provided, load & decrypt saved BYOK config
+        let credentials = userCredentials;
+        if (userCredentials?.organizationId && !userCredentials.apiKey && !userCredentials.subscriptionToken) {
+            try {
+                const saved = await this.organizationParametersService.findByKey(
+                    OrganizationParametersKey.BYOK_CONFIG,
+                    { organizationId: userCredentials.organizationId },
+                );
+                const main = saved?.configValue?.main;
+                if (main?.provider === provider) {
+                    credentials = {
+                        apiKey: main.apiKey ? decrypt(main.apiKey) : undefined,
+                        subscriptionToken: main.subscriptionToken ? decrypt(main.subscriptionToken) : undefined,
+                    };
+                }
+            } catch {
+                // ignore — fall through to env keys / static list
+            }
         }
 
         const byokProvider = provider as BYOKProvider;
@@ -93,38 +124,38 @@ export class GetModelsByProviderUseCase {
         switch (byokProvider) {
             case BYOKProvider.OPENAI:
                 return this.getOpenAIModels(
-                    userCredentials?.apiKey || process.env.API_OPEN_AI_API_KEY,
+                    credentials?.apiKey || process.env.API_OPEN_AI_API_KEY,
                 );
 
             case BYOKProvider.ANTHROPIC:
                 return this.getAnthropicModels(
-                    userCredentials?.apiKey || process.env.API_ANTHROPIC_API_KEY,
-                    userCredentials?.subscriptionToken,
+                    credentials?.apiKey || process.env.API_ANTHROPIC_API_KEY,
+                    credentials?.subscriptionToken,
                 );
 
             case BYOKProvider.GOOGLE_GEMINI:
                 return this.getGeminiModels(
-                    userCredentials?.apiKey || process.env.API_GOOGLE_AI_API_KEY,
+                    credentials?.apiKey || process.env.API_GOOGLE_AI_API_KEY,
                 );
 
             case BYOKProvider.GOOGLE_VERTEX:
                 return this.getVertexModels(
-                    userCredentials?.apiKey || process.env.API_GOOGLE_AI_API_KEY,
+                    credentials?.apiKey || process.env.API_GOOGLE_AI_API_KEY,
                 );
 
             case BYOKProvider.OPEN_ROUTER:
                 return this.getOpenRouterModels(
-                    userCredentials?.apiKey || process.env.API_OPEN_ROUTER_API_KEY,
+                    credentials?.apiKey || process.env.API_OPEN_ROUTER_API_KEY,
                 );
 
             case BYOKProvider.NOVITA:
                 return this.getNovitaModels(
-                    userCredentials?.apiKey || process.env.API_NOVITA_AI_API_KEY,
+                    credentials?.apiKey || process.env.API_NOVITA_AI_API_KEY,
                 );
 
             case BYOKProvider.OPENAI_COMPATIBLE:
                 return this.getOpenAICompatibleModels(
-                    userCredentials?.apiKey || process.env.API_OPEN_AI_API_KEY,
+                    credentials?.apiKey || process.env.API_OPEN_AI_API_KEY,
                     process.env.API_OPENAI_FORCE_BASE_URL ||
                         'https://api.openai.com',
                 );

@@ -25,10 +25,12 @@ export function useSuspenseGetLLMProviderModels({
     provider,
     apiKey,
     subscriptionToken,
+    useSavedKey,
 }: {
     provider: string;
     apiKey?: string;
     subscriptionToken?: string;
+    useSavedKey?: boolean;
 }) {
     return useSuspenseFetch<{ models: Array<{ id: string; name: string }> }>(
         ORGANIZATION_PARAMETERS_PATHS.GET_PROVIDER_MODELS_LIST,
@@ -37,6 +39,7 @@ export function useSuspenseGetLLMProviderModels({
                 provider,
                 ...(apiKey ? { apiKey } : {}),
                 ...(subscriptionToken ? { subscriptionToken } : {}),
+                ...(useSavedKey && !apiKey && !subscriptionToken ? { useSavedKey: 'true' } : {}),
             },
         },
     );

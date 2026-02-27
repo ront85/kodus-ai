@@ -136,6 +136,7 @@ const ModelSelect = ({
         provider,
         apiKey: credentialType !== "subscription_token" ? apiKey : undefined,
         subscriptionToken: credentialType === "subscription_token" ? subscriptionToken : undefined,
+        useSavedKey: isEditing,
     });
     const { reset: resetErrorBoundary } = useQueryErrorResetBoundary();
 

@@ -196,8 +196,17 @@ export class OrganizationParametersController {
         @Query('provider') provider: string,
         @Query('apiKey') apiKey?: string,
         @Query('subscriptionToken') subscriptionToken?: string,
+        @Query('useSavedKey') useSavedKey?: string,
     ): Promise<ModelResponse> {
-        return await this.getModelsByProviderUseCase.execute(provider, { apiKey, subscriptionToken });
+        const organizationId = useSavedKey === 'true'
+            ? this.request?.user?.organization?.uuid
+            : undefined;
+
+        return await this.getModelsByProviderUseCase.execute(provider, {
+            apiKey,
+            subscriptionToken,
+            organizationId,
+        });
     }
 
     @Delete('/delete-byok-config')
