@@ -244,6 +244,31 @@ export class OrganizationParametersController {
         );
     }
 
+    @Post('/swap-byok-config')
+    @UseGuards(PolicyGuard)
+    @CheckPolicies(
+        checkPermissions({
+            action: Action.Update,
+            resource: ResourceType.OrganizationSettings,
+        }),
+    )
+    @ApiOperation({
+        summary: 'Swap BYOK main and fallback configs',
+        description: 'Swap the main and fallback BYOK configurations without re-encrypting.',
+    })
+    @ApiOkResponse({ type: ApiBooleanResponseDto })
+    public async swapByokConfig() {
+        const organizationId = this.request?.user?.organization?.uuid;
+
+        if (!organizationId) {
+            throw new Error('Organization ID is missing from request');
+        }
+
+        return await this.createOrUpdateOrganizationParametersUseCase.swapByokConfig({
+            organizationId,
+        });
+    }
+
     @Delete('/delete-byok-config')
     @ApiOperation({
         summary: 'Delete BYOK config',

@@ -9,6 +9,7 @@ export const ORGANIZATION_PARAMETERS_PATHS = {
     ),
     TEST_CREDENTIAL: pathToApiUrl("/organization-parameters/test-credential"),
     DELETE_BYOK: pathToApiUrl("/organization-parameters/delete-byok-config"),
+    SWAP_BYOK: pathToApiUrl("/organization-parameters/swap-byok-config"),
     GET_COCKPIT_METRICS_VISIBILITY: pathToApiUrl(
         "/organization-parameters/cockpit-metrics-visibility",
     ),

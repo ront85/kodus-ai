@@ -1,12 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import { Page } from "@components/ui/page";
+import { Button } from "@components/ui/button";
 import { toast } from "@components/ui/toaster/use-toast";
 import {
     createOrUpdateOrganizationParameter,
     deleteBYOK,
+    swapBYOK,
 } from "@services/organizationParameters/fetch";
 import { OrganizationParametersConfigKey } from "@services/parameters/types";
+import { ArrowLeftRightIcon, Loader2Icon } from "lucide-react";
 import { revalidateServerSidePath } from "src/core/utils/revalidate-server-side";
 
 import type { BYOKConfig } from "../_types";
@@ -83,6 +87,30 @@ export const ByokPageClient = ({
         }
     };
 
+    const [swapping, setSwapping] = useState(false);
+
+    const onSwap = async () => {
+        if (!config?.main || !config?.fallback) return;
+        setSwapping(true);
+        try {
+            await swapBYOK();
+
+            toast({
+                variant: "success",
+                title: "Main and Fallback swapped",
+            });
+
+            await revalidateServerSidePath("/organization/byok");
+        } catch {
+            toast({
+                variant: "danger",
+                title: "Couldn't swap keys",
+            });
+        } finally {
+            setSwapping(false);
+        }
+    };
+
     const onDeleteFallback = async () => {
         try {
             await deleteBYOK({ configType: "fallback" });
@@ -110,7 +138,7 @@ export const ByokPageClient = ({
             </Page.Header>
 
             <Page.Content>
-                <div className="flex gap-4">
+                <div className="flex items-start gap-4">
                     <BYOKCard
                         type="main"
                         config={config?.main}
@@ -122,6 +150,18 @@ export const ByokPageClient = ({
                             </div>
                         }
                     />
+                    <Button
+                        variant="tertiary"
+                        size="sm"
+                        className="mt-10 shrink-0"
+                        disabled={!config?.main || !config?.fallback || swapping}
+                        onClick={onSwap}
+                        title="Swap Main and Fallback"
+                    >
+                        {swapping
+                            ? <Loader2Icon className="h-4 w-4 animate-spin" />
+                            : <ArrowLeftRightIcon className="h-4 w-4" />}
+                    </Button>
                     <BYOKCard
                         type="fallback"
                         config={config?.fallback}
