@@ -62,10 +62,10 @@ export class E2BSandboxService {
             await this.setupProxy(sandbox);
 
             // Shallow-fetch the PR ref or branch (minimal network transfer)
-            const refspec = prNumber
+            const refspec = prNumber != null
                 ? this.getPrRefspec(platform, prNumber)
                 : `refs/heads/${branch}`;
-            const localRef = prNumber ? 'pr-head' : 'cli-head';
+            const localRef = prNumber != null ? 'pr-head' : 'cli-head';
             const authHeader = this.buildAuthHeader(platform, authToken);
 
             await sandbox.commands.run(
