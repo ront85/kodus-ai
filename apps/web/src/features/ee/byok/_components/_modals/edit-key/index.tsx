@@ -66,6 +66,9 @@ export const BYOKEditKeyModal = ({
     const { isValid, isSubmitting } = form.formState;
 
     const provider = form.watch("provider");
+    const credentialType = form.watch("credentialType");
+    const subscriptionToken = form.watch("subscriptionToken");
+    const apiKey = form.watch("apiKey");
 
     const handleSubmit = form.handleSubmit(async (formData) => {
         await onSave({
@@ -176,7 +179,7 @@ export const BYOKEditKeyModal = ({
                                 {provider && (
                                     <ErrorBoundary
                                         onReset={reset}
-                                        resetKeys={[provider]}
+                                        resetKeys={[provider, credentialType, subscriptionToken, apiKey]}
                                         fallbackRender={({
                                             resetErrorBoundary,
                                         }) => (
