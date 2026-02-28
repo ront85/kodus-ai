@@ -46,21 +46,12 @@ export class E2BSandboxService {
             throw new Error('API_E2B_KEY is not configured');
         }
 
-        const templateId = this.configService.get<string>('E2B_TEMPLATE_ID');
-
-        const sandbox = templateId
-            ? await Sandbox.create(templateId, {
-                  timeoutMs: SANDBOX_TIMEOUT_MS,
-                  apiKey,
-              })
-            : await Sandbox.create({
-                  timeoutMs: SANDBOX_TIMEOUT_MS,
-                  apiKey,
-              });
+        const { sandbox, usedTemplate } = await this.createSandbox(apiKey);
 
         try {
             // Install dependencies only when not using a pre-built template
-            if (!templateId) {
+            // When using a template, git/ripgrep and proxy are already configured
+            if (!usedTemplate) {
                 await sandbox.commands.run(
                     'apt-get update -qq && apt-get install -y -qq git ripgrep shadowsocks-libev > /dev/null 2>&1',
                     { timeoutMs: 120_000, user: 'root' },
@@ -119,6 +110,34 @@ export class E2BSandboxService {
             }
             throw error;
         }
+    }
+
+    private async createSandbox(
+        apiKey: string,
+    ): Promise<{ sandbox: Sandbox; usedTemplate: boolean }> {
+        const templateId = this.configService.get<string>('API_E2B_TEMPLATE_ID');
+
+        if (templateId) {
+            try {
+                const sandbox = await Sandbox.create(templateId, {
+                    timeoutMs: SANDBOX_TIMEOUT_MS,
+                    apiKey,
+                });
+                return { sandbox, usedTemplate: true };
+            } catch (error) {
+                this.logger.warn({
+                    message: `Failed to create E2B sandbox with template "${templateId}", falling back to default`,
+                    context: E2BSandboxService.name,
+                    error,
+                });
+            }
+        }
+
+        const sandbox = await Sandbox.create({
+            timeoutMs: SANDBOX_TIMEOUT_MS,
+            apiKey,
+        });
+        return { sandbox, usedTemplate: false };
     }
 
     private async setupProxy(sandbox: Sandbox): Promise<void> {
