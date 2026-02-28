@@ -3,12 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { E2BSandboxService } from '@libs/code-review/infrastructure/adapters/services/e2bSandbox.service';
 import { PlatformType } from '@libs/core/domain/enums/platform-type.enum';
 
-// Mock e2b SDK (virtual: true because the package may not be installed)
+// Mock e2b SDK — globally mapped via moduleNameMapper in jest.config.ts
+// to avoid ESM parse errors from chalk v5+. Re-mock here to set test-specific shape.
 jest.mock('e2b', () => ({
     Sandbox: {
         create: jest.fn(),
     },
-}), { virtual: true });
+}));
 
 jest.mock('@kodus/flow', () => ({
     createLogger: () => ({

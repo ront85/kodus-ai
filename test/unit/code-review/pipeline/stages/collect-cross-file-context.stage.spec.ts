@@ -1,7 +1,8 @@
-// Mock e2b before any imports that transitively depend on it
+// Mock e2b — globally mapped via moduleNameMapper in jest.config.ts
+// to avoid ESM parse errors from chalk v5+.
 jest.mock('e2b', () => ({
     Sandbox: { create: jest.fn() },
-}), { virtual: true });
+}));
 
 jest.mock('@kodus/flow', () => ({
     createLogger: () => ({
