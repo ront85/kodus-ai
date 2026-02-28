@@ -107,9 +107,9 @@ export class GetModelsByProviderUseCase {
                 if (token.startsWith('{')) {
                     try {
                         const parsed = JSON.parse(token);
-                        token = parsed?.tokens?.id_token;
+                        token = parsed?.tokens?.access_token;
                         if (!token) {
-                            return { success: false, message: 'Could not find tokens.id_token in auth.json' };
+                            return { success: false, message: 'Could not find tokens.access_token in auth.json' };
                         }
                     } catch {
                         return { success: false, message: 'Invalid JSON format' };
