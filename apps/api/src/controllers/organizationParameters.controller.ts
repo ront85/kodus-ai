@@ -209,6 +209,41 @@ export class OrganizationParametersController {
         });
     }
 
+    @Post('/test-credential')
+    @ApiOperation({
+        summary: 'Test BYOK credential',
+        description: 'Make a lightweight API call to verify the credential works.',
+    })
+    @ApiBody({
+        schema: {
+            type: 'object',
+            required: ['provider'],
+            properties: {
+                provider: { type: 'string' },
+                credentialType: { type: 'string', enum: ['api_key', 'subscription_token'] },
+                apiKey: { type: 'string' },
+                subscriptionToken: { type: 'string' },
+            },
+        },
+    })
+    public async testCredential(
+        @Body() body: {
+            provider: string;
+            credentialType?: string;
+            apiKey?: string;
+            subscriptionToken?: string;
+        },
+    ): Promise<{ success: boolean; message: string }> {
+        return await this.getModelsByProviderUseCase.testCredential(
+            body.provider,
+            body.credentialType ?? 'api_key',
+            {
+                apiKey: body.apiKey,
+                subscriptionToken: body.subscriptionToken,
+            },
+        );
+    }
+
     @Delete('/delete-byok-config')
     @ApiOperation({
         summary: 'Delete BYOK config',

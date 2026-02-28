@@ -7,6 +7,7 @@ export const ORGANIZATION_PARAMETERS_PATHS = {
     GET_PROVIDER_MODELS_LIST: pathToApiUrl(
         "/organization-parameters/list-models",
     ),
+    TEST_CREDENTIAL: pathToApiUrl("/organization-parameters/test-credential"),
     DELETE_BYOK: pathToApiUrl("/organization-parameters/delete-byok-config"),
     GET_COCKPIT_METRICS_VISIBILITY: pathToApiUrl(
         "/organization-parameters/cockpit-metrics-visibility",

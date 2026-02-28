@@ -91,6 +91,112 @@ export class GetModelsByProviderUseCase {
         private readonly organizationParametersService: IOrganizationParametersService,
     ) {}
 
+    async testCredential(
+        provider: string,
+        credentialType: string,
+        credentials: { apiKey?: string; subscriptionToken?: string },
+    ): Promise<{ success: boolean; message: string }> {
+        try {
+            if (credentialType === 'subscription_token') {
+                let token = credentials.subscriptionToken?.trim();
+                if (!token) {
+                    return { success: false, message: 'No token provided' };
+                }
+
+                // Parse auth.json if user pasted the full file
+                if (token.startsWith('{')) {
+                    try {
+                        const parsed = JSON.parse(token);
+                        token = parsed?.tokens?.id_token;
+                        if (!token) {
+                            return { success: false, message: 'Could not find tokens.id_token in auth.json' };
+                        }
+                    } catch {
+                        return { success: false, message: 'Invalid JSON format' };
+                    }
+                }
+
+                // Decode JWT and check expiry
+                try {
+                    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
+                    if (payload.exp && payload.exp * 1000 < Date.now()) {
+                        return { success: false, message: 'Token is expired. Run codex login again.' };
+                    }
+                } catch {
+                    return { success: false, message: 'Could not decode JWT — is this a valid token?' };
+                }
+
+                if (provider === BYOKProvider.OPENAI) {
+                    // Extract account ID from JWT
+                    let chatgptAccountId = '';
+                    try {
+                        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
+                        chatgptAccountId = payload['https://api.openai.com/auth.chatgpt_account_id']
+                            ?? payload['https://api.openai.com/auth']?.chatgpt_account_id
+                            ?? payload['https://api.openai.com/auth']?.user_id
+                            ?? '';
+                    } catch { /* ignore */ }
+
+                    // Test with a minimal Codex API call
+                    const response = await axios.post(
+                        'https://chatgpt.com/backend-api/codex/responses',
+                        {
+                            model: 'gpt-4o',
+                            input: 'Say "ok"',
+                            max_output_tokens: 5,
+                        },
+                        {
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                ...(chatgptAccountId ? { 'ChatGPT-Account-Id': chatgptAccountId } : {}),
+                                'openai-beta': 'responses=experimental',
+                                'openai-originator': 'codex_cli_rs',
+                                'Content-Type': 'application/json',
+                            },
+                            timeout: 15000,
+                        },
+                    );
+                    return { success: true, message: 'Token is valid — Codex API responded successfully.' };
+                }
+
+                if (provider === BYOKProvider.ANTHROPIC) {
+                    // Test Anthropic subscription token via models endpoint
+                    await axios.get('https://api.anthropic.com/v1/models', {
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'anthropic-version': '2023-06-01',
+                            'anthropic-beta': [
+                                'claude-code-20250219',
+                                'oauth-2025-04-20',
+                            ].join(','),
+                        },
+                        timeout: 10000,
+                    });
+                    return { success: true, message: 'Token is valid — Anthropic API responded successfully.' };
+                }
+
+                return { success: false, message: `Subscription tokens are not supported for ${provider}` };
+            }
+
+            // API key test — just try listing models
+            if (!credentials.apiKey?.trim()) {
+                return { success: false, message: 'No API key provided' };
+            }
+
+            const result = await this.execute(provider, { apiKey: credentials.apiKey });
+            if (result.models.length > 0) {
+                return { success: true, message: `API key is valid — found ${result.models.length} models.` };
+            }
+            return { success: false, message: 'API key returned no models' };
+        } catch (error) {
+            const msg = (error as any)?.response?.data?.error?.message
+                || (error as any)?.response?.data?.message
+                || (error as Error).message
+                || 'Unknown error';
+            return { success: false, message: `Test failed: ${msg}` };
+        }
+    }
+
     async execute(
         provider: string,
         userCredentials?: { apiKey?: string; subscriptionToken?: string; organizationId?: string },
