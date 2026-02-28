@@ -122,14 +122,18 @@ export class GetModelsByProviderUseCase {
         const byokProvider = provider as BYOKProvider;
 
         switch (byokProvider) {
-            case BYOKProvider.OPENAI:
+            case BYOKProvider.OPENAI: {
                 // Subscription token = Codex via ChatGPT Plus — return static Codex model list
                 if (credentials?.subscriptionToken) {
                     return this.getOpenAICodexStaticModels();
                 }
-                return this.getOpenAIModels(
-                    credentials?.apiKey || process.env.API_OPEN_AI_API_KEY,
-                );
+                const openaiKey = credentials?.apiKey || process.env.API_OPEN_AI_API_KEY;
+                // No API key available — return static list instead of a guaranteed 401
+                if (!openaiKey) {
+                    return this.getOpenAICodexStaticModels();
+                }
+                return this.getOpenAIModels(openaiKey);
+            }
 
             case BYOKProvider.ANTHROPIC:
                 return this.getAnthropicModels(
