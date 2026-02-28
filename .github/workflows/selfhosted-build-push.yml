@@ -124,6 +124,7 @@ jobs:
         name: Build and Push Docker Images
         needs: create-release
         runs-on: ubuntu-latest
+        environment: production
         permissions:
             contents: read
             packages: write
@@ -170,7 +171,7 @@ jobs:
               if: success()
               uses: sarisia/actions-status-discord@v1.15.3
               with:
-                  webhook: ${{ secrets.DISCORD_WEBHOOK_SELFHOSTED }}
+                  webhook: ${{ vars.DISCORD_WEBHOOK_SELFHOSTED }}
                   content: ":tada: New Self-Hosted Release `${{ needs.create-release.outputs.release_tag }}` published!"
                   title: "Self-Hosted Release"
                   description: "Docker images built and pushed to GHCR. Git tag ensured on GitHub."
@@ -181,7 +182,7 @@ jobs:
               if: failure()
               uses: sarisia/actions-status-discord@v1.15.3
               with:
-                  webhook: ${{ secrets.DISCORD_WEBHOOK_SELFHOSTED }}
+                  webhook: ${{ vars.DISCORD_WEBHOOK_SELFHOSTED }}
                   content: ":x: Failed to publish self-hosted release `${{ needs.create-release.outputs.release_tag }}`."
                   title: "Self-Hosted Release Failed"
                   username: "GitHub Actions"
