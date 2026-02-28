@@ -127,35 +127,51 @@ export class GetModelsByProviderUseCase {
                 }
 
                 if (provider === BYOKProvider.OPENAI) {
-                    // Extract account ID from JWT
+                    // Extract account ID from JWT claims
                     let chatgptAccountId = '';
                     try {
                         const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
-                        chatgptAccountId = payload['https://api.openai.com/auth.chatgpt_account_id']
-                            ?? payload['https://api.openai.com/auth']?.chatgpt_account_id
+                        chatgptAccountId = payload['https://api.openai.com/auth']?.chatgpt_account_id
                             ?? payload['https://api.openai.com/auth']?.user_id
                             ?? '';
                     } catch { /* ignore */ }
 
-                    // Test with a minimal Codex API call
+                    // If user pasted the full auth.json, also try account_id field
+                    if (!chatgptAccountId && credentials.subscriptionToken?.trim()?.startsWith('{')) {
+                        try {
+                            const parsed = JSON.parse(credentials.subscriptionToken.trim());
+                            chatgptAccountId = parsed?.tokens?.account_id ?? '';
+                        } catch { /* ignore */ }
+                    }
+
+                    // Test with a minimal Codex API call using correct Codex CLI headers
+                    // Codex API requires stream:true and store:false
                     const response = await axios.post(
                         'https://chatgpt.com/backend-api/codex/responses',
                         {
-                            model: 'gpt-4o',
-                            input: 'Say "ok"',
-                            max_output_tokens: 5,
+                            model: 'gpt-5.1-codex',
+                            instructions: 'Say ok',
+                            input: [{ role: 'user', content: 'test' }],
+                            store: false,
+                            stream: true,
                         },
                         {
                             headers: {
                                 'Authorization': `Bearer ${token}`,
-                                ...(chatgptAccountId ? { 'ChatGPT-Account-Id': chatgptAccountId } : {}),
-                                'openai-beta': 'responses=experimental',
-                                'openai-originator': 'codex_cli_rs',
+                                ...(chatgptAccountId ? { 'ChatGPT-Account-ID': chatgptAccountId } : {}),
+                                'originator': 'codex_cli_rs',
+                                'User-Agent': 'codex_cli_rs/0.1.0',
                                 'Content-Type': 'application/json',
+                                'Accept': 'text/event-stream',
                             },
                             timeout: 15000,
+                            responseType: 'stream',
+                            // We don't need to read the full response — just confirm 2xx status
+                            validateStatus: (status) => status >= 200 && status < 300,
                         },
                     );
+                    // Abort the stream immediately — we only needed to confirm auth works
+                    response.data?.destroy?.();
                     return { success: true, message: 'Token is valid — Codex API responded successfully.' };
                 }
 
@@ -189,7 +205,8 @@ export class GetModelsByProviderUseCase {
             }
             return { success: false, message: 'API key returned no models' };
         } catch (error) {
-            const msg = (error as any)?.response?.data?.error?.message
+            const msg = (error as any)?.response?.data?.detail
+                || (error as any)?.response?.data?.error?.message
                 || (error as any)?.response?.data?.message
                 || (error as Error).message
                 || 'Unknown error';
@@ -283,12 +300,12 @@ export class GetModelsByProviderUseCase {
 
     private getOpenAICodexStaticModels(): ModelResponse {
         const codexModels = [
-            { id: 'codex-mini-latest', name: 'Codex Mini (latest)' },
-            { id: 'o4-mini', name: 'o4 Mini' },
-            { id: 'o3', name: 'o3' },
-            { id: 'o3-mini', name: 'o3 Mini' },
-            { id: 'gpt-4.1', name: 'GPT-4.1' },
-            { id: 'gpt-4o', name: 'GPT-4o' },
+            { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
+            { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex' },
+            { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex' },
+            { id: 'gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max' },
+            { id: 'gpt-5-codex', name: 'GPT-5 Codex' },
+            { id: 'gpt-5-codex-mini', name: 'GPT-5 Codex Mini' },
         ];
 
         return {

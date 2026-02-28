@@ -22,10 +22,13 @@ export class OpenAIAdapter implements ProviderAdapter {
         // Check if reasoning should be explicitly disabled (e.g., for GLM models via OpenRouter)
         const disableReasoning = options?.disableReasoning === true;
 
+        const isCodexSubscription = !!subscriptionToken;
+
         const payload: ConstructorParameters<typeof ChatOpenAI>[0] = {
             model,
-            apiKey: subscriptionToken ? 'chatgpt-oauth' : apiKey,
-            ...(resolved.resolvedMaxTokens
+            apiKey: isCodexSubscription ? 'chatgpt-oauth' : apiKey,
+            // Codex API rejects max_output_tokens — omit for subscription tokens
+            ...(!isCodexSubscription && resolved.resolvedMaxTokens
                 ? { maxTokens: resolved.resolvedMaxTokens }
                 : {}),
             ...(resolved.temperature !== undefined
@@ -42,9 +45,12 @@ export class OpenAIAdapter implements ProviderAdapter {
                         reasoningEffort,
                     }
                   : {}),
-            ...(resolved.supportsReasoning && resolved.reasoningType === 'level'
+            // Codex subscription always needs responses API; for regular keys only when model supports reasoning
+            ...(isCodexSubscription || (resolved.supportsReasoning && resolved.reasoningType === 'level')
                 ? { useResponsesApi: true }
                 : {}),
+            // Codex API requires store:false
+            ...(isCodexSubscription ? { store: false } : {}),
             ...(options?.jsonMode && supportsJsonMode(model)
                 ? {
                       response_format: { type: 'json_object' as const },
@@ -59,9 +65,8 @@ export class OpenAIAdapter implements ProviderAdapter {
                           baseURL: 'https://chatgpt.com/backend-api/codex',
                           defaultHeaders: {
                               Authorization: `Bearer ${subscriptionToken}`,
-                              ...(chatgptAccountId ? { 'ChatGPT-Account-Id': chatgptAccountId } : {}),
-                              'openai-beta': 'responses=experimental',
-                              'openai-originator': 'codex_cli_rs',
+                              ...(chatgptAccountId ? { 'ChatGPT-Account-ID': chatgptAccountId } : {}),
+                              'originator': 'codex_cli_rs',
                           },
                       }
                     : { ...(baseURL ? { baseURL } : {}) }),

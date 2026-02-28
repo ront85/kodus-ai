@@ -186,7 +186,7 @@ const SubscriptionTokenInput = ({
 
                     <p className="text-text-tertiary text-xs">
                         {provider === "openai"
-                            ? "Tokens expire in ~1 hour. Re-run codex login and paste the updated auth.json."
+                            ? "Tokens expire after ~10 days. Re-run codex login and paste the updated auth.json when expired."
                             : "Tokens expire after ~8 hours. Re-enter a new token when it expires."}
                     </p>
                 </FormControl.Root>
