@@ -658,6 +658,15 @@ export class KodyRulesPrLevelAnalysisService implements IKodyRulesAnalysisServic
             chunkingResult.totalChunks,
         );
 
+        const byokMaxConcurrent =
+            context?.codeReviewConfig?.byokConfig?.main?.maxConcurrentRequests;
+        if (byokMaxConcurrent && byokMaxConcurrent > 0) {
+            batchConfig.maxConcurrentChunks = Math.min(
+                batchConfig.maxConcurrentChunks,
+                byokMaxConcurrent,
+            );
+        }
+
         this.logger.log({
             message: `Batch configuration determined`,
             context: KodyRulesPrLevelAnalysisService.name,

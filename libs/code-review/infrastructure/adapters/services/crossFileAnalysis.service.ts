@@ -205,6 +205,15 @@ export class CrossFileAnalysisService {
         // 3. Determinar configuração de batch
         const batchConfig = { ...this.DEFAULT_BATCH_CONFIG };
 
+        const byokMaxConcurrent =
+            context?.codeReviewConfig?.byokConfig?.main?.maxConcurrentRequests;
+        if (byokMaxConcurrent && byokMaxConcurrent > 0) {
+            batchConfig.maxConcurrentChunks = Math.min(
+                batchConfig.maxConcurrentChunks,
+                byokMaxConcurrent,
+            );
+        }
+
         // 4. Processar chunks em batches paralelos
         const allSuggestions = await this.processChunksInBatches(
             chunkingResult.chunks,
