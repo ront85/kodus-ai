@@ -130,7 +130,11 @@ export const BYOKEditKeyModal = ({
                                                 </FormControl.Input>
                                             </FormControl.Root>
                                         }>
-                                        <ByokProviderSelect />
+                                        <ByokProviderSelect
+                                            onProviderChange={() =>
+                                                setShowKeyInput(true)
+                                            }
+                                        />
                                     </Suspense>
                                 </ErrorBoundary>
 
