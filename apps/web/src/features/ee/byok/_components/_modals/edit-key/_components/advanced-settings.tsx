@@ -52,10 +52,12 @@ export const ByokAdvancedSettings = () => {
                                         }
                                         onChange={(e) => {
                                             const val = e.target.value;
+                                            const num = parseFloat(val);
                                             field.onChange(
-                                                val === ""
+                                                val === "" ||
+                                                    Number.isNaN(num)
                                                     ? null
-                                                    : parseFloat(val),
+                                                    : num,
                                             );
                                         }}
                                     />
@@ -94,10 +96,12 @@ export const ByokAdvancedSettings = () => {
                                         }
                                         onChange={(e) => {
                                             const val = e.target.value;
+                                            const num = parseInt(val, 10);
                                             field.onChange(
-                                                val === ""
+                                                val === "" ||
+                                                    Number.isNaN(num)
                                                     ? null
-                                                    : parseInt(val, 10),
+                                                    : num,
                                             );
                                         }}
                                     />
@@ -136,10 +140,12 @@ export const ByokAdvancedSettings = () => {
                                         }
                                         onChange={(e) => {
                                             const val = e.target.value;
+                                            const num = parseInt(val, 10);
                                             field.onChange(
-                                                val === ""
+                                                val === "" ||
+                                                    Number.isNaN(num)
                                                     ? null
-                                                    : parseInt(val, 10),
+                                                    : num,
                                             );
                                         }}
                                     />
@@ -178,10 +184,12 @@ export const ByokAdvancedSettings = () => {
                                         }
                                         onChange={(e) => {
                                             const val = e.target.value;
+                                            const num = parseInt(val, 10);
                                             field.onChange(
-                                                val === ""
+                                                val === "" ||
+                                                    Number.isNaN(num)
                                                     ? null
-                                                    : parseInt(val, 10),
+                                                    : num,
                                             );
                                         }}
                                     />

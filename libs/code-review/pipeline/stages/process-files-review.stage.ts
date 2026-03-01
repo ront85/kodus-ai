@@ -771,7 +771,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                                 hasRelevantContent: true,
                             },
                             reviewModeResponse,
-                            context,
+                            chunkContext,
                         );
 
                     // Run the full post-processing pipeline (filters + safeguard)
