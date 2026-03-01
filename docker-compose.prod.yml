@@ -24,6 +24,10 @@ services:
         environment:
             - API_CLOUD_MODE=false
             - COMPONENT_TYPE=api
+            - API_RABBITMQ_ENABLED=true
+            - API_RABBITMQ_URI=amqp://kodus:kodus@rabbitmq:5672/
+            - API_ENABLE_CODE_REVIEW_AST=true
+            - API_SERVICE_AST_URL=http://kodus-service-ast:3002
         ports:
             - '3331:3001'
         depends_on:
@@ -31,6 +35,11 @@ services:
                 condition: service_healthy
             db_mongodb:
                 condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+        volumes:
+            - ./patches/responses.js:/usr/src/app/node_modules/@kodus/kodus-common/node_modules/@langchain/openai/dist/chat_models/responses.js:ro
+            - ./patches/responses.cjs:/usr/src/app/node_modules/@kodus/kodus-common/node_modules/@langchain/openai/dist/chat_models/responses.cjs:ro
         networks:
             - kodus-backend-services
 
@@ -44,11 +53,20 @@ services:
         environment:
             - API_CLOUD_MODE=false
             - COMPONENT_TYPE=worker
+            - API_RABBITMQ_ENABLED=true
+            - API_RABBITMQ_URI=amqp://kodus:kodus@rabbitmq:5672/
+            - API_ENABLE_CODE_REVIEW_AST=true
+            - API_SERVICE_AST_URL=http://kodus-service-ast:3002
         depends_on:
             db_postgres:
                 condition: service_healthy
             db_mongodb:
                 condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+        volumes:
+            - ./patches/responses.js:/usr/src/app/node_modules/@kodus/kodus-common/node_modules/@langchain/openai/dist/chat_models/responses.js:ro
+            - ./patches/responses.cjs:/usr/src/app/node_modules/@kodus/kodus-common/node_modules/@langchain/openai/dist/chat_models/responses.cjs:ro
         networks:
             - kodus-backend-services
 
@@ -62,12 +80,16 @@ services:
         environment:
             - API_CLOUD_MODE=false
             - COMPONENT_TYPE=webhook
+            - API_RABBITMQ_ENABLED=true
+            - API_RABBITMQ_URI=amqp://kodus:kodus@rabbitmq:5672/
         ports:
             - '3333:3332'
         depends_on:
             db_postgres:
                 condition: service_healthy
             db_mongodb:
+                condition: service_healthy
+            rabbitmq:
                 condition: service_healthy
         networks:
             - kodus-backend-services
@@ -131,9 +153,74 @@ services:
             retries: 20
             start_period: 20s
 
+    #----------------------------------------------------------------
+    # Message Broker
+    #----------------------------------------------------------------
+    rabbitmq:
+        image: docker.io/rabbitmq:3-management-alpine
+        container_name: kodus_rabbitmq_prod
+        restart: unless-stopped
+        volumes:
+            - rabbitmqdata_prod:/var/lib/rabbitmq
+            - ./rabbitmq-plugins/rabbitmq_delayed_message_exchange-3.13.0.ez:/opt/rabbitmq/plugins/rabbitmq_delayed_message_exchange-3.13.0.ez:ro
+            - ./rabbitmq-plugins/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+        environment:
+            - RABBITMQ_DEFAULT_USER=kodus
+            - RABBITMQ_DEFAULT_PASS=kodus
+        networks:
+            - kodus-backend-services
+        healthcheck:
+            test:
+                [
+                    'CMD-SHELL',
+                    'rabbitmq-diagnostics -q ping',
+                ]
+            interval: 10s
+            timeout: 5s
+            retries: 20
+            start_period: 15s
+
+    #----------------------------------------------------------------
+    # AST Analysis Service
+    #----------------------------------------------------------------
+    kodus-service-ast:
+        image: ghcr.io/kodustech/kodus-service-ast:latest
+        platform: linux/amd64
+        container_name: kodus-service-ast
+        restart: unless-stopped
+        depends_on:
+            db_postgres:
+                condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+        env_file:
+            - ${ENV_FILE:-.env.prod}
+        environment:
+            - NODE_ENV=production
+            - API_NODE_ENV=production
+            - API_LOG_PRETTY=false
+            - API_LOG_LEVEL=info
+            - CONTAINER_NAME=kodus-service-ast
+            - API_PORT=3002
+            - API_DATABASE_ENV=development
+            - API_PG_DB_HOST=db_postgres
+            - API_PG_DB_PORT=5432
+            - API_PG_DB_SCHEMA=kodus_workflow
+            - RABBIT_URL=amqp://kodus:kodus@rabbitmq:5672/
+            - RABBIT_RETRY_QUEUE=ast.jobs.retry.q
+            - RABBIT_RETRY_TTL_MS=60000
+            - RABBIT_PREFETCH=1
+            - RABBIT_PUBLISH_TIMEOUT_MS=5000
+            - RABBIT_SAC=false
+            - LANGCHAIN_TRACING_V2=false
+            - S3_ENABLED=false
+        networks:
+            - kodus-backend-services
+
 volumes:
     pgdata_prod:
     mongodbdata_prod:
+    rabbitmqdata_prod:
 
 networks:
     kodus-backend-services:
