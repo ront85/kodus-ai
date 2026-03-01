@@ -75,7 +75,7 @@ const SubscriptionTokenInput = ({
 
     const handleTest = async () => {
         const token = form.getValues("subscriptionToken")?.trim();
-        if (!token) return;
+        if (!token && !isEditing) return;
 
         setTestResult({ status: "loading" });
         try {
@@ -84,7 +84,7 @@ const SubscriptionTokenInput = ({
                 {
                     provider,
                     credentialType: "subscription_token",
-                    subscriptionToken: token,
+                    ...(token ? { subscriptionToken: token } : {}),
                 },
             );
             const data = res.data;
@@ -160,14 +160,14 @@ const SubscriptionTokenInput = ({
                             type="button"
                             variant="tertiary"
                             size="xs"
-                            disabled={!field.value?.trim() || testResult.status === "loading"}
+                            disabled={(!field.value?.trim() && !isEditing) || testResult.status === "loading"}
                             leftIcon={
                                 testResult.status === "loading"
                                     ? <Loader2Icon className="h-3 w-3 animate-spin" />
                                     : <FlaskConicalIcon className="h-3 w-3" />
                             }
                             onClick={handleTest}>
-                            {testResult.status === "loading" ? "Testing..." : "Test token"}
+                            {testResult.status === "loading" ? "Testing..." : field.value?.trim() ? "Test token" : "Test saved token"}
                         </Button>
 
                         {testResult.status === "success" && (

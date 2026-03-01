@@ -234,6 +234,8 @@ export class OrganizationParametersController {
             subscriptionToken?: string;
         },
     ): Promise<{ success: boolean; message: string }> {
+        const organizationId = this.request?.user?.organization?.uuid;
+
         return await this.getModelsByProviderUseCase.testCredential(
             body.provider,
             body.credentialType ?? 'api_key',
@@ -241,6 +243,7 @@ export class OrganizationParametersController {
                 apiKey: body.apiKey,
                 subscriptionToken: body.subscriptionToken,
             },
+            organizationId,
         );
     }
 

@@ -95,10 +95,22 @@ export class GetModelsByProviderUseCase {
         provider: string,
         credentialType: string,
         credentials: { apiKey?: string; subscriptionToken?: string },
+        organizationId?: string,
     ): Promise<{ success: boolean; message: string }> {
         try {
             if (credentialType === 'subscription_token') {
                 let token = credentials.subscriptionToken?.trim();
+                let savedAccountId: string | undefined;
+
+                // If no token provided, try loading the saved one from DB
+                if (!token && organizationId) {
+                    const saved = await this.loadSavedCredentials(provider, organizationId);
+                    if (saved?.subscriptionToken) {
+                        token = saved.subscriptionToken;
+                        savedAccountId = saved.chatgptAccountId;
+                    }
+                }
+
                 if (!token) {
                     return { success: false, message: 'No token provided' };
                 }
@@ -127,14 +139,16 @@ export class GetModelsByProviderUseCase {
                 }
 
                 if (provider === BYOKProvider.OPENAI) {
-                    // Extract account ID from JWT claims
-                    let chatgptAccountId = '';
-                    try {
-                        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
-                        chatgptAccountId = payload['https://api.openai.com/auth']?.chatgpt_account_id
-                            ?? payload['https://api.openai.com/auth']?.user_id
-                            ?? '';
-                    } catch { /* ignore */ }
+                    // Use saved account ID if available, otherwise extract from JWT
+                    let chatgptAccountId = savedAccountId ?? '';
+                    if (!chatgptAccountId) {
+                        try {
+                            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
+                            chatgptAccountId = payload['https://api.openai.com/auth']?.chatgpt_account_id
+                                ?? payload['https://api.openai.com/auth']?.user_id
+                                ?? '';
+                        } catch { /* ignore */ }
+                    }
 
                     // If user pasted the full auth.json, also try account_id field
                     if (!chatgptAccountId && credentials.subscriptionToken?.trim()?.startsWith('{')) {
@@ -295,6 +309,37 @@ export class GetModelsByProviderUseCase {
                 throw new BadRequestException(
                     `Unsupported provider: ${provider}`,
                 );
+        }
+    }
+
+    private async loadSavedCredentials(
+        provider: string,
+        organizationId: string,
+    ): Promise<{ subscriptionToken?: string; chatgptAccountId?: string } | null> {
+        try {
+            const param = await this.organizationParametersService.findByKey(
+                OrganizationParametersKey.BYOK_CONFIG,
+                { organizationId },
+            );
+            if (!param?.configValue) return null;
+
+            // Check main first, then fallback
+            for (const slot of ['main', 'fallback'] as const) {
+                const cfg = param.configValue[slot];
+                if (cfg?.provider === provider && cfg?.subscriptionToken) {
+                    return {
+                        subscriptionToken: decrypt(cfg.subscriptionToken),
+                        chatgptAccountId: cfg.chatgptAccountId,
+                    };
+                }
+            }
+            return null;
+        } catch (error) {
+            this.logger.error({
+                message: 'Error loading saved credentials for test',
+                error,
+            });
+            return null;
         }
     }
 
