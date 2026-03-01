@@ -128,17 +128,16 @@ export class GetModelsByProviderUseCase {
                     }
                 }
 
-                // Decode JWT and check expiry
-                try {
-                    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
-                    if (payload.exp && payload.exp * 1000 < Date.now()) {
-                        return { success: false, message: 'Token is expired. Run codex login again.' };
-                    }
-                } catch {
-                    return { success: false, message: 'Could not decode JWT — is this a valid token?' };
-                }
-
                 if (provider === BYOKProvider.OPENAI) {
+                    // Decode JWT and check expiry (only OpenAI tokens are JWTs)
+                    try {
+                        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
+                        if (payload.exp && payload.exp * 1000 < Date.now()) {
+                            return { success: false, message: 'Token is expired. Run codex login again.' };
+                        }
+                    } catch {
+                        return { success: false, message: 'Could not decode JWT — is this a valid token?' };
+                    }
                     // Use saved account ID if available, otherwise extract from JWT
                     let chatgptAccountId = savedAccountId ?? '';
                     if (!chatgptAccountId) {
