@@ -127,7 +127,7 @@ export const ByokAdvancedSettings = () => {
                                         type="number"
                                         min={0}
                                         step={1}
-                                        placeholder="Model default"
+                                        placeholder="No limit"
                                         error={fieldState.error}
                                         value={
                                             field.value != null
@@ -146,7 +146,7 @@ export const ByokAdvancedSettings = () => {
                                 </FormControl.Input>
                                 <FormControl.Helper>
                                     Maximum tokens sent in the prompt. 0 or
-                                    empty uses model default.
+                                    empty means no limit.
                                 </FormControl.Helper>
                                 <FormControl.Error>
                                     {fieldState.error?.message}
