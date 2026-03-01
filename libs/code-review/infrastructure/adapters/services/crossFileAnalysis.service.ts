@@ -57,7 +57,7 @@ interface PreparedFileData {
 @Injectable()
 export class CrossFileAnalysisService {
     private readonly logger = createLogger(CrossFileAnalysisService.name);
-    private readonly DEFAULT_USAGE_LLM_MODEL_PERCENTAGE = 70;
+    private readonly DEFAULT_USAGE_LLM_MODEL_PERCENTAGE = 90;
     private readonly DEFAULT_BATCH_CONFIG: BatchProcessingConfig = {
         maxConcurrentChunks: 10,
         batchDelay: 2000,
@@ -176,10 +176,16 @@ export class CrossFileAnalysisService {
         analysisType: AnalysisType,
         crossFileContexts?: CrossFileContextForPrompt[],
     ): Promise<CodeSuggestion[]> {
+        const byokMaxInputTokens =
+            context?.codeReviewConfig?.byokConfig?.main?.maxInputTokens;
+
         const chunkingResult = this.tokenChunkingService.chunkDataByTokens({
             model: provider,
             data: preparedFiles,
             usagePercentage: this.DEFAULT_USAGE_LLM_MODEL_PERCENTAGE,
+            ...(byokMaxInputTokens && byokMaxInputTokens > 0
+                ? { overrideMaxTokens: byokMaxInputTokens }
+                : {}),
         });
 
         this.logger.log({
