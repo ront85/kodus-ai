@@ -243,8 +243,23 @@ export class GetModelsByProviderUseCase {
             throw new BadRequestException(`Unsupported provider: ${provider}`);
         }
 
+        // Parse JSON credentials if user pasted a full credentials file
+        let credentials = userCredentials ? { ...userCredentials } : userCredentials;
+        if (credentials?.subscriptionToken?.trimStart().startsWith('{')) {
+            try {
+                const parsed = JSON.parse(credentials.subscriptionToken);
+                if (provider === BYOKProvider.OPENAI) {
+                    credentials.subscriptionToken = parsed?.tokens?.access_token ?? credentials.subscriptionToken;
+                } else if (provider === BYOKProvider.ANTHROPIC) {
+                    const oauthBlock = parsed?.claudeAiOauth ?? parsed;
+                    credentials.subscriptionToken = oauthBlock?.accessToken ?? credentials.subscriptionToken;
+                }
+            } catch {
+                // Not valid JSON — use as-is
+            }
+        }
+
         // If no inline credentials but organizationId provided, load & decrypt saved BYOK config
-        let credentials = userCredentials;
         if (userCredentials?.organizationId && !userCredentials.apiKey && !userCredentials.subscriptionToken) {
             try {
                 const saved = await this.organizationParametersService.findByKey(
@@ -260,21 +275,6 @@ export class GetModelsByProviderUseCase {
                 }
             } catch {
                 // ignore — fall through to env keys / static list
-            }
-        }
-
-        // Extract token from JSON if user pasted full credentials file
-        if (credentials?.subscriptionToken?.trimStart().startsWith('{')) {
-            try {
-                const parsed = JSON.parse(credentials.subscriptionToken);
-                if (provider === BYOKProvider.OPENAI) {
-                    credentials = { ...credentials, subscriptionToken: parsed?.tokens?.access_token };
-                } else if (provider === BYOKProvider.ANTHROPIC) {
-                    const oauthBlock = parsed?.claudeAiOauth ?? parsed;
-                    credentials = { ...credentials, subscriptionToken: oauthBlock?.accessToken };
-                }
-            } catch {
-                // not valid JSON — use as-is
             }
         }
 
