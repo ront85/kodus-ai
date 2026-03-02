@@ -263,6 +263,21 @@ export class GetModelsByProviderUseCase {
             }
         }
 
+        // Extract token from JSON if user pasted full credentials file
+        if (credentials?.subscriptionToken?.trimStart().startsWith('{')) {
+            try {
+                const parsed = JSON.parse(credentials.subscriptionToken);
+                if (provider === BYOKProvider.OPENAI) {
+                    credentials = { ...credentials, subscriptionToken: parsed?.tokens?.access_token };
+                } else if (provider === BYOKProvider.ANTHROPIC) {
+                    const oauthBlock = parsed?.claudeAiOauth ?? parsed;
+                    credentials = { ...credentials, subscriptionToken: oauthBlock?.accessToken };
+                }
+            } catch {
+                // not valid JSON — use as-is
+            }
+        }
+
         const byokProvider = provider as BYOKProvider;
 
         switch (byokProvider) {
