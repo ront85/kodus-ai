@@ -2,7 +2,6 @@ import {
     BYOKConfig,
     BYOKCredentialType,
     LLMModelProvider,
-    PromptBuilder,
     PromptRunnerService,
 } from '@kodus/kodus-common/llm';
 import { decrypt } from '@libs/common/utils/crypto';

@@ -145,7 +145,7 @@ const SubscriptionTokenInput = ({
                                 if (testResult.status !== "idle") setTestResult({ status: "idle" });
                             }}
                             className="max-h-56 min-h-32 font-mono text-xs"
-                            placeholder={isEditing ? "Already configured — paste new auth.json contents to replace" : provider === "openai" ? 'Paste contents of ~/.codex/auth.json (or a raw eyJ... JWT)' : "sk-ant-oat01-..."}
+                            placeholder={isEditing ? "Already configured — paste new credentials to replace" : provider === "openai" ? 'Paste contents of ~/.codex/auth.json (or a raw eyJ... JWT)' : 'sk-ant-oat01-... or {"accessToken": "sk-ant-oat01-...", "refreshToken": "sk-ant-ort01-..."}'}
                         />
                     </FormControl.Input>
 
@@ -187,7 +187,7 @@ const SubscriptionTokenInput = ({
                     <p className="text-text-tertiary text-xs">
                         {provider === "openai"
                             ? "Tokens expire after ~10 days. Re-run codex login and paste the updated auth.json when expired."
-                            : "Tokens expire after ~8 hours. Re-enter a new token when it expires."}
+                            : "Paste your token or JSON with a refresh token for automatic renewal. Without a refresh token, tokens expire after ~8 hours."}
                     </p>
                 </FormControl.Root>
             )}

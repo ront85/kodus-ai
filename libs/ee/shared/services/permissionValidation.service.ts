@@ -1,4 +1,4 @@
-import { BYOKConfig } from '@kodus/kodus-common/llm';
+import { BYOKConfig, BYOKCredentialType, BYOKProvider } from '@kodus/kodus-common/llm';
 import { Injectable, Inject } from '@nestjs/common';
 
 import { OrganizationParametersKey } from '@libs/core/domain/enums';
@@ -14,6 +14,7 @@ import {
     ORGANIZATION_PARAMETERS_SERVICE_TOKEN,
 } from '@libs/organization/domain/organizationParameters/contracts/organizationParameters.service.contract';
 import { createLogger } from '@kodus/flow';
+import { refreshAnthropicAccessToken } from '@libs/core/infrastructure/services/tokenTracking/anthropicTokenRefresh.service';
 
 export enum PlanType {
     FREE = 'free',
@@ -492,16 +493,92 @@ export class PermissionValidationService {
     }
 
     /**
-     * Retorna a configuração BYOK da organização (se existir)
+     * Retorna a configuração BYOK da organização (se existir).
+     * Auto-refreshes Anthropic OAuth tokens when they are expired and a refresh token is available.
      */
     async getBYOKConfig(
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<BYOKConfig | null> {
-        const byokConfig = await this.organizationParametersService.findByKey(
+        const byokParam = await this.organizationParametersService.findByKey(
             OrganizationParametersKey.BYOK_CONFIG,
             organizationAndTeamData,
         );
 
-        return byokConfig?.configValue || null;
+        const byokConfig: BYOKConfig | null = byokParam?.configValue || null;
+        if (!byokConfig) return null;
+
+        let configUpdated = false;
+
+        // Check main slot
+        if (byokConfig.main) {
+            const refreshed = await this.refreshAnthropicSlotIfExpired(byokConfig.main, 'main');
+            if (refreshed) configUpdated = true;
+        }
+
+        // Check fallback slot
+        if (byokConfig.fallback) {
+            const refreshed = await this.refreshAnthropicSlotIfExpired(byokConfig.fallback, 'fallback');
+            if (refreshed) configUpdated = true;
+        }
+
+        // Persist refreshed tokens back to DB
+        if (configUpdated) {
+            try {
+                await this.organizationParametersService.createOrUpdateConfig(
+                    OrganizationParametersKey.BYOK_CONFIG,
+                    byokConfig,
+                    organizationAndTeamData,
+                );
+            } catch (persistError) {
+                this.logger.error({
+                    message: 'Failed to persist refreshed Anthropic token to DB',
+                    error: persistError,
+                    context: PermissionValidationService.name,
+                    metadata: { organizationAndTeamData },
+                });
+            }
+        }
+
+        return byokConfig;
+    }
+
+    /**
+     * Refreshes an Anthropic OAuth token in-place if it is expired and has a refresh token.
+     * Returns true if the slot was updated.
+     */
+    private async refreshAnthropicSlotIfExpired(
+        slot: NonNullable<BYOKConfig['main']>,
+        slotName: string,
+    ): Promise<boolean> {
+        if (
+            slot.credentialType !== BYOKCredentialType.SUBSCRIPTION_TOKEN ||
+            slot.provider !== BYOKProvider.ANTHROPIC ||
+            !slot.refreshToken ||
+            !slot.tokenExpiresAt ||
+            Date.now() < slot.tokenExpiresAt - 60_000
+        ) {
+            return false;
+        }
+
+        try {
+            const refreshed = await refreshAnthropicAccessToken(slot.refreshToken);
+
+            slot.subscriptionToken = refreshed.encryptedAccessToken;
+            slot.tokenExpiresAt = refreshed.tokenExpiresAt;
+
+            this.logger.log({
+                message: `Anthropic OAuth token auto-refreshed for ${slotName} slot`,
+                context: PermissionValidationService.name,
+            });
+
+            return true;
+        } catch (error) {
+            this.logger.error({
+                message: `Failed to auto-refresh Anthropic OAuth token for ${slotName} slot`,
+                error,
+                context: PermissionValidationService.name,
+            });
+            return false;
+        }
     }
 }
