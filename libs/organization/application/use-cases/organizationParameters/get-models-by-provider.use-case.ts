@@ -266,11 +266,13 @@ export class GetModelsByProviderUseCase {
                     OrganizationParametersKey.BYOK_CONFIG,
                     { organizationId: userCredentials.organizationId },
                 );
-                const main = saved?.configValue?.main;
-                if (main?.provider === provider) {
+                // Check main first, then fallback
+                const slot = [saved?.configValue?.main, saved?.configValue?.fallback]
+                    .find((s) => s?.provider === provider);
+                if (slot) {
                     credentials = {
-                        apiKey: main.apiKey ? decrypt(main.apiKey) : undefined,
-                        subscriptionToken: main.subscriptionToken ? decrypt(main.subscriptionToken) : undefined,
+                        apiKey: slot.apiKey ? decrypt(slot.apiKey) : undefined,
+                        subscriptionToken: slot.subscriptionToken ? decrypt(slot.subscriptionToken) : undefined,
                     };
                 }
             } catch {
