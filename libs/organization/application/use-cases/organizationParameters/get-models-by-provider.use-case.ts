@@ -115,13 +115,21 @@ export class GetModelsByProviderUseCase {
                     return { success: false, message: 'No token provided' };
                 }
 
-                // Parse auth.json if user pasted the full file
+                // Parse JSON credentials if user pasted the full file
                 if (token.startsWith('{')) {
                     try {
                         const parsed = JSON.parse(token);
-                        token = parsed?.tokens?.access_token;
-                        if (!token) {
-                            return { success: false, message: 'Could not find tokens.access_token in auth.json' };
+                        if (provider === BYOKProvider.OPENAI) {
+                            token = parsed?.tokens?.access_token;
+                            if (!token) {
+                                return { success: false, message: 'Could not find tokens.access_token in auth.json' };
+                            }
+                        } else if (provider === BYOKProvider.ANTHROPIC) {
+                            const oauthBlock = parsed?.claudeAiOauth ?? parsed;
+                            token = oauthBlock?.accessToken;
+                            if (!token) {
+                                return { success: false, message: 'Could not find accessToken in credentials JSON' };
+                            }
                         }
                     } catch {
                         return { success: false, message: 'Invalid JSON format' };
