@@ -66,6 +66,7 @@ export const BYOKEditKeyModal = ({
     const { isValid, isSubmitting } = form.formState;
 
     const provider = form.watch("provider");
+    const model = form.watch("model");
     const credentialType = form.watch("credentialType");
     const subscriptionToken = form.watch("subscriptionToken");
     const apiKey = form.watch("apiKey");
