@@ -73,7 +73,8 @@ export const createKeySchema = z
                 if (isJson) {
                     try {
                         const parsed = JSON.parse(token);
-                        const accessToken = parsed?.accessToken;
+                        const oauthBlock = parsed?.claudeAiOauth ?? parsed;
+                        const accessToken = oauthBlock?.accessToken;
                         if (!accessToken || !accessToken.startsWith("sk-ant-oat01-")) {
                             ctx.addIssue({
                                 code: z.ZodIssueCode.custom,
@@ -167,7 +168,8 @@ export const editKeySchema = z
                 if (isJson) {
                     try {
                         const parsed = JSON.parse(token);
-                        const accessToken = parsed?.accessToken;
+                        const oauthBlock = parsed?.claudeAiOauth ?? parsed;
+                        const accessToken = oauthBlock?.accessToken;
                         if (!accessToken || !accessToken.startsWith("sk-ant-oat01-")) {
                             ctx.addIssue({
                                 code: z.ZodIssueCode.custom,

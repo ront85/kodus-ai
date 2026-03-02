@@ -152,8 +152,10 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
     private parseAnthropicCredentialsJson(raw: string): { subscriptionToken: string; refreshToken?: string } {
         try {
             const parsed = JSON.parse(raw);
-            const accessToken = parsed?.accessToken;
-            const refreshToken = parsed?.refreshToken;
+            // Support ~/.claude/.credentials.json format: { "claudeAiOauth": { "accessToken": "...", "refreshToken": "..." } }
+            const oauthBlock = parsed?.claudeAiOauth ?? parsed;
+            const accessToken = oauthBlock?.accessToken;
+            const refreshToken = oauthBlock?.refreshToken;
             if (!accessToken) {
                 throw new Error('Missing accessToken in credentials JSON');
             }

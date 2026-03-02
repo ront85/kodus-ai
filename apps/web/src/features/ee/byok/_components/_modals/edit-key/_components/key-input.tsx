@@ -145,7 +145,7 @@ const SubscriptionTokenInput = ({
                                 if (testResult.status !== "idle") setTestResult({ status: "idle" });
                             }}
                             className="max-h-56 min-h-32 font-mono text-xs"
-                            placeholder={isEditing ? "Already configured — paste new credentials to replace" : provider === "openai" ? 'Paste contents of ~/.codex/auth.json (or a raw eyJ... JWT)' : 'sk-ant-oat01-... or {"accessToken": "sk-ant-oat01-...", "refreshToken": "sk-ant-ort01-..."}'}
+                            placeholder={isEditing ? "Already configured — paste new credentials to replace" : provider === "openai" ? 'Paste contents of ~/.codex/auth.json (or a raw eyJ... JWT)' : 'Paste ~/.claude/.credentials.json contents, or a raw sk-ant-oat01-... token'}
                         />
                     </FormControl.Input>
 

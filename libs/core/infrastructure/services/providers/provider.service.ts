@@ -36,7 +36,7 @@ export class ProviderService {
             requiresBaseUrl: false,
             supportsSubscriptionToken: true,
             subscriptionTokenSetupUrl: 'https://docs.anthropic.com/en/docs/claude-code/setup-token',
-            subscriptionTokenInstructions: '1. Open your terminal\n2. Run: claude setup-token\n3. Copy the token that starts with sk-ant-oat01-\n4. Paste it in the field above\n\nRequires Claude Code CLI with a Pro, Max, or Team subscription.',
+            subscriptionTokenInstructions: '1. Open your terminal\n2. Run: claude setup-token\n\nOn Linux, copy ~/.claude/.credentials.json and paste the entire JSON below — Kodus will extract both the access token and refresh token automatically.\n\nOn macOS, run:\nsecurity find-generic-password -s "Claude Code-credentials" -w\nand paste the output JSON below.\n\nAlternatively, paste just the sk-ant-oat01-... token (but without a refresh token, it expires after ~8 hours).\n\nRequires Claude Code CLI with a Pro, Max, or Team subscription.',
         },
         [BYOKProvider.GOOGLE_GEMINI]: {
             id: BYOKProvider.GOOGLE_GEMINI,
