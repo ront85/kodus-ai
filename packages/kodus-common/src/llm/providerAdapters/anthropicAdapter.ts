@@ -8,9 +8,21 @@ import {
     LLM_MAX_RETRIES,
 } from './types';
 
+/**
+ * Beta headers required when authenticating with a Claude subscription
+ * (OAuth) token instead of an API key. Without these the OAuth endpoint
+ * rejects the request.
+ */
+const OAUTH_BETAS = [
+    'claude-code-20250219',
+    'oauth-2025-04-20',
+    'fine-grained-tool-streaming-2025-05-14',
+    'interleaved-thinking-2025-05-14',
+];
+
 export class AnthropicAdapter implements ProviderAdapter {
     build(params: AdapterBuildParams): ChatAnthropic {
-        const { model, apiKey, baseURL, options } = params;
+        const { model, apiKey, subscriptionToken, baseURL, options } = params;
         const resolved = resolveModelOptions(model, {
             temperature: options?.temperature,
             maxTokens: options?.maxTokens,
@@ -48,7 +60,10 @@ export class AnthropicAdapter implements ProviderAdapter {
 
         const payload: ConstructorParameters<typeof ChatAnthropic>[0] = {
             model,
-            apiKey,
+            // Subscription (OAuth) tokens authenticate via the Authorization
+            // bearer header below; ChatAnthropic still requires a non-empty
+            // apiKey, so pass a placeholder.
+            apiKey: subscriptionToken ? 'subscription-token' : apiKey,
             // Anthropic-compatible endpoints (Kimi Code, Z.ai, etc.):
             // ChatAnthropic appends /v1/messages itself, so pass the root.
             ...(baseURL
@@ -63,6 +78,15 @@ export class AnthropicAdapter implements ProviderAdapter {
             maxRetries: LLM_MAX_RETRIES,
             clientOptions: {
                 timeout: LLM_TIMEOUT_MS,
+                // Claude subscription (OAuth) auth: bearer token + beta headers.
+                ...(subscriptionToken
+                    ? {
+                          defaultHeaders: {
+                              Authorization: `Bearer ${subscriptionToken}`,
+                              'anthropic-beta': OAUTH_BETAS.join(','),
+                          },
+                      }
+                    : {}),
             },
         };
 

@@ -38,6 +38,8 @@ import { maskKey } from "../_utils";
 import { ByokAdvancedSettings } from "../_components/_modals/edit-key/_components/advanced-settings";
 import { ByokBaseURLInput } from "../_components/_modals/edit-key/_components/baseurl-input";
 import { ByokCredentialsInput } from "../_components/_modals/edit-key/_components/credentials-input";
+import { CredentialTypeToggle } from "../_components/_modals/edit-key/_components/credential-type-toggle";
+import { ByokKeyInput } from "../_components/_modals/edit-key/_components/key-input";
 import {
     ByokManualModelInput,
     ByokModelSelect,
@@ -104,6 +106,15 @@ export function ByokManualPageClient({
             model: existingConfig?.model,
             baseURL: existingConfig?.baseURL,
             apiKey: "",
+            // Credential strategy. Defaults to the standard api-key flow; the
+            // CredentialTypeToggle (only shown for providers that support it,
+            // i.e. anthropic/openai) flips this to "subscription_token".
+            credentialType: existingConfig?.credentialType ?? "api_key",
+            // OAuth / Codex token. Empty when editing means "keep existing".
+            subscriptionToken: "",
+            // Lets the schema's edit-mode branch skip required-credential
+            // checks when no new key/token is pasted.
+            isEditing,
             temperature: existingConfig?.temperature ?? null,
             maxInputTokens: existingConfig?.maxInputTokens ?? null,
             maxConcurrentRequests:
@@ -137,21 +148,28 @@ export function ByokManualPageClient({
     const provider = form.watch("provider");
     const model = form.watch("model");
     const apiKey = form.watch("apiKey");
+    const credentialType = form.watch("credentialType");
+    const subscriptionToken = form.watch("subscriptionToken");
     const awsBearerToken = form.watch("awsBearerToken");
     const awsAccessKeyId = form.watch("awsAccessKeyId");
     const awsSecretAccessKey = form.watch("awsSecretAccessKey");
 
+    const isSubscriptionToken = credentialType === "subscription_token";
+
     // Bedrock has no apiKey field; "creds entered" means either a bearer
-    // token or the IAM access key + secret pair. Used to gate the "Test"
-    // button — without this, the button stays disabled forever on Bedrock
-    // because apiKey is always empty for that provider.
-    const hasCredsForTest =
-        provider === "amazon_bedrock"
-            ? !!(
-                  awsBearerToken?.trim() ||
-                  (awsAccessKeyId?.trim() && awsSecretAccessKey?.trim())
-              )
-            : !!apiKey?.trim();
+    // token or the IAM access key + secret pair. Subscription-token configs
+    // gate on the pasted token instead of an apiKey. Used to gate the "Test"
+    // button — without this, the button stays disabled forever on Bedrock /
+    // subscription flows because apiKey is always empty for them. When editing
+    // a subscription config, an empty token is allowed (keep existing).
+    const hasCredsForTest = isSubscriptionToken
+        ? !!subscriptionToken?.trim() || isEditing
+        : provider === "amazon_bedrock"
+          ? !!(
+                awsBearerToken?.trim() ||
+                (awsAccessKeyId?.trim() && awsSecretAccessKey?.trim())
+            )
+          : !!apiKey?.trim();
 
     const resetTestOnChange = () => {
         if (testState.status !== "idle") setTestState({ status: "idle" });
@@ -162,6 +180,16 @@ export function ByokManualPageClient({
         if (!valid) return null;
 
         const data = form.getValues();
+
+        // Subscription-token configs are validated through their own
+        // "Test token" button in SubscriptionTokenInput (hits /test-credential,
+        // which understands OAuth/Codex tokens). The /test-byok probe only
+        // speaks api-key auth, so skip it here and let the save proceed —
+        // the form schema already validated the token's shape.
+        if (data.credentialType === "subscription_token") {
+            return { ok: true, code: "ok", latencyMs: 0 };
+        }
+
         const hasNewCredentials =
             data.provider === "amazon_bedrock"
                 ? !!(
@@ -230,10 +258,25 @@ export function ByokManualPageClient({
         if (!testResult?.ok) return;
 
         const effort = data.reasoningEffort;
+        const usingSubscriptionToken =
+            data.credentialType === "subscription_token";
         const newConfig: BYOKConfig = {
             provider: data.provider,
             model: data.model,
-            apiKey: data.apiKey || undefined!,
+            // Carry the credential strategy so the backend stores/routes the
+            // config correctly. Defaults to api_key for every other provider.
+            credentialType: data.credentialType,
+            // Subscription-token providers send the pasted OAuth/Codex token
+            // instead of an apiKey; the backend extracts refresh token + (for
+            // OpenAI Codex) chatgptAccountId from the pasted auth.json itself.
+            // Empty when editing means "keep the existing token".
+            subscriptionToken:
+                usingSubscriptionToken && data.subscriptionToken?.trim()
+                    ? data.subscriptionToken.trim()
+                    : undefined,
+            apiKey: usingSubscriptionToken
+                ? undefined
+                : data.apiKey || undefined!,
             baseURL: data.baseURL || undefined,
             temperature: data.temperature ?? undefined,
             maxInputTokens: data.maxInputTokens ?? undefined,
@@ -460,10 +503,29 @@ export function ByokManualPageClient({
                             <CardContent className="flex flex-col gap-4">
                                 {showKeyInput ? (
                                     <ErrorBoundary
-                                        resetKeys={[provider, model]}
+                                        resetKeys={[
+                                            provider,
+                                            model,
+                                            credentialType,
+                                        ]}
                                         fallbackRender={() => null}>
                                         <Suspense fallback={null}>
-                                            <ByokCredentialsInput />
+                                            {/* Credential-type toggle. Self-
+                                                hides for providers that don't
+                                                support subscription tokens
+                                                (renders null unless anthropic /
+                                                openai), so the normal api-key
+                                                flow is untouched everywhere
+                                                else. */}
+                                            <CredentialTypeToggle />
+                                            {isSubscriptionToken ? (
+                                                // OAuth/Codex token input (+ its
+                                                // own per-token test button).
+                                                <ByokKeyInput />
+                                            ) : (
+                                                // Vertex / Bedrock / api-key.
+                                                <ByokCredentialsInput />
+                                            )}
                                         </Suspense>
                                     </ErrorBoundary>
                                 ) : (

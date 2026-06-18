@@ -71,7 +71,11 @@ export const ByokManualModelInput = () => <ModelInput />;
 const ModelInput = ({ onBackToSelect }: { onBackToSelect?: () => void }) => {
     const form = useFormContext<EditKeyForm>();
     const provider = form.watch("provider");
+    const credentialType = form.watch("credentialType");
+    const apiKey = form.watch("apiKey");
+    const subscriptionToken = form.watch("subscriptionToken");
     const baseURL = form.watch("baseURL");
+    const isEditing = form.watch("isEditing");
 
     return (
         <Controller
@@ -94,8 +98,11 @@ const ModelInput = ({ onBackToSelect }: { onBackToSelect?: () => void }) => {
                                 form.reset({
                                     model: ev.target.value,
                                     provider,
-                                    apiKey: "",
-                                    baseURL: baseURL,
+                                    credentialType,
+                                    apiKey,
+                                    subscriptionToken,
+                                    baseURL,
+                                    isEditing,
                                 });
                             }}
                         />
@@ -120,7 +127,20 @@ const ModelSelect = ({ onUseManual }: { onUseManual?: () => void }) => {
     const form = useFormContext<EditKeyForm>();
     const [open, setOpen] = useState(false);
     const provider = form.watch("provider");
-    const { models } = useSuspenseGetLLMProviderModels({ provider });
+    const credentialType = form.watch("credentialType");
+    const apiKey = form.watch("apiKey");
+    const subscriptionToken = form.watch("subscriptionToken");
+    const baseURL = form.watch("baseURL");
+    const isEditing = form.watch("isEditing");
+    const { models } = useSuspenseGetLLMProviderModels({
+        provider,
+        apiKey: credentialType !== "subscription_token" ? apiKey : undefined,
+        subscriptionToken:
+            credentialType === "subscription_token"
+                ? subscriptionToken
+                : undefined,
+        useSavedKey: isEditing,
+    });
     const { reset: resetErrorBoundary } = useQueryErrorResetBoundary();
 
     const { providers } = useSuspenseGetLLMProviders();
@@ -206,8 +226,11 @@ const ModelSelect = ({ onUseManual }: { onUseManual?: () => void }) => {
                                             form.reset({
                                                 model: v,
                                                 provider,
-                                                apiKey: "",
-                                                baseURL: null,
+                                                credentialType,
+                                                apiKey,
+                                                subscriptionToken,
+                                                baseURL,
+                                                isEditing,
                                             });
 
                                             resetErrorBoundary();

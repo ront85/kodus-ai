@@ -1,11 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@components/ui/alert";
 import { Button } from "@components/ui/button";
 import { Card, CardContent, CardHeader } from "@components/ui/card";
-import { FormControl } from "@components/ui/form-control";
-import { Textarea } from "@components/ui/textarea";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
     testBYOK,
@@ -20,8 +18,7 @@ import {
     SaveIcon,
     XCircleIcon,
 } from "lucide-react";
-import { Controller, FormProvider, useForm } from "react-hook-form";
-import { z } from "zod";
+import { FormProvider, useForm } from "react-hook-form";
 
 import type {
     CuratedModel,
@@ -29,42 +26,14 @@ import type {
 } from "../../_data/curated-models.types";
 import type { BYOKConfig } from "../../_types";
 import { ByokAdvancedSettings } from "../_modals/edit-key/_components/advanced-settings";
-import type { EditKeyForm } from "../_modals/edit-key/_types";
+import { CredentialTypeToggle } from "../_modals/edit-key/_components/credential-type-toggle";
+import { ByokKeyInput } from "../_modals/edit-key/_components/key-input";
+import {
+    createKeySchema,
+    editKeySchema,
+    type EditKeyForm,
+} from "../_modals/edit-key/_types";
 import { CuratedModelCard, PROVIDER_LABELS } from "./model-card";
-
-const buildConnectSchema = (hasExistingKey: boolean) =>
-    z
-        .object({
-            provider: z.string().min(1),
-            model: z.string().min(1),
-            apiKey: z.string().trim().default(""),
-            baseURL: z.url().nullable().optional(),
-            temperature: z.number().min(0).max(2).nullable().optional(),
-            maxInputTokens: z.number().int().min(0).nullable().optional(),
-            maxConcurrentRequests: z
-                .number()
-                .int()
-                .min(0)
-                .nullable()
-                .optional(),
-            maxOutputTokens: z.number().int().min(0).nullable().optional(),
-            reasoningEffort: z
-                .enum(["none", "low", "medium", "high", "custom"])
-                .nullable()
-                .optional(),
-            reasoningConfigOverride: z.string().nullable().optional(),
-            openrouterProviderOrder: z.array(z.string()).nullable().optional(),
-            openrouterAllowFallbacks: z.boolean().nullable().optional(),
-        })
-        .superRefine((data, ctx) => {
-            if (!hasExistingKey && !data.apiKey.trim()) {
-                ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
-                    path: ["apiKey"],
-                    message: "API key is required",
-                });
-            }
-        });
 
 const resolveInitialVariant = (
     model: CuratedModel,
@@ -117,19 +86,19 @@ export function CuratedConnectPanel({
         variant?.maxConcurrentRequests ??
         null;
 
-    const hasExistingKey = !!existingKey;
-    const connectSchema = useMemo(
-        () => buildConnectSchema(hasExistingKey),
-        [hasExistingKey],
-    );
-
+    // When a key is already stored, blank credentials mean "keep the current
+    // one" — that's the editKeySchema's `isEditing` semantics (applies to both
+    // api_key and subscription_token). A fresh connection requires credentials.
     const form = useForm<EditKeyForm>({
         mode: "onChange",
-        resolver: zodResolver(connectSchema) as any,
+        resolver: zodResolver(existingKey ? editKeySchema : createKeySchema),
         defaultValues: {
             provider: variant?.provider ?? model.provider,
             model: model.id,
+            credentialType: existingConfig?.credentialType ?? "api_key",
             apiKey: "",
+            subscriptionToken: "",
+            isEditing: !!existingKey,
             baseURL: initialBaseURL,
             temperature:
                 existingConfig?.temperature ?? model.defaults.temperature,
@@ -179,18 +148,40 @@ export function CuratedConnectPanel({
     };
 
     const { isValid } = form.formState;
+    const credentialType = form.watch("credentialType") ?? "api_key";
     const apiKey = form.watch("apiKey");
+    const subscriptionToken = form.watch("subscriptionToken");
 
-    const resetTestOnChange = () => {
-        if (testState.status !== "idle") setTestState({ status: "idle" });
-    };
+    // A credential is "ready" when the relevant field has content, or when a
+    // key is already stored (blank = keep the existing one).
+    const hasCredential =
+        !!existingKey ||
+        (credentialType === "subscription_token"
+            ? !!subscriptionToken?.trim()
+            : !!apiKey?.trim());
+
+    // Editing any credential field (or switching credential type) invalidates a
+    // previous Test result. The bespoke Textarea used to do this inline; the
+    // shared ByokKeyInput doesn't, so reset the panel banner here instead.
+    useEffect(() => {
+        setTestState((prev) =>
+            prev.status === "idle" ? prev : { status: "idle" },
+        );
+    }, [apiKey, subscriptionToken, credentialType]);
 
     const buildConfig = (data: EditKeyForm): BYOKConfig => {
         const effort = data.reasoningEffort;
+        const isSubscription = data.credentialType === "subscription_token";
         return {
             provider: data.provider,
             model: data.model,
-            apiKey: data.apiKey || undefined!,
+            credentialType: data.credentialType,
+            // Only one credential travels with the config; clear the other so a
+            // stale value from a toggle flip never reaches the backend.
+            apiKey: isSubscription ? undefined : data.apiKey || undefined,
+            subscriptionToken: isSubscription
+                ? data.subscriptionToken || undefined
+                : undefined,
             baseURL: data.baseURL || undefined,
             temperature: data.temperature ?? undefined,
             maxInputTokens: data.maxInputTokens ?? undefined,
@@ -222,7 +213,15 @@ export function CuratedConnectPanel({
 
         const data = form.getValues();
 
-        if (existingKey && !data.apiKey?.trim()) {
+        // Subscription tokens are verified through the dedicated
+        // /test-credential route (the SubscriptionTokenInput's own "Test token"
+        // button). The api-key probe used here (/test-byok) can't validate
+        // OAuth/Codex tokens, so the panel-level Test/Save just trusts the
+        // Zod-validated token and proceeds to save.
+        if (
+            data.credentialType === "subscription_token" ||
+            (existingKey && !data.apiKey?.trim())
+        ) {
             setTestState({ status: "idle" });
             return { ok: true, code: "ok", latencyMs: 0 };
         }
@@ -315,56 +314,53 @@ export function CuratedConnectPanel({
                         </Alert>
                     )}
 
-                    <Controller
-                        name="apiKey"
-                        control={form.control}
-                        render={({ field, fieldState }) => (
-                            <FormControl.Root>
-                                <FormControl.Label htmlFor={field.name}>
-                                    {providerLabel} API key
-                                </FormControl.Label>
-                                <FormControl.Input>
-                                    <Textarea
-                                        id={field.name}
-                                        value={field.value ?? ""}
-                                        onChange={(e) => {
-                                            field.onChange(e);
-                                            resetTestOnChange();
-                                        }}
-                                        className="max-h-40 min-h-24"
-                                        placeholder={`Paste your ${providerLabel} API key`}
-                                        error={fieldState.error}
-                                    />
-                                </FormControl.Input>
-                                <FormControl.Helper>
-                                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                        <a
-                                            href={activeApiKeyUrl}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-primary-light inline-flex items-center gap-1 hover:underline">
-                                            Get a key from {providerLabel}
-                                            {variant
-                                                ? ` (${variant.label})`
-                                                : ""}
-                                            <ExternalLinkIcon size={12} />
-                                        </a>
-                                        {activeBaseURL && (
-                                            <span className="text-text-tertiary text-xs">
-                                                Endpoint:{" "}
-                                                <code className="bg-card-lv2 rounded px-1 py-0.5 font-mono text-[11px]">
-                                                    {activeBaseURL}
-                                                </code>
-                                            </span>
-                                        )}
-                                    </span>
-                                </FormControl.Helper>
-                                <FormControl.Error>
-                                    {fieldState.error?.message}
-                                </FormControl.Error>
-                            </FormControl.Root>
-                        )}
-                    />
+                    {/* CredentialTypeToggle + ByokKeyInput both read the live
+                        providers list via useSuspenseGetLLMProviders, so they
+                        need a Suspense ancestor (this catalog tree has none).
+                        They share the one query, so they suspend together. */}
+                    <Suspense
+                        fallback={
+                            <div className="bg-card-lv2 h-32 animate-pulse rounded-md" />
+                        }>
+                        {/* Providers that support subscription tokens
+                            (anthropic, openai) get the toggle;
+                            CredentialTypeToggle self-hides for every other
+                            provider, leaving the plain api-key input untouched. */}
+                        <div className="flex flex-col gap-3">
+                            <CredentialTypeToggle />
+
+                            {/* ByokKeyInput switches on credentialType: the
+                                api-key textarea for "api_key", the subscription
+                                token + setup instructions for
+                                "subscription_token". */}
+                            <ByokKeyInput />
+                        </div>
+                    </Suspense>
+
+                    {/* Preserve the curated panel's "Get a key" / endpoint
+                        helper — but only for the api-key path, since the
+                        subscription input renders its own setup guidance. */}
+                    {credentialType === "api_key" && (
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <a
+                                href={activeApiKeyUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-primary-light inline-flex items-center gap-1 text-xs hover:underline">
+                                Get a key from {providerLabel}
+                                {variant ? ` (${variant.label})` : ""}
+                                <ExternalLinkIcon size={12} />
+                            </a>
+                            {activeBaseURL && (
+                                <span className="text-text-tertiary text-xs">
+                                    Endpoint:{" "}
+                                    <code className="bg-card-lv2 rounded px-1 py-0.5 font-mono text-[11px]">
+                                        {activeBaseURL}
+                                    </code>
+                                </span>
+                            )}
+                        </div>
+                    )}
 
                     <TestResultBanner state={testState} />
 
@@ -386,7 +382,7 @@ export function CuratedConnectPanel({
                             variant="helper"
                             leftIcon={<PlugIcon />}
                             loading={testing}
-                            disabled={!isValid || !apiKey?.trim() || isSaving}
+                            disabled={!isValid || !hasCredential || isSaving}
                             onClick={() => {
                                 void runTest();
                             }}>
@@ -398,10 +394,7 @@ export function CuratedConnectPanel({
                             variant="primary"
                             leftIcon={<SaveIcon />}
                             loading={testing || isSaving}
-                            disabled={
-                                !isValid ||
-                                (!apiKey?.trim() && !existingKey)
-                            }
+                            disabled={!isValid || !hasCredential}
                             onClick={() => {
                                 void handleTestAndSave();
                             }}>

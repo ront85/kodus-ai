@@ -13,6 +13,8 @@ import { type BYOKSlot } from './byok-config.util';
 export interface DecryptedByokSlot {
     provider: string;
     apiKey?: string;
+    subscriptionToken?: string;
+    chatgptAccountId?: string;
     baseURL?: string;
     model?: string;
     vertexLocation?: string;
@@ -75,6 +77,8 @@ export async function resolveByokSlot(
     return {
         provider: slot.provider,
         apiKey: safeDecrypt(slot.apiKey),
+        subscriptionToken: safeDecrypt(slot.subscriptionToken),
+        chatgptAccountId: slot.chatgptAccountId,
         baseURL: slot.baseURL,
         model: slot.model,
         vertexLocation: slot.vertexLocation,

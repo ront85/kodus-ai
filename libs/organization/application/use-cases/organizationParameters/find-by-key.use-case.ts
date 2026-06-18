@@ -128,9 +128,10 @@ export class FindByKeyOrganizationParametersUseCase implements IUseCase {
     }
 
     /**
-     * Names of the encrypted credential fields on a BYOK slot. apiKey
-     * covers OpenAI/Anthropic/Gemini/OpenRouter/Novita/Vertex (SA JSON);
-     * the aws* fields cover Amazon Bedrock's two auth paths.
+     * Names of the encrypted credential fields on a BYOK slot that are
+     * returned to the client in masked form. apiKey covers
+     * OpenAI/Anthropic/Gemini/OpenRouter/Novita/Vertex (SA JSON); the aws*
+     * fields cover Amazon Bedrock's two auth paths.
      */
     private static readonly SECRET_FIELDS = [
         'apiKey',
@@ -140,11 +141,28 @@ export class FindByKeyOrganizationParametersUseCase implements IUseCase {
         'awsSessionToken',
     ] as const;
 
+    /**
+     * Subscription-token credentials (Claude OAuth / OpenAI Codex). Unlike
+     * apiKey/aws* these are never surfaced to the client — not even masked —
+     * so they are fully stripped from the response. They still count toward
+     * "this slot has a credential" for gating.
+     */
+    private static readonly STRIPPED_FIELDS = [
+        'subscriptionToken',
+        'refreshToken',
+    ] as const;
+
     private slotHasSecrets(slot: any): boolean {
         if (!slot || typeof slot !== 'object') return false;
-        return FindByKeyOrganizationParametersUseCase.SECRET_FIELDS.some(
-            (field) => typeof slot[field] === 'string' && slot[field],
-        );
+        const hasMaskable =
+            FindByKeyOrganizationParametersUseCase.SECRET_FIELDS.some(
+                (field) => typeof slot[field] === 'string' && slot[field],
+            );
+        const hasStripped =
+            FindByKeyOrganizationParametersUseCase.STRIPPED_FIELDS.some(
+                (field) => typeof slot[field] === 'string' && slot[field],
+            );
+        return hasMaskable || hasStripped;
     }
 
     private maskSlotSecrets(slot: any): any {
@@ -153,6 +171,12 @@ export class FindByKeyOrganizationParametersUseCase implements IUseCase {
             const value = slot[field];
             if (typeof value === 'string' && value) {
                 masked[field] = this.maskApiKey(decrypt(value));
+            }
+        }
+        // Never return subscription/refresh tokens to the client.
+        for (const field of FindByKeyOrganizationParametersUseCase.STRIPPED_FIELDS) {
+            if (typeof slot[field] === 'string' && slot[field]) {
+                masked[field] = undefined;
             }
         }
         return masked;

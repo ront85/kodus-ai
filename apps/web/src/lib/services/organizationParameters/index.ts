@@ -7,7 +7,9 @@ export const ORGANIZATION_PARAMETERS_PATHS = {
     GET_PROVIDER_MODELS_LIST: pathToApiUrl(
         "/organization-parameters/list-models",
     ),
+    TEST_CREDENTIAL: pathToApiUrl("/organization-parameters/test-credential"),
     DELETE_BYOK: pathToApiUrl("/organization-parameters/delete-byok-config"),
+    SWAP_BYOK: pathToApiUrl("/organization-parameters/swap-byok-config"),
     TEST_BYOK: pathToApiUrl("/organization-parameters/test-byok"),
     TEST_BYOK_MODEL: pathToApiUrl("/organization-parameters/test-byok-model"),
     MODEL_OVERRIDES: pathToApiUrl("/organization-parameters/model-overrides"),
