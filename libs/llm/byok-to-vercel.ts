@@ -15,6 +15,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import {
     anthropicCompatibleRootURL,
     BYOKConfig,
+    BYOKCredentialType,
     BYOKProvider,
 } from '@kodus/kodus-common/llm';
 import { decrypt } from '@libs/common/utils/crypto';
@@ -389,16 +390,60 @@ export function byokToVercelModel(
     }
 
     const { provider, model, baseURL } = config;
-    const apiKey = decrypt(config.apiKey);
+
+    // Subscription-token (BYOK OAuth/Codex) configs carry no apiKey — the
+    // credential lives in `subscriptionToken`. Guard the decrypt so an absent
+    // apiKey doesn't blow up, and decode the bearer token when present.
+    const isSubscriptionToken =
+        config.credentialType === BYOKCredentialType.SUBSCRIPTION_TOKEN;
+    const apiKey = config.apiKey ? decrypt(config.apiKey) : '';
+    const subscriptionToken = config.subscriptionToken
+        ? decrypt(config.subscriptionToken)
+        : undefined;
 
     switch (provider) {
         case BYOKProvider.OPENAI:
+            if (isSubscriptionToken && subscriptionToken) {
+                // OpenAI Codex (ChatGPT subscription): bearer auth against the
+                // Codex backend + the responses API. Mirrors the kodus-common
+                // openaiAdapter Codex path so the V3 agent pipeline honors the
+                // same subscription token used elsewhere.
+                return createOpenAI({
+                    apiKey: 'chatgpt-oauth',
+                    baseURL: 'https://chatgpt.com/backend-api/codex',
+                    headers: {
+                        Authorization: `Bearer ${subscriptionToken}`,
+                        ...(config.chatgptAccountId
+                            ? { 'ChatGPT-Account-ID': config.chatgptAccountId }
+                            : {}),
+                        originator: 'codex_cli_rs',
+                    },
+                }).responses(model);
+            }
             return createOpenAI({
                 apiKey,
                 ...(baseURL ? { baseURL } : {}),
             })(model);
 
         case BYOKProvider.ANTHROPIC:
+            if (isSubscriptionToken && subscriptionToken) {
+                // Anthropic OAuth (Claude subscription): bearer auth + the
+                // anthropic-beta oauth header, mirroring the kodus-common
+                // anthropicAdapter subscription path.
+                return createAnthropic({
+                    apiKey: 'subscription-token',
+                    ...(baseURL ? { baseURL } : {}),
+                    headers: {
+                        Authorization: `Bearer ${subscriptionToken}`,
+                        'anthropic-beta': [
+                            'claude-code-20250219',
+                            'oauth-2025-04-20',
+                            'fine-grained-tool-streaming-2025-05-14',
+                            'interleaved-thinking-2025-05-14',
+                        ].join(','),
+                    },
+                })(model);
+            }
             return createAnthropic({
                 apiKey,
                 ...(baseURL ? { baseURL } : {}),
