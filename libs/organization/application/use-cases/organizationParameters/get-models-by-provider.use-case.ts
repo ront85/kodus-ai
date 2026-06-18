@@ -428,6 +428,7 @@ export class GetModelsByProviderUseCase {
 
     private getOpenAICodexStaticModels(): ModelResponse {
         const codexModels = [
+            { id: 'gpt-5.5-codex', name: 'GPT-5.5 Codex' },
             { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
             { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex' },
             { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex' },
@@ -544,6 +545,8 @@ export class GetModelsByProviderUseCase {
 
     private getAnthropicStaticModels(): ModelResponse {
         const staticModels = [
+            { id: 'claude-opus-4-8', name: 'Claude Opus 4.8' },
+            { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
             { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5' },
             { id: 'claude-sonnet-4-5-20251101', name: 'Claude Sonnet 4.5' },
             { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },

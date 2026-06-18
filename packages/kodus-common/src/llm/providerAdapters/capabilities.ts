@@ -157,8 +157,10 @@ const REASONING_PATTERN_RULES: Array<[RegExp, ReasoningConfig]> = [
     [/^gemini-2\.0-.*thinking.*/i, budget()],
 
     // Anthropic Claude - adaptive for 4.7+, budget for older families
+    [/^claude-opus-4-8(\b|[-_@])/, adaptive()],
     [/^claude-opus-4-7(\b|[-_@])/, adaptive()],
     [/^claude-sonnet-4-7(\b|[-_@])/, adaptive()],
+    [/^claude-sonnet-4-6(\b|[-_@])/, adaptive()],
     [/^claude-opus-4(\b|[-_@])/, budget()],
     [/^claude-sonnet-4(\b|[-_@])/, budget()],
     [/^claude-3-7-sonnet(\b|[-_@])/, budget()],
