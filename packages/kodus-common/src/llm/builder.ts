@@ -24,7 +24,9 @@ export enum ParserType {
 
 export interface BYOKProviderConfig {
     provider: BYOKProvider;
-    apiKey: string;
+    apiKey?: string;
+    subscriptionToken?: string;
+    chatgptAccountId?: string;
     model: string;
     baseURL?: string;
     projectId?: string;

@@ -20,6 +20,16 @@ export enum BYOKProvider {
 }
 
 /**
+ * How a BYOK provider authenticates. `api_key` is the standard static key
+ * flow; `subscription_token` is a bearer/OAuth token (Claude OAuth, ChatGPT
+ * Codex auth.json) that the adapter sends via an Authorization header.
+ */
+export enum BYOKCredentialType {
+    API_KEY = 'api_key',
+    SUBSCRIPTION_TOKEN = 'subscription_token',
+}
+
+/**
  * Normalize an Anthropic-compatible base URL to its root form (no trailing
  * slash, no `/v1` suffix). The two Anthropic SDK paths disagree on shape:
  * LangChain's ChatAnthropic appends `/v1/messages` to the root, while
@@ -39,7 +49,17 @@ export function anthropicCompatibleRootURL(baseURL: string): string {
 export interface BYOKConfig {
     main: {
         provider: BYOKProvider;
-        apiKey: string;
+        apiKey?: string;
+        /** Auth mode. Defaults to api_key when omitted. */
+        credentialType?: BYOKCredentialType;
+        /** Bearer/OAuth token used when credentialType is subscription_token. */
+        subscriptionToken?: string;
+        /** OAuth refresh token (Claude) for auto-refresh by the caller. */
+        refreshToken?: string;
+        /** Epoch ms at which subscriptionToken expires (for auto-refresh). */
+        tokenExpiresAt?: number;
+        /** ChatGPT account id forwarded for Codex subscription auth. */
+        chatgptAccountId?: string;
         model: string;
         baseURL?: string;
         disableReasoning?: boolean;
@@ -71,7 +91,12 @@ export interface BYOKConfig {
     };
     fallback?: {
         provider: BYOKProvider;
-        apiKey: string;
+        apiKey?: string;
+        credentialType?: BYOKCredentialType;
+        subscriptionToken?: string;
+        refreshToken?: string;
+        tokenExpiresAt?: number;
+        chatgptAccountId?: string;
         model: string;
         baseURL?: string;
         temperature?: number;
@@ -107,6 +132,8 @@ export class BYOKProviderService {
         const {
             provider,
             apiKey,
+            subscriptionToken,
+            chatgptAccountId,
             model,
             baseURL,
             vertexLocation,
@@ -143,6 +170,8 @@ export class BYOKProviderService {
         const modelInstance = adapter.build({
             model,
             apiKey,
+            subscriptionToken,
+            chatgptAccountId,
             vertexLocation,
             baseURL:
                 provider === BYOKProvider.OPENAI_COMPATIBLE ||
@@ -201,9 +230,11 @@ export class BYOKProviderService {
         region: any;
         projectId: any;
         provider: BYOKProvider;
-        apiKey: string;
+        apiKey?: string;
         model: string;
         baseURL?: string;
+        credentialType?: BYOKCredentialType;
+        subscriptionToken?: string;
     }): { isValid: boolean; errors: string[] } {
         const errors: string[] = [];
 
@@ -211,8 +242,17 @@ export class BYOKProviderService {
             errors.push('Provider is required');
         }
 
-        if (!providerConfig.apiKey) {
-            errors.push('API key is required');
+        if (
+            providerConfig.credentialType ===
+            BYOKCredentialType.SUBSCRIPTION_TOKEN
+        ) {
+            if (!providerConfig.subscriptionToken) {
+                errors.push('Subscription token is required');
+            }
+        } else {
+            if (!providerConfig.apiKey) {
+                errors.push('API key is required');
+            }
         }
 
         if (!providerConfig.model) {
@@ -245,7 +285,7 @@ export class BYOKProviderService {
             }
             // Validate if apiKey is valid JSON
             try {
-                JSON.parse(providerConfig.apiKey);
+                JSON.parse(providerConfig.apiKey ?? '');
             } catch {
                 errors.push(
                     'apiKey must be a valid JSON service account key for Google Vertex AI',

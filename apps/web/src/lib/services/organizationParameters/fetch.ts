@@ -56,6 +56,12 @@ export const deleteBYOK = async (params: {
     );
 };
 
+export const swapBYOK = async () => {
+    return await axiosAuthorized.post<any>(
+        ORGANIZATION_PARAMETERS_PATHS.SWAP_BYOK,
+    );
+};
+
 export type TestBYOKResultCode =
     | "ok"
     | "auth"

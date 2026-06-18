@@ -9,7 +9,12 @@ export const LLM_MAX_RETRIES = 2;
 
 export interface AdapterBuildParams {
     model: string;
-    apiKey: string;
+    apiKey?: string;
+    /** BYOK subscription bearer token (Claude OAuth / Codex). When set, the
+     *  adapter authenticates via Authorization: Bearer instead of apiKey. */
+    subscriptionToken?: string;
+    /** ChatGPT account id forwarded as ChatGPT-Account-ID for Codex subscription auth. */
+    chatgptAccountId?: string;
     baseURL?: string;
     /** Google Vertex region (BYOK). Falls back to env, then us-central1. */
     vertexLocation?: string;

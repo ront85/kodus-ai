@@ -10,13 +10,16 @@ import { toast } from "@components/ui/toaster/use-toast";
 import {
     createOrUpdateOrganizationParameter,
     deleteBYOK,
+    swapBYOK,
     type LLMConfigStatus,
 } from "@services/organizationParameters/fetch";
 import { OrganizationParametersConfigKey } from "@services/parameters/types";
 import {
+    ArrowLeftRightIcon,
     ExternalLinkIcon,
     InfoIcon,
     LayersIcon,
+    Loader2Icon,
     PlusIcon,
     ShieldCheckIcon,
     TrashIcon,
@@ -174,6 +177,24 @@ export const ByokPageClient = ({
     const [fallbackState, setFallbackState] = useState<SlotState>("idle");
     const [isDeletingMain, setIsDeletingMain] = useState(false);
     const [isDeletingFallback, setIsDeletingFallback] = useState(false);
+    const [isSwapping, setIsSwapping] = useState(false);
+
+    const onSwap = async () => {
+        if (!config?.main || !config?.fallback) return;
+        setIsSwapping(true);
+        try {
+            await swapBYOK();
+            toast({
+                variant: "success",
+                title: "Main and Fallback swapped",
+            });
+            await revalidateServerSidePath("/organization/byok");
+        } catch {
+            toast({ variant: "danger", title: "Couldn't swap keys" });
+        } finally {
+            setIsSwapping(false);
+        }
+    };
 
     /**
      * The catalog UI only knows how to render configs whose provider is in
@@ -374,11 +395,33 @@ export const ByokPageClient = ({
 
                 {config?.main && (
                     <section className="flex flex-col gap-3">
-                        <SlotHeader
-                            icon={<LayersIcon size={16} />}
-                            title="Fallback model"
-                            description="Optional. Used if the main model fails."
-                        />
+                        <div className="flex items-start justify-between gap-3">
+                            <SlotHeader
+                                icon={<LayersIcon size={16} />}
+                                title="Fallback model"
+                                description="Optional. Used if the main model fails."
+                            />
+
+                            {config?.main && config?.fallback && (
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="tertiary"
+                                    className="shrink-0"
+                                    disabled={isSwapping}
+                                    leftIcon={
+                                        isSwapping ? (
+                                            <Loader2Icon className="size-4 animate-spin" />
+                                        ) : (
+                                            <ArrowLeftRightIcon className="size-4" />
+                                        )
+                                    }
+                                    onClick={onSwap}
+                                    title="Swap main and fallback">
+                                    Swap
+                                </Button>
+                            )}
+                        </div>
 
                         {fallbackState === "idle" && config?.fallback ? (
                             <ConfiguredSummary

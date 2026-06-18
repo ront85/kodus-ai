@@ -2,7 +2,15 @@ export type ReasoningEffort = "none" | "low" | "medium" | "high";
 
 export type BYOKConfig = {
     model: string;
-    apiKey: string;
+    /** API key — present for the standard api_key credential type. Optional
+     *  because subscription-token configs carry a token instead. */
+    apiKey?: string;
+    /** Credential strategy. "api_key" (default) uses a provider API key;
+     *  "subscription_token" uses a Claude OAuth / Codex auth.json token. */
+    credentialType?: "api_key" | "subscription_token";
+    /** OAuth / subscription token (Claude Code, OpenAI Codex). Only set when
+     *  credentialType === "subscription_token". */
+    subscriptionToken?: string;
     provider: string;
     baseURL?: string;
     temperature?: number;

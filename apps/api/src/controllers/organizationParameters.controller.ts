@@ -192,6 +192,9 @@ export class OrganizationParametersController {
                 description: provider.description,
                 requiresApiKey: provider.requiresApiKey,
                 requiresBaseUrl: provider.requiresBaseUrl,
+                supportsSubscriptionToken: provider.supportsSubscriptionToken,
+                subscriptionTokenSetupUrl: provider.subscriptionTokenSetupUrl,
+                subscriptionTokenInstructions: provider.subscriptionTokenInstructions,
             })),
         };
     }
@@ -204,8 +207,82 @@ export class OrganizationParametersController {
     @ApiOkResponse({ type: OrganizationProviderModelsResponseDto })
     public async listModels(
         @Query('provider') provider: string,
+        @Query('apiKey') apiKey?: string,
+        @Query('subscriptionToken') subscriptionToken?: string,
+        @Query('useSavedKey') useSavedKey?: string,
     ): Promise<ModelResponse> {
-        return await this.getModelsByProviderUseCase.execute(provider);
+        const organizationId = useSavedKey === 'true'
+            ? this.request?.user?.organization?.uuid
+            : undefined;
+
+        return await this.getModelsByProviderUseCase.execute(provider, {
+            apiKey,
+            subscriptionToken,
+            organizationId,
+        });
+    }
+
+    @Post('/test-credential')
+    @ApiOperation({
+        summary: 'Test BYOK credential',
+        description: 'Make a lightweight API call to verify the credential works.',
+    })
+    @ApiBody({
+        schema: {
+            type: 'object',
+            required: ['provider'],
+            properties: {
+                provider: { type: 'string' },
+                credentialType: { type: 'string', enum: ['api_key', 'subscription_token'] },
+                apiKey: { type: 'string' },
+                subscriptionToken: { type: 'string' },
+            },
+        },
+    })
+    public async testCredential(
+        @Body() body: {
+            provider: string;
+            credentialType?: string;
+            apiKey?: string;
+            subscriptionToken?: string;
+        },
+    ): Promise<{ success: boolean; message: string }> {
+        const organizationId = this.request?.user?.organization?.uuid;
+
+        return await this.getModelsByProviderUseCase.testCredential(
+            body.provider,
+            body.credentialType ?? 'api_key',
+            {
+                apiKey: body.apiKey,
+                subscriptionToken: body.subscriptionToken,
+            },
+            organizationId,
+        );
+    }
+
+    @Post('/swap-byok-config')
+    @UseGuards(PolicyGuard)
+    @CheckPolicies(
+        checkPermissions({
+            action: Action.Update,
+            resource: ResourceType.OrganizationSettings,
+        }),
+    )
+    @ApiOperation({
+        summary: 'Swap BYOK main and fallback configs',
+        description: 'Swap the main and fallback BYOK configurations without re-encrypting.',
+    })
+    @ApiOkResponse({ type: ApiBooleanResponseDto })
+    public async swapByokConfig() {
+        const organizationId = this.request?.user?.organization?.uuid;
+
+        if (!organizationId) {
+            throw new Error('Organization ID is missing from request');
+        }
+
+        return await this.createOrUpdateOrganizationParametersUseCase.swapByokConfig({
+            organizationId,
+        });
     }
 
     @Delete('/delete-byok-config')

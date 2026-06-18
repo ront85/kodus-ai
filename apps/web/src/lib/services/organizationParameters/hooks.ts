@@ -14,18 +14,36 @@ export function useSuspenseGetLLMProviders() {
             name: string;
             requiresApiKey: boolean;
             requiresBaseUrl: boolean;
+            supportsSubscriptionToken: boolean;
+            subscriptionTokenSetupUrl?: string;
+            subscriptionTokenInstructions?: string;
         }>;
     }>(ORGANIZATION_PARAMETERS_PATHS.GET_PROVIDERS_LIST);
 }
 
 export function useSuspenseGetLLMProviderModels({
     provider,
+    apiKey,
+    subscriptionToken,
+    useSavedKey,
 }: {
     provider: string;
+    apiKey?: string;
+    subscriptionToken?: string;
+    useSavedKey?: boolean;
 }) {
     return useSuspenseFetch<{ models: Array<{ id: string; name: string }> }>(
         ORGANIZATION_PARAMETERS_PATHS.GET_PROVIDER_MODELS_LIST,
-        { params: { provider } },
+        {
+            params: {
+                provider,
+                ...(apiKey ? { apiKey } : {}),
+                ...(subscriptionToken ? { subscriptionToken } : {}),
+                ...(useSavedKey && !apiKey && !subscriptionToken
+                    ? { useSavedKey: "true" }
+                    : {}),
+            },
+        },
     );
 }
 

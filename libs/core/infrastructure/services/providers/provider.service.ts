@@ -8,6 +8,9 @@ export interface ProviderInfo {
     supported: boolean;
     requiresApiKey: boolean;
     requiresBaseUrl: boolean;
+    supportsSubscriptionToken: boolean;
+    subscriptionTokenSetupUrl?: string;
+    subscriptionTokenInstructions?: string;
 }
 
 @Injectable()
@@ -20,6 +23,10 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: true,
+            subscriptionTokenSetupUrl: 'https://github.com/openai/codex',
+            subscriptionTokenInstructions:
+                '1. Install Codex CLI: npm install -g @openai/codex\n2. Run: codex login\n3. Open: ~/.codex/auth.json\n4. Paste the entire file contents into the field below — Kodus will extract the token automatically.\n\nRequires ChatGPT Plus or Pro subscription.',
         },
         [BYOKProvider.ANTHROPIC]: {
             id: BYOKProvider.ANTHROPIC,
@@ -28,6 +35,11 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: true,
+            subscriptionTokenSetupUrl:
+                'https://docs.anthropic.com/en/docs/claude-code/setup-token',
+            subscriptionTokenInstructions:
+                '1. Open your terminal\n2. Run: claude setup-token\n\nOn Linux, copy ~/.claude/.credentials.json and paste the entire JSON below — Kodus will extract both the access token and refresh token automatically.\n\nOn macOS, run:\nsecurity find-generic-password -s "Claude Code-credentials" -w\nand paste the output JSON below.\n\nAlternatively, paste just the sk-ant-oat01-... token (but without a refresh token, it expires after ~8 hours).\n\nRequires Claude Code CLI with a Pro, Max, or Team subscription.',
         },
         [BYOKProvider.GOOGLE_GEMINI]: {
             id: BYOKProvider.GOOGLE_GEMINI,
@@ -36,6 +48,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.GOOGLE_VERTEX]: {
             id: BYOKProvider.GOOGLE_VERTEX,
@@ -45,6 +58,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.AMAZON_BEDROCK]: {
             id: BYOKProvider.AMAZON_BEDROCK,
@@ -54,6 +68,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: false,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.OPEN_ROUTER]: {
             id: BYOKProvider.OPEN_ROUTER,
@@ -62,6 +77,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.NOVITA]: {
             id: BYOKProvider.NOVITA,
@@ -70,6 +86,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.OPENAI_COMPATIBLE]: {
             id: BYOKProvider.OPENAI_COMPATIBLE,
@@ -78,6 +95,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: true,
+            supportsSubscriptionToken: false,
         },
         [BYOKProvider.ANTHROPIC_COMPATIBLE]: {
             id: BYOKProvider.ANTHROPIC_COMPATIBLE,
@@ -87,6 +105,7 @@ export class ProviderService {
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: true,
+            supportsSubscriptionToken: false,
         },
     };
 
