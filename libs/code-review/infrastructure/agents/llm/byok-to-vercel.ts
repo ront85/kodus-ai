@@ -34,6 +34,9 @@ const codexInstructionsFetch: typeof fetch = async (input, init) => {
     try {
         if (init?.body && typeof init.body === 'string') {
             const payload = JSON.parse(init.body);
+            let mutated = false;
+
+            // 1) Codex requires a non-empty top-level `instructions` field.
             const hasInstructions =
                 typeof payload.instructions === 'string' &&
                 payload.instructions.trim().length > 0;
@@ -62,6 +65,16 @@ const codexInstructionsFetch: typeof fetch = async (input, init) => {
                 payload.instructions =
                     derived.trim() ||
                     'You are a helpful code review assistant.';
+                mutated = true;
+            }
+
+            // 2) Codex rejects store:true — it must be false.
+            if (payload.store !== false) {
+                payload.store = false;
+                mutated = true;
+            }
+
+            if (mutated) {
                 init = { ...init, body: JSON.stringify(payload) };
             }
         }
