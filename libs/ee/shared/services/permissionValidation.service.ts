@@ -19,6 +19,7 @@ import {
 } from '@libs/organization/domain/organizationParameters/contracts/organizationParameters.service.contract';
 import { createLogger } from '@kodus/flow';
 import { refreshAnthropicAccessToken } from '@libs/core/infrastructure/services/tokenTracking/anthropicTokenRefresh.service';
+import { refreshOpenAIAccessToken } from '@libs/core/infrastructure/services/tokenTracking/openaiTokenRefresh.service';
 
 export enum PlanType {
     FREE = 'free',
@@ -622,16 +623,20 @@ export class PermissionValidationService {
 
         let configUpdated = false;
 
-        // Check main slot
+        // Check main slot (Anthropic + OpenAI/Codex subscription tokens)
         if (byokConfig.main) {
-            const refreshed = await this.refreshAnthropicSlotIfExpired(byokConfig.main, 'main');
-            if (refreshed) configUpdated = true;
+            if (await this.refreshAnthropicSlotIfExpired(byokConfig.main, 'main'))
+                configUpdated = true;
+            if (await this.refreshOpenAISlotIfExpired(byokConfig.main, 'main'))
+                configUpdated = true;
         }
 
         // Check fallback slot
         if (byokConfig.fallback) {
-            const refreshed = await this.refreshAnthropicSlotIfExpired(byokConfig.fallback, 'fallback');
-            if (refreshed) configUpdated = true;
+            if (await this.refreshAnthropicSlotIfExpired(byokConfig.fallback, 'fallback'))
+                configUpdated = true;
+            if (await this.refreshOpenAISlotIfExpired(byokConfig.fallback, 'fallback'))
+                configUpdated = true;
         }
 
         // Persist refreshed tokens back to DB
@@ -644,7 +649,7 @@ export class PermissionValidationService {
                 );
             } catch (persistError) {
                 this.logger.error({
-                    message: 'Failed to persist refreshed Anthropic token to DB',
+                    message: 'Failed to persist refreshed subscription token to DB',
                     error: persistError,
                     context: PermissionValidationService.name,
                     metadata: { organizationAndTeamData },
@@ -688,6 +693,50 @@ export class PermissionValidationService {
         } catch (error) {
             this.logger.error({
                 message: `Failed to auto-refresh Anthropic OAuth token for ${slotName} slot`,
+                error,
+                context: PermissionValidationService.name,
+            });
+            return false;
+        }
+    }
+
+    /**
+     * Refreshes an OpenAI/Codex (ChatGPT subscription) OAuth token in-place if
+     * it is near expiry and has a refresh token. Persists the ROTATED refresh
+     * token back onto the slot (OpenAI invalidates the old one each refresh).
+     * Refreshes proactively (within 5 min of expiry) so a review never starts
+     * with a dead token. Returns true if the slot was updated.
+     */
+    private async refreshOpenAISlotIfExpired(
+        slot: NonNullable<BYOKConfig['main']>,
+        slotName: string,
+    ): Promise<boolean> {
+        if (
+            slot.credentialType !== BYOKCredentialType.SUBSCRIPTION_TOKEN ||
+            slot.provider !== BYOKProvider.OPENAI ||
+            !slot.refreshToken ||
+            !slot.tokenExpiresAt ||
+            Date.now() < slot.tokenExpiresAt - 5 * 60_000
+        ) {
+            return false;
+        }
+
+        try {
+            const refreshed = await refreshOpenAIAccessToken(slot.refreshToken);
+
+            slot.subscriptionToken = refreshed.encryptedAccessToken;
+            slot.refreshToken = refreshed.encryptedRefreshToken;
+            slot.tokenExpiresAt = refreshed.tokenExpiresAt;
+
+            this.logger.log({
+                message: `OpenAI/Codex OAuth token auto-refreshed for ${slotName} slot`,
+                context: PermissionValidationService.name,
+            });
+
+            return true;
+        } catch (error) {
+            this.logger.error({
+                message: `Failed to auto-refresh OpenAI/Codex OAuth token for ${slotName} slot`,
                 error,
                 context: PermissionValidationService.name,
             });
