@@ -58,7 +58,7 @@ describe('CreateFileCommentsStage', () => {
 
     const createBaseContext = (
         overrides: Partial<CodeReviewPipelineContext> = {},
-    ): CodeReviewPipelineContext => ({
+    ) => ({
         dryRun: { enabled: false },
         organizationAndTeamData: mockOrganizationAndTeamData as any,
         repository: {
@@ -90,7 +90,6 @@ describe('CreateFileCommentsStage', () => {
         validSuggestions: [],
         discardedSuggestions: [],
         changedFiles: [],
-        batches: [],
         preparedFileContexts: [],
         correlationId: 'test-correlation-id',
         ...overrides,
@@ -199,14 +198,18 @@ describe('CreateFileCommentsStage', () => {
                 ],
             });
 
-            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue(validSuggestions);
-            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
-                repriorizedSuggestions: [],
-                filteredDiscardedSuggestions: [],
-            });
-            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue([
-                { sha: 'abc123' },
-            ]);
+            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue(
+                validSuggestions,
+            );
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: [],
+                },
+            );
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
 
             mockPullRequestService.findByNumberAndRepositoryName.mockResolvedValue(
                 {
@@ -222,14 +225,110 @@ describe('CreateFileCommentsStage', () => {
 
             const result = await (stage as any).executeStage(context);
 
-            expect(
-                mockSuggestionService.sortAndPrioritizeSuggestions,
-            ).toHaveBeenCalled();
+            // sortAndPrioritizeSuggestions is no longer called — v2 filtering removed
             expect(
                 mockCommentManagerService.createLineComments,
             ).toHaveBeenCalled();
             expect(result.lineComments).toHaveLength(1);
             expect(result.lastAnalyzedCommit).toBe('abc123');
+        });
+
+        it('groups comments for the same file together, critical → low within a file, files alphabetical', async () => {
+            // Interleaved on purpose: mixing files and severities.
+            const validSuggestions = [
+                { id: '1', relevantFile: 'z.ts', severity: 'low', relevantLinesStart: 5, relevantLinesEnd: 5 },
+                { id: '2', relevantFile: 'a.ts', severity: 'medium', relevantLinesStart: 10, relevantLinesEnd: 10 },
+                { id: '3', relevantFile: 'z.ts', severity: 'critical', relevantLinesStart: 20, relevantLinesEnd: 20 },
+                { id: '4', relevantFile: 'a.ts', severity: 'critical', relevantLinesStart: 1, relevantLinesEnd: 1 },
+                { id: '5', relevantFile: 'm.ts', severity: 'high', relevantLinesStart: 30, relevantLinesEnd: 30 },
+                { id: '6', relevantFile: 'a.ts', severity: 'low', relevantLinesStart: 50, relevantLinesEnd: 50 },
+            ] as any[];
+
+            mockCommentManagerService.createLineComments.mockResolvedValue({
+                lastAnalyzedCommit: 'abc123',
+                commentResults: [],
+            });
+            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue([]);
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
+                repriorizedSuggestions: [],
+                filteredDiscardedSuggestions: [],
+            });
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
+            mockPullRequestService.findByNumberAndRepositoryName.mockResolvedValue(
+                { number: 123, files: [] },
+            );
+
+            const context = createBaseContext({
+                validSuggestions,
+                changedFiles: [
+                    { filename: 'a.ts' } as any,
+                    { filename: 'm.ts' } as any,
+                    { filename: 'z.ts' } as any,
+                ],
+            });
+
+            await (stage as any).executeStage(context);
+
+            const passedLineComments =
+                mockCommentManagerService.createLineComments.mock.calls[0][3];
+            const observedOrder = passedLineComments.map(
+                (c: any) => `${c.path}:${c.suggestion.id}/${c.suggestion.severity}`,
+            );
+
+            expect(observedOrder).toEqual([
+                'a.ts:4/critical', // same file grouped, critical first
+                'a.ts:2/medium',
+                'a.ts:6/low',
+                'm.ts:5/high',     // files alphabetical after a.ts
+                'z.ts:3/critical', // z.ts last, critical before low
+                'z.ts:1/low',
+            ]);
+        });
+
+        it('falls back to file-alphabetical order when severities are missing or unknown', async () => {
+            const validSuggestions = [
+                { id: '1', relevantFile: 'b.ts', severity: 'weird' as any, relevantLinesStart: 1, relevantLinesEnd: 1 },
+                { id: '2', relevantFile: 'a.ts', severity: undefined as any, relevantLinesStart: 1, relevantLinesEnd: 1 },
+                { id: '3', relevantFile: 'a.ts', severity: 'high', relevantLinesStart: 2, relevantLinesEnd: 2 },
+            ] as any[];
+
+            mockCommentManagerService.createLineComments.mockResolvedValue({
+                lastAnalyzedCommit: 'abc123',
+                commentResults: [],
+            });
+            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue([]);
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
+                repriorizedSuggestions: [],
+                filteredDiscardedSuggestions: [],
+            });
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
+            mockPullRequestService.findByNumberAndRepositoryName.mockResolvedValue(
+                { number: 123, files: [] },
+            );
+
+            const context = createBaseContext({
+                validSuggestions,
+                changedFiles: [
+                    { filename: 'a.ts' } as any,
+                    { filename: 'b.ts' } as any,
+                ],
+            });
+
+            await (stage as any).executeStage(context);
+
+            const passedLineComments =
+                mockCommentManagerService.createLineComments.mock.calls[0][3];
+            const observedOrder = passedLineComments.map(
+                (c: any) => `${c.path}:${c.suggestion.id}`,
+            );
+
+            // a.ts before b.ts; within a.ts the known severity wins over
+            // the unknown/missing one.
+            expect(observedOrder).toEqual(['a.ts:3', 'a.ts:2', 'b.ts:1']);
         });
 
         it('should return empty line comments when no valid suggestions', async () => {
@@ -253,6 +352,68 @@ describe('CreateFileCommentsStage', () => {
             expect(
                 mockSuggestionService.sortAndPrioritizeSuggestions,
             ).not.toHaveBeenCalled();
+        });
+
+        // Bug A1 regression: a suggestion pointing at a file that was
+        // DELETED in the PR should never produce a line comment. Posting a
+        // comment on a removed file breaks the git provider APIs (the file
+        // no longer has a line to attach to) and has been observed
+        // producing confusing false-positive reviews.
+        it('filters out suggestions targeting removed files', async () => {
+            const suggestions = [
+                {
+                    id: 's-kept',
+                    relevantFile: 'kept.ts',
+                    clusteringInformation: { type: ClusteringType.PARENT },
+                },
+                {
+                    id: 's-removed',
+                    relevantFile: 'deleted.ts',
+                    clusteringInformation: { type: ClusteringType.PARENT },
+                },
+            ];
+
+            mockSuggestionService.sortAndPrioritizeSuggestions.mockResolvedValue(
+                {
+                    sortedPrioritizedSuggestions: suggestions,
+                    allDiscardedSuggestions: [],
+                },
+            );
+            mockCommentManagerService.createLineComments.mockResolvedValue({
+                lastAnalyzedCommit: 'abc123',
+                commentResults: [],
+            });
+            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue(
+                [],
+            );
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: [],
+                },
+            );
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
+            mockPullRequestService.findByNumberAndRepositoryName.mockResolvedValue(
+                { number: 123, files: [] },
+            );
+
+            const context = createBaseContext({
+                validSuggestions: suggestions,
+                changedFiles: [
+                    { filename: 'kept.ts', status: 'modified' } as any,
+                    { filename: 'deleted.ts', status: 'removed' } as any,
+                ],
+            });
+
+            await (stage as any).executeStage(context);
+
+            const callArgs =
+                mockCommentManagerService.createLineComments.mock.calls[0];
+            const lineComments = callArgs[3];
+            expect(lineComments).toHaveLength(1);
+            expect(lineComments[0].suggestion.id).toBe('s-kept');
         });
 
         it('should filter out RELATED suggestions from line comments', async () => {
@@ -281,14 +442,18 @@ describe('CreateFileCommentsStage', () => {
                 commentResults: [],
             });
 
-            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue([]);
-            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
-                repriorizedSuggestions: [],
-                filteredDiscardedSuggestions: [],
-            });
-            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue([
-                { sha: 'abc123' },
-            ]);
+            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue(
+                [],
+            );
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: [],
+                },
+            );
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
 
             mockPullRequestService.findByNumberAndRepositoryName.mockResolvedValue(
                 {
@@ -548,14 +713,18 @@ describe('CreateFileCommentsStage', () => {
                 commentResults: [],
             });
 
-            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue(validSuggestions);
-            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
-                repriorizedSuggestions: [],
-                filteredDiscardedSuggestions: [],
-            });
-            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue([
-                { sha: 'abc123' },
-            ]);
+            mockSuggestionService.verifyIfSuggestionsWereSent.mockResolvedValue(
+                validSuggestions,
+            );
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: [],
+                },
+            );
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
 
             mockPullRequestService.findByNumberAndRepositoryName.mockResolvedValue(
                 {
@@ -602,7 +771,7 @@ describe('CreateFileCommentsStage', () => {
                     suggestionContent: 'Add type annotation',
                     priorityStatus: 'discarded-by-code-diff',
                 },
-            ];
+            ] as any[];
 
             const changedFiles = [{ filename: 'test.ts' } as any];
 
@@ -610,14 +779,16 @@ describe('CreateFileCommentsStage', () => {
                 null, // New PR, so no existing PR
             );
 
-            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue([
-                { sha: 'abc123' },
-            ]);
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
 
-            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
-                repriorizedSuggestions: [],
-                filteredDiscardedSuggestions: discardedSuggestions,
-            });
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: discardedSuggestions,
+                },
+            );
 
             const context = createBaseContext({
                 validSuggestions: [], // No valid suggestions
@@ -639,8 +810,12 @@ describe('CreateFileCommentsStage', () => {
                     .calls[0];
             const unusedSuggestions = callArgs[4]; // 5th argument - unusedSuggestions
             expect(unusedSuggestions).toHaveLength(2);
-            expect(unusedSuggestions[0].priorityStatus).toBe('discarded-by-code-diff');
-            expect(unusedSuggestions[1].priorityStatus).toBe('discarded-by-code-diff');
+            expect(unusedSuggestions[0].priorityStatus).toBe(
+                'discarded-by-code-diff',
+            );
+            expect(unusedSuggestions[1].priorityStatus).toBe(
+                'discarded-by-code-diff',
+            );
         });
 
         it('should save all discarded suggestions to database when all suggestions are discarded by severity', async () => {
@@ -659,7 +834,7 @@ describe('CreateFileCommentsStage', () => {
                     suggestionContent: 'Consider refactoring',
                     priorityStatus: 'discarded-by-severity',
                 },
-            ];
+            ] as any[];
 
             const changedFiles = [{ filename: 'test.ts' } as any];
 
@@ -667,14 +842,16 @@ describe('CreateFileCommentsStage', () => {
                 null,
             );
 
-            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue([
-                { sha: 'abc123' },
-            ]);
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
 
-            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
-                repriorizedSuggestions: [],
-                filteredDiscardedSuggestions: discardedSuggestions,
-            });
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: discardedSuggestions,
+                },
+            );
 
             const context = createBaseContext({
                 validSuggestions: [],
@@ -694,7 +871,11 @@ describe('CreateFileCommentsStage', () => {
                     .calls[0];
             const unusedSuggestions = callArgs[4];
             expect(unusedSuggestions).toHaveLength(2);
-            expect(unusedSuggestions.every(s => s.priorityStatus === 'discarded-by-severity')).toBe(true);
+            expect(
+                unusedSuggestions.every(
+                    (s) => s.priorityStatus === 'discarded-by-severity',
+                ),
+            ).toBe(true);
         });
 
         it('should save all discarded suggestions to database when all suggestions are discarded by safeguard', async () => {
@@ -706,7 +887,7 @@ describe('CreateFileCommentsStage', () => {
                     suggestionContent: 'Remove this code',
                     priorityStatus: 'discarded-by-safeguard',
                 },
-            ];
+            ] as any[];
 
             const changedFiles = [{ filename: 'test.ts' } as any];
 
@@ -714,14 +895,16 @@ describe('CreateFileCommentsStage', () => {
                 null,
             );
 
-            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue([
-                { sha: 'abc123' },
-            ]);
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
 
-            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
-                repriorizedSuggestions: [],
-                filteredDiscardedSuggestions: discardedSuggestions,
-            });
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: discardedSuggestions,
+                },
+            );
 
             const context = createBaseContext({
                 validSuggestions: [],
@@ -741,7 +924,9 @@ describe('CreateFileCommentsStage', () => {
                     .calls[0];
             const unusedSuggestions = callArgs[4];
             expect(unusedSuggestions).toHaveLength(1);
-            expect(unusedSuggestions[0].priorityStatus).toBe('discarded-by-safeguard');
+            expect(unusedSuggestions[0].priorityStatus).toBe(
+                'discarded-by-safeguard',
+            );
         });
 
         it('should save all discarded suggestions to database when all suggestions are discarded by kody-fine-tuning', async () => {
@@ -760,7 +945,7 @@ describe('CreateFileCommentsStage', () => {
                     suggestionContent: 'Fix this issue',
                     priorityStatus: 'discarded-by-kody-fine-tuning',
                 },
-            ];
+            ] as any[];
 
             const changedFiles = [{ filename: 'test.ts' } as any];
 
@@ -768,14 +953,16 @@ describe('CreateFileCommentsStage', () => {
                 null,
             );
 
-            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue([
-                { sha: 'abc123' },
-            ]);
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
 
-            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
-                repriorizedSuggestions: [],
-                filteredDiscardedSuggestions: discardedSuggestions,
-            });
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: discardedSuggestions,
+                },
+            );
 
             const context = createBaseContext({
                 validSuggestions: [],
@@ -795,7 +982,11 @@ describe('CreateFileCommentsStage', () => {
                     .calls[0];
             const unusedSuggestions = callArgs[4];
             expect(unusedSuggestions).toHaveLength(2);
-            expect(unusedSuggestions.every(s => s.priorityStatus === 'discarded-by-kody-fine-tuning')).toBe(true);
+            expect(
+                unusedSuggestions.every(
+                    (s) => s.priorityStatus === 'discarded-by-kody-fine-tuning',
+                ),
+            ).toBe(true);
         });
 
         it('should save mixed discarded suggestions to database when all are discarded by different reasons', async () => {
@@ -828,7 +1019,7 @@ describe('CreateFileCommentsStage', () => {
                     suggestionContent: 'Fix 4',
                     priorityStatus: 'discarded-by-kody-fine-tuning',
                 },
-            ];
+            ] as any[];
 
             const changedFiles = [{ filename: 'test.ts' } as any];
 
@@ -836,14 +1027,16 @@ describe('CreateFileCommentsStage', () => {
                 null,
             );
 
-            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue([
-                { sha: 'abc123' },
-            ]);
+            mockCodeManagementService.getCommitsForPullRequestForCodeReview.mockResolvedValue(
+                [{ sha: 'abc123' }],
+            );
 
-            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue({
-                repriorizedSuggestions: [],
-                filteredDiscardedSuggestions: discardedSuggestions,
-            });
+            mockSuggestionService.extractRepriorizedSuggestions.mockReturnValue(
+                {
+                    repriorizedSuggestions: [],
+                    filteredDiscardedSuggestions: discardedSuggestions,
+                },
+            );
 
             const context = createBaseContext({
                 validSuggestions: [],
@@ -863,10 +1056,18 @@ describe('CreateFileCommentsStage', () => {
                     .calls[0];
             const unusedSuggestions = callArgs[4];
             expect(unusedSuggestions).toHaveLength(4);
-            expect(unusedSuggestions[0].priorityStatus).toBe('discarded-by-code-diff');
-            expect(unusedSuggestions[1].priorityStatus).toBe('discarded-by-severity');
-            expect(unusedSuggestions[2].priorityStatus).toBe('discarded-by-safeguard');
-            expect(unusedSuggestions[3].priorityStatus).toBe('discarded-by-kody-fine-tuning');
+            expect(unusedSuggestions[0].priorityStatus).toBe(
+                'discarded-by-code-diff',
+            );
+            expect(unusedSuggestions[1].priorityStatus).toBe(
+                'discarded-by-severity',
+            );
+            expect(unusedSuggestions[2].priorityStatus).toBe(
+                'discarded-by-safeguard',
+            );
+            expect(unusedSuggestions[3].priorityStatus).toBe(
+                'discarded-by-kody-fine-tuning',
+            );
         });
     });
 });

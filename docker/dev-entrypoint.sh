@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+# Point pnpm at a named-volume store instead of a path inside the
+# container's writable layer, so installs don't bloat each container.
+# The volume is declared in docker-compose.dev.yml and shared across
+# services so a single install populates the store once (pnpm's
+# content-addressable store is safe under concurrent access).
+export npm_config_store_dir=/pnpm-store
+mkdir -p "$npm_config_store_dir"
+
 echo "▶ dev-entrypoint: starting (NODE_ENV=${NODE_ENV:-})"
 
 # ----------------------------------------------------------------
@@ -22,7 +30,7 @@ sed -e "s/__CLOUD_MODE__/${CLOUD_MODE}/g" \
     libs/ee/configs/environment/environment.template.ts > libs/ee/configs/environment/environment.ts
 
 # Fingerprint of dependency manifests used to detect stale node_modules volume.
-DEPS_FINGERPRINT=$(node -e "const fs=require('fs'); const crypto=require('crypto'); const h=crypto.createHash('sha256'); h.update(fs.readFileSync('package.json')); h.update('\\n'); h.update(fs.readFileSync('yarn.lock')); process.stdout.write(h.digest('hex'));")
+DEPS_FINGERPRINT=$(node -e "const fs=require('fs'); const crypto=require('crypto'); const h=crypto.createHash('sha256'); h.update(fs.readFileSync('package.json')); h.update('\\n'); h.update(fs.readFileSync('pnpm-lock.yaml')); process.stdout.write(h.digest('hex'));")
 DEPS_STAMP_FILE="node_modules/.deps-fingerprint"
 DEPS_LOCK_DIR="node_modules/.deps-install.lock"
 
@@ -65,8 +73,8 @@ install_deps() {
     mkdir -p node_modules
   fi
 
-  echo "▶ Installing deps (yarn --frozen-lockfile)…"
-  yarn install --frozen-lockfile
+  echo "▶ Installing deps (pnpm install --frozen-lockfile)…"
+  pnpm install --frozen-lockfile
   mkdir -p node_modules
   printf "%s" "$DEPS_FINGERPRINT" > "$DEPS_STAMP_FILE"
 
@@ -107,8 +115,22 @@ RUN_MIGRATIONS="${RUN_MIGRATIONS:-false}"
 RUN_SEEDS="${RUN_SEEDS:-false}"
 
 if [ "$RUN_MIGRATIONS" = "true" ]; then
-  echo "▶ Running Migrations..."
+  echo "▶ Running OLTP migrations..."
   npm run migration:run:internal
+  # TypeORM tries to create its `migrations` tracking table inside the
+  # configured schema BEFORE running any migration. The first analytics
+  # migration creates the schema, so the tracking table create dies with
+  # `schema "analytics" does not exist`. This fallback handles existing
+  # volumes (dev/CI) where the initdb create_analytics_schema.sql didn't
+  # run. Idempotent.
+  echo "▶ Ensuring analytics schema exists..."
+  npm run analytics:ensure-schema
+  echo "▶ Running analytics warehouse migrations..."
+  # Same Postgres host in self-hosted / dev; the loader cascades from
+  # ANALYTICS_PG_DB_* to API_PG_DB_* when the dedicated host is unset.
+  npm run analytics:migration:run:internal
+  # MCP manager owns its own schema and runs ensure-schema +
+  # migrations from its own service command (see docker-compose.dev.yml).
 else
   echo "▶ Skipping Migrations (RUN_MIGRATIONS=$RUN_MIGRATIONS)"
 fi

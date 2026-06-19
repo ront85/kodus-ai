@@ -55,7 +55,7 @@ export class SubmitCliSessionCaptureUseCase implements IUseCase {
                 signals: input.signals,
                 summary: input.summary,
                 capturedAt,
-                rawPayload: input,
+                rawPayload: input as unknown as Record<string, unknown>,
             });
 
             setImmediate(() => {
@@ -77,6 +77,9 @@ export class SubmitCliSessionCaptureUseCase implements IUseCase {
                 accepted: true,
             };
         } catch (error) {
+            const err =
+                error instanceof Error ? error : new Error(String(error));
+
             if (this.isDuplicateKeyError(error)) {
                 const existing =
                     await this.cliSessionCaptureRepository.findByDedupKey(
@@ -90,7 +93,8 @@ export class SubmitCliSessionCaptureUseCase implements IUseCase {
                         context: SubmitCliSessionCaptureUseCase.name,
                         metadata: {
                             dedupKey,
-                            organizationId: organizationAndTeamData.organizationId,
+                            organizationId:
+                                organizationAndTeamData.organizationId,
                             teamId: organizationAndTeamData.teamId,
                             branch: input.branch,
                             orgRepo: input.orgRepo,
@@ -99,6 +103,7 @@ export class SubmitCliSessionCaptureUseCase implements IUseCase {
 
                     throw new Error(
                         'Duplicate CLI session capture detected but existing capture could not be resolved',
+                        { cause: error },
                     );
                 }
 
@@ -111,7 +116,7 @@ export class SubmitCliSessionCaptureUseCase implements IUseCase {
             this.logger.error({
                 message: 'Failed to persist CLI session capture',
                 context: SubmitCliSessionCaptureUseCase.name,
-                error,
+                error: err,
                 metadata: {
                     organizationId: organizationAndTeamData.organizationId,
                     teamId: organizationAndTeamData.teamId,

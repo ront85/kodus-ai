@@ -40,7 +40,21 @@ import {
     PULL_REQUESTS_SERVICE_TOKEN,
 } from '@libs/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
 import { Inject, Injectable } from '@nestjs/common';
+import { NotificationService } from '@libs/notifications/application/notification.service';
+import { NotificationRateLimiter } from '@libs/notifications/application/notification-rate-limiter.service';
+import { PrAuthorRecipientResolver } from '@libs/notifications/application/pr-author-recipient.resolver';
+import { NotificationEvent } from '@libs/notifications/domain/catalog/events';
+import { recipientByRole } from '@libs/notifications/domain/recipient';
+import { Role } from '@libs/identity/domain/permissions/enums/permissions.enum';
+import { STATUS } from '@libs/core/infrastructure/config/types/database/status.type';
+import {
+    IUsersService,
+    USER_SERVICE_TOKEN,
+} from '@libs/identity/domain/user/contracts/user.service.contract';
+
 import { CodeReviewPipelineContext } from '../context/code-review-pipeline.context';
+
+const SKIPPED_NO_LICENSE_RATE_LIMIT_TTL_SECONDS = 24 * 60 * 60; // 24h
 
 const ERROR_TO_MESSAGE_TYPE: Record<
     ValidationErrorType,
@@ -76,6 +90,11 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
         @Inject(PARAMETERS_SERVICE_TOKEN)
         private readonly parametersService: IParametersService,
         private readonly codeManagementService: CodeManagementService,
+        private readonly notificationService: NotificationService,
+        private readonly notificationRateLimiter: NotificationRateLimiter,
+        private readonly prAuthorRecipientResolver: PrAuthorRecipientResolver,
+        @Inject(USER_SERVICE_TOKEN)
+        private readonly usersService: IUsersService,
     ) {
         super();
     }
@@ -93,8 +112,7 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
                 draft.pipelineMetadata = {};
             }
 
-            draft.pipelineMetadata.showStatusFeedback =
-                showStatusFeedback;
+            draft.pipelineMetadata.showStatusFeedback = showStatusFeedback;
 
             if (!showStatusFeedback) {
                 draft.pipelineMetadata.notificationHandled = true;
@@ -150,6 +168,35 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
             });
         }
 
+        const centralizedConfigDisablesReviewForRepository =
+            await this.isCentralizedConfigRepositoryReviewDisabled(
+                organizationAndTeamData,
+                context.repository,
+            );
+
+        if (centralizedConfigDisablesReviewForRepository) {
+            this.logger.log({
+                message:
+                    'Repository is centralized-config source, skipping automation',
+                context: this.stageName,
+                metadata: {
+                    organizationAndTeamData,
+                    repositoryName: context.repository?.name,
+                    repositoryId: context.repository?.id,
+                    prNumber: pullRequest?.number,
+                },
+            });
+
+            return this.updateContext(context, (draft) => {
+                applyShowStatusFeedbackMetadata(draft);
+                draft.statusInfo = {
+                    status: AutomationStatus.SKIPPED,
+                    message:
+                        'Code reviews are disabled for the centralized config repository',
+                };
+            });
+        }
+
         // Centralized permission validation
         const validationResult =
             await this.permissionValidationService.validateExecutionPermissions(
@@ -172,43 +219,96 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
                     draft.codeReviewConfig.byokConfig =
                         validationResult.byokConfig;
                 }
+                if (validationResult.subscriptionStatus) {
+                    if (!draft.pipelineMetadata) {
+                        draft.pipelineMetadata = {};
+                    }
+                    draft.pipelineMetadata.subscriptionStatus =
+                        validationResult.subscriptionStatus;
+                }
             });
         }
 
-        // Validation failed
-        const failureHandled = await this.handleValidationFailure(
+        // If validation failed due to USER_NOT_LICENSED, try auto-assign FIRST
+        // (before checking autoReviewEnabled, because auto-assign should work regardless)
+        if (validationResult.errorType === ValidationErrorType.USER_NOT_LICENSED) {
+            const failureHandled = await this.handleValidationFailure(
+                context,
+                validationResult,
+                showStatusFeedback,
+            );
+
+            if (failureHandled === 'auto_assigned') {
+                // Auto-assign succeeded, continue with review
+                return this.updateContext(context, (draft) => {
+                    applyShowStatusFeedbackMetadata(draft);
+                });
+            }
+
+            // Auto-assign failed - skip review with notification already handled
+            await this.notifySkippedNoLicense(context);
+            return this.updateContext(context, (draft) => {
+                applyShowStatusFeedbackMetadata(draft);
+                draft.statusInfo = {
+                    status: AutomationStatus.SKIPPED,
+                    message: StageMessageHelper.skippedWithReason(
+                        this.getLicenseSkipReason(validationResult.errorType),
+                    ),
+                };
+                // Notification already posted by handleValidationFailure above
+                if (!draft.pipelineMetadata) {
+                    draft.pipelineMetadata = {};
+                }
+                draft.pipelineMetadata.notificationHandled = true;
+            });
+        }
+
+        // For other errors, check autoReviewEnabled BEFORE handling failure
+        // (these errors don't benefit from auto-assign)
+
+        try {
+            if (context.origin !== 'command') {
+                const autoReviewEnabled =
+                    await this.isAutomatedReviewActive(context);
+                if (!autoReviewEnabled) {
+                    return this.updateContext(context, (draft) => {
+                        applyShowStatusFeedbackMetadata(draft);
+                        draft.statusInfo = {
+                            status: AutomationStatus.SKIPPED,
+                            message: AutomationMessage.VALIDATION_FAILED,
+                        };
+                    });
+                }
+            }
+        } catch (error) {
+            this.logger.warn({
+                message:
+                    'Error checking automatedReviewActive, proceeding with notification',
+                context: this.stageName,
+                error,
+            });
+        }
+
+        // Handle other validation failures (INVALID_LICENSE, BYOK_REQUIRED, etc.)
+        await this.handleValidationFailure(
             context,
             validationResult,
             showStatusFeedback,
         );
 
-        if (failureHandled === 'auto_assigned') {
-            return this.updateContext(context, (draft) => {
-                applyShowStatusFeedbackMetadata(draft);
-            });
-        }
-
+        // Return SKIPPED - notification already handled by handleValidationFailure
         return this.updateContext(context, (draft) => {
             applyShowStatusFeedbackMetadata(draft);
             draft.statusInfo = {
-                status: AutomationStatus.SKIPPED, // Or FAILED? Usually SKIPPED if business logic prevents it.
+                status: AutomationStatus.SKIPPED,
                 message: StageMessageHelper.skippedWithReason(
                     this.getLicenseSkipReason(validationResult.errorType),
                 ),
             };
-
-            // If we failed validation, we likely sent a specific license notification (for Azure/Bitbucket).
-            // Mark it so the handler doesn't send a generic "Skipped" message on top.
-            if (
-                context.platformType === PlatformType.AZURE_REPOS ||
-                context.platformType === PlatformType.BITBUCKET ||
-                !showStatusFeedback
-            ) {
-                if (!draft.pipelineMetadata) {
-                    draft.pipelineMetadata = {};
-                }
-                draft.pipelineMetadata.notificationHandled = true;
+            if (!draft.pipelineMetadata) {
+                draft.pipelineMetadata = {};
             }
+            draft.pipelineMetadata.notificationHandled = true;
         });
     }
 
@@ -247,7 +347,9 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
         ) {
             const userPrs = await this.pullRequestsService.find({
                 'organizationId': organizationAndTeamData.organizationId,
-                'user.id': userGitId,
+                'user.id': isNaN(Number(userGitId))
+                    ? userGitId
+                    : Number(userGitId),
             } as any);
 
             const autoAssignResult =
@@ -330,10 +432,7 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
     private async isShowStatusFeedbackEnabled(
         context: CodeReviewPipelineContext,
     ): Promise<boolean> {
-        if (
-            typeof context.codeReviewConfig?.showStatusFeedback ===
-            'boolean'
-        ) {
+        if (typeof context.codeReviewConfig?.showStatusFeedback === 'boolean') {
             return context.codeReviewConfig.showStatusFeedback;
         }
 
@@ -406,6 +505,64 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
             configValue?.ignoredUsers.includes(userGitId)
         ) {
             return true;
+        }
+
+        return false;
+    }
+
+    private async isCentralizedConfigRepositoryReviewDisabled(
+        organizationAndTeamData: OrganizationAndTeamData,
+        repository?: { id?: string; name?: string },
+    ): Promise<boolean> {
+        try {
+            const centralizedConfigParameter =
+                await this.parametersService.findByKey(
+                    ParametersKey.CENTRALIZED_CONFIG,
+                    organizationAndTeamData,
+                );
+
+            if (
+                !centralizedConfigParameter ||
+                !centralizedConfigParameter.configValue ||
+                !centralizedConfigParameter.configValue.enabled
+            ) {
+                return false;
+            }
+
+            const centralizedConfigRepoId =
+                centralizedConfigParameter.configValue.repository?.id;
+
+            if (!centralizedConfigRepoId || !repository?.id) {
+                return false;
+            }
+
+            if (repository.id === centralizedConfigRepoId) {
+                this.logger.log({
+                    message: 'Centralized config repository identified',
+                    context: this.stageName,
+                    metadata: {
+                        organizationAndTeamData,
+                        repositoryName: repository.name,
+                        repositoryId: repository.id,
+                    },
+                });
+
+                return true;
+            }
+
+            return false;
+        } catch (error) {
+            this.logger.warn({
+                message:
+                    'Error resolving centralized config repository review exclusion',
+                context: this.stageName,
+                error,
+                metadata: {
+                    organizationAndTeamData,
+                    repositoryId: repository?.id,
+                    repositoryName: repository?.name,
+                },
+            });
         }
 
         return false;
@@ -553,6 +710,48 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
         );
     }
 
+    private async isAutomatedReviewActive(
+        context: CodeReviewPipelineContext,
+    ): Promise<boolean> {
+        try {
+            const parameter = await this.parametersService.findByKey(
+                ParametersKey.CODE_REVIEW_CONFIG,
+                context.organizationAndTeamData,
+            );
+
+            const parameterConfig = parameter?.configValue as any;
+            const repositoryConfig = parameterConfig?.repositories?.find(
+                (repo: any) => repo?.id === context.repository?.id,
+            );
+
+            if (
+                typeof repositoryConfig?.configs?.automatedReviewActive ===
+                'boolean'
+            ) {
+                return repositoryConfig.configs.automatedReviewActive;
+            }
+
+            if (
+                typeof parameterConfig?.configs?.automatedReviewActive ===
+                'boolean'
+            ) {
+                return parameterConfig.configs.automatedReviewActive;
+            }
+        } catch (error) {
+            this.logger.warn({
+                message: 'Error resolving automatedReviewActive config',
+                context: this.stageName,
+                error,
+                metadata: {
+                    organizationAndTeamData: context.organizationAndTeamData,
+                    repositoryId: context.repository?.id,
+                },
+            });
+        }
+
+        return true;
+    }
+
     private validatePrerequisites(
         context: CodeReviewPipelineContext,
     ): IStageValidationResult {
@@ -582,7 +781,11 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
             };
         }
 
-        if (pullRequest.state === 'closed' || pullRequest.state === 'merged') {
+        if (
+            (pullRequest.state === 'closed' ||
+                pullRequest.state === 'merged') &&
+            context.origin !== 'command'
+        ) {
             return {
                 canProceed: false,
                 details: {
@@ -613,5 +816,80 @@ export class ValidatePrerequisitesStage extends BasePipelineStage<CodeReviewPipe
         }
 
         return { canProceed: true };
+    }
+
+    /**
+     * Notify the PR author once that their PR was skipped because the
+     * org has no active license. Rate-limited to one notification per
+     * (author, org) per 24h via the shared cache layer so a contributor
+     * opening dozens of PRs during an outage gets one notification, not
+     * dozens. Best-effort: failures are swallowed.
+     */
+    private async notifySkippedNoLicense(
+        context: CodeReviewPipelineContext,
+    ): Promise<void> {
+        try {
+            const { pullRequest, organizationAndTeamData, repository } =
+                context;
+            const author = pullRequest?.user as
+                | { email?: string; username?: string }
+                | undefined;
+
+            const authorRecipient =
+                await this.prAuthorRecipientResolver.resolve(
+                    { email: author?.email, login: author?.username },
+                    organizationAndTeamData.organizationId,
+                );
+
+            // Notify the PR author when they're a Kodus user; otherwise fall
+            // back to the org owners so an external-contributor / bot PR still
+            // alerts someone. Rate-limit per recipient target (the author, or
+            // a single "owners" bucket) so a burst of PRs sends one alert.
+            const recipients =
+                authorRecipient != null && authorRecipient.kind === 'user'
+                    ? authorRecipient
+                    : recipientByRole(Role.OWNER);
+            const rateLimitTarget =
+                authorRecipient != null && authorRecipient.kind === 'user'
+                    ? authorRecipient.userId
+                    : 'owners';
+
+            const rateLimitKey = `notif-rate:review_skipped_no_license:${rateLimitTarget}:${organizationAndTeamData.organizationId}`;
+            const allowed = await this.notificationRateLimiter.shouldEmit(
+                rateLimitKey,
+                SKIPPED_NO_LICENSE_RATE_LIMIT_TTL_SECONDS,
+            );
+            if (!allowed) return;
+
+            // Pick any active owner's email as the contact (best-effort).
+            const owners = await this.usersService.find(
+                {
+                    organization: {
+                        uuid: organizationAndTeamData.organizationId,
+                    },
+                    role: Role.OWNER,
+                },
+                [STATUS.ACTIVE],
+            );
+            const ownerContact = owners?.[0]?.email;
+
+            await this.notificationService.emit({
+                event: NotificationEvent.REVIEW_SKIPPED_NO_LICENSE,
+                payload: {
+                    prUrl: (pullRequest?.url as string) ?? '',
+                    repoName: repository?.name ?? '',
+                    ownerContact,
+                },
+                organizationId: organizationAndTeamData.organizationId,
+                recipients,
+            });
+        } catch (error) {
+            this.logger.error({
+                message:
+                    'Failed to emit review.skipped_no_license notification',
+                error: error instanceof Error ? error : new Error(String(error)),
+                context: this.stageName,
+            });
+        }
     }
 }

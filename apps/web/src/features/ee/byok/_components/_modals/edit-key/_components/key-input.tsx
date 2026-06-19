@@ -4,13 +4,23 @@ import { FormControl } from "@components/ui/form-control";
 import { Textarea } from "@components/ui/textarea";
 import { ORGANIZATION_PARAMETERS_PATHS } from "@services/organizationParameters";
 import { useSuspenseGetLLMProviders } from "@services/organizationParameters/hooks";
-import { ExternalLinkIcon, FlaskConicalIcon, Loader2Icon, CheckCircleIcon, XCircleIcon } from "lucide-react";
+import {
+    ExternalLinkIcon,
+    FlaskConicalIcon,
+    Loader2Icon,
+    CheckCircleIcon,
+    XCircleIcon,
+} from "lucide-react";
 import { Controller, useFormContext } from "react-hook-form";
 import { axiosAuthorized } from "src/core/utils/axios";
 
 import type { EditKeyForm } from "../_types";
 
-type TestResult = { status: "idle" } | { status: "loading" } | { status: "success"; message: string } | { status: "error"; message: string };
+type TestResult =
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "success"; message: string }
+    | { status: "error"; message: string };
 
 export const ByokKeyInput = () => {
     const form = useFormContext<EditKeyForm>();
@@ -24,7 +34,13 @@ export const ByokKeyInput = () => {
     if (!foundProvider?.requiresApiKey) return null;
 
     if (credentialType === "subscription_token") {
-        return <SubscriptionTokenInput provider={provider} isEditing={isEditing} foundProvider={foundProvider} />;
+        return (
+            <SubscriptionTokenInput
+                provider={provider}
+                isEditing={isEditing}
+                foundProvider={foundProvider}
+            />
+        );
     }
 
     return (
@@ -43,7 +59,11 @@ export const ByokKeyInput = () => {
                             value={field.value ?? ""}
                             onChange={field.onChange}
                             className="max-h-56 min-h-32"
-                            placeholder={isEditing ? "Already configured — paste a new key to replace" : "Provide your key"}
+                            placeholder={
+                                isEditing
+                                    ? "Already configured — paste a new key to replace"
+                                    : "Provide your key"
+                            }
                         />
                     </FormControl.Input>
 
@@ -71,7 +91,9 @@ const SubscriptionTokenInput = ({
     };
 }) => {
     const form = useFormContext<EditKeyForm>();
-    const [testResult, setTestResult] = useState<TestResult>({ status: "idle" });
+    const [testResult, setTestResult] = useState<TestResult>({
+        status: "idle",
+    });
 
     const handleTest = async () => {
         const token = form.getValues("subscriptionToken")?.trim();
@@ -79,14 +101,16 @@ const SubscriptionTokenInput = ({
 
         setTestResult({ status: "loading" });
         try {
-            const res = await axiosAuthorized.post<{ success: boolean; message: string }>(
-                ORGANIZATION_PARAMETERS_PATHS.TEST_CREDENTIAL,
-                {
-                    provider,
-                    credentialType: "subscription_token",
-                    ...(token ? { subscriptionToken: token } : {}),
-                },
-            );
+            // `axiosAuthorized.post` resolves to the response body. The
+            // test-credential route wraps its payload in `{ data: ... }`
+            // (same envelope as test-byok), so unwrap one level.
+            const res = await axiosAuthorized.post<{
+                data: { success: boolean; message: string };
+            }>(ORGANIZATION_PARAMETERS_PATHS.TEST_CREDENTIAL, {
+                provider,
+                credentialType: "subscription_token",
+                ...(token ? { subscriptionToken: token } : {}),
+            });
             const data = res.data;
             setTestResult(
                 data.success
@@ -96,7 +120,10 @@ const SubscriptionTokenInput = ({
         } catch (err: any) {
             setTestResult({
                 status: "error",
-                message: err?.response?.data?.message || err?.message || "Test request failed",
+                message:
+                    err?.response?.data?.message ||
+                    err?.message ||
+                    "Test request failed",
             });
         }
     };
@@ -109,19 +136,39 @@ const SubscriptionTokenInput = ({
                 <FormControl.Root>
                     {foundProvider.subscriptionTokenInstructions && (
                         <div className="bg-card-lv2 text-text-secondary rounded-md p-3 text-xs">
-                            <p className="font-medium mb-1.5">How to get your token:</p>
+                            <p className="font-medium mb-1.5">
+                                How to get your token:
+                            </p>
                             {foundProvider.subscriptionTokenInstructions
                                 .split("\n")
                                 .map((line, i) => (
-                                    <p key={i} className={line === "" ? "mt-2" : "leading-relaxed"}>
+                                    <p
+                                        key={i}
+                                        className={
+                                            line === ""
+                                                ? "mt-2"
+                                                : "leading-relaxed"
+                                        }>
                                         {line.startsWith("Run:") ? (
-                                            <>Run: <code className="bg-card-lv3 rounded px-1 font-mono">{line.replace(/^Run:\s*/, "")}</code></>
-                                        ) : line}
+                                            <>
+                                                Run:{" "}
+                                                <code className="bg-card-lv3 rounded px-1 font-mono">
+                                                    {line.replace(
+                                                        /^Run:\s*/,
+                                                        "",
+                                                    )}
+                                                </code>
+                                            </>
+                                        ) : (
+                                            line
+                                        )}
                                     </p>
                                 ))}
                             {foundProvider.subscriptionTokenSetupUrl && (
                                 <a
-                                    href={foundProvider.subscriptionTokenSetupUrl}
+                                    href={
+                                        foundProvider.subscriptionTokenSetupUrl
+                                    }
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-primary mt-2 inline-flex items-center gap-1 underline">
@@ -142,10 +189,17 @@ const SubscriptionTokenInput = ({
                             value={field.value ?? ""}
                             onChange={(e) => {
                                 field.onChange(e);
-                                if (testResult.status !== "idle") setTestResult({ status: "idle" });
+                                if (testResult.status !== "idle")
+                                    setTestResult({ status: "idle" });
                             }}
                             className="max-h-56 min-h-32 font-mono text-xs"
-                            placeholder={isEditing ? "Already configured — paste new credentials to replace" : provider === "openai" ? 'Paste contents of ~/.codex/auth.json (or a raw eyJ... JWT)' : 'Paste ~/.claude/.credentials.json contents, or a raw sk-ant-oat01-... token'}
+                            placeholder={
+                                isEditing
+                                    ? "Already configured — paste new credentials to replace"
+                                    : provider === "openai"
+                                      ? "Paste contents of ~/.codex/auth.json (or a raw eyJ... JWT)"
+                                      : "Paste ~/.claude/.credentials.json contents, or a raw sk-ant-oat01-... token"
+                            }
                         />
                     </FormControl.Input>
 
@@ -160,14 +214,23 @@ const SubscriptionTokenInput = ({
                             type="button"
                             variant="tertiary"
                             size="xs"
-                            disabled={(!field.value?.trim() && !isEditing) || testResult.status === "loading"}
-                            leftIcon={
+                            disabled={
+                                (!field.value?.trim() && !isEditing) ||
                                 testResult.status === "loading"
-                                    ? <Loader2Icon className="h-3 w-3 animate-spin" />
-                                    : <FlaskConicalIcon className="h-3 w-3" />
+                            }
+                            leftIcon={
+                                testResult.status === "loading" ? (
+                                    <Loader2Icon className="h-3 w-3 animate-spin" />
+                                ) : (
+                                    <FlaskConicalIcon className="h-3 w-3" />
+                                )
                             }
                             onClick={handleTest}>
-                            {testResult.status === "loading" ? "Testing..." : field.value?.trim() ? "Test token" : "Test saved token"}
+                            {testResult.status === "loading"
+                                ? "Testing..."
+                                : field.value?.trim()
+                                  ? "Test token"
+                                  : "Test saved token"}
                         </Button>
 
                         {testResult.status === "success" && (

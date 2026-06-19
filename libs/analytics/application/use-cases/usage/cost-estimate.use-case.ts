@@ -10,13 +10,20 @@ import {
     PULL_REQUESTS_SERVICE_TOKEN,
 } from '@libs/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
 
-const GPT_5_1_PRICING = {
-    INPUT_PER_MILLION: 1.25,
-    OUTPUT_PER_MILLION: 10.0,
-};
+import { ModelCostCalculator } from './model-cost-calculator';
+import { ModelPricingInfo } from './token-pricing.use-case';
 
 const PERIOD_DAYS = 14;
 const PROJECTION_DAYS = 30;
+
+type UsageRow = {
+    input: number;
+    output: number;
+    outputReasoning: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+    model?: string;
+};
 
 @Injectable()
 export class CostEstimateUseCase {
@@ -26,6 +33,8 @@ export class CostEstimateUseCase {
 
         @Inject(PULL_REQUESTS_SERVICE_TOKEN)
         private readonly pullRequestsService: IPullRequestsService,
+
+        private readonly modelCostCalculator: ModelCostCalculator,
     ) {}
 
     async execute(organizationId: string): Promise<CostEstimateContract> {
@@ -47,13 +56,8 @@ export class CostEstimateUseCase {
 
         const developerCount = Math.max(uniqueDevelopers, 1);
 
-        const inputCost =
-            (totals.inputTokens / 1_000_000) *
-            GPT_5_1_PRICING.INPUT_PER_MILLION;
-        const outputCost =
-            (totals.outputTokens / 1_000_000) *
-            GPT_5_1_PRICING.OUTPUT_PER_MILLION;
-        const totalCost14Days = inputCost + outputCost;
+        const totalCost14Days =
+            await this.modelCostCalculator.totalCost(usageByPr);
 
         const estimatedMonthlyCost =
             totalCost14Days * (PROJECTION_DAYS / PERIOD_DAYS);
@@ -99,24 +103,28 @@ export class CostEstimateUseCase {
         return { start, end };
     }
 
-    private aggregateTokenUsage(
-        usages: { input: number; output: number; outputReasoning: number }[],
-    ) {
+    private aggregateTokenUsage(usages: UsageRow[]) {
         const totals = {
             inputTokens: 0,
             outputTokens: 0,
             reasoningTokens: 0,
             totalTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
         };
 
         for (const usage of usages) {
             totals.inputTokens += usage.input;
             totals.outputTokens += usage.output;
             totals.reasoningTokens += usage.outputReasoning;
+            totals.cacheReadTokens += usage.cacheRead ?? 0;
+            totals.cacheWriteTokens += usage.cacheWrite ?? 0;
         }
 
-        totals.totalTokens =
-            totals.inputTokens + totals.outputTokens + totals.reasoningTokens;
+        // outputTokens already includes reasoningTokens for every provider we
+        // ship (Gemini API, OpenAI o-series, Anthropic thinking). Keep total
+        // as input + output so we don't double-count.
+        totals.totalTokens = totals.inputTokens + totals.outputTokens;
         return totals;
     }
 
@@ -145,3 +153,5 @@ export class CostEstimateUseCase {
         return Math.round(value * 100) / 100;
     }
 }
+
+export { ModelPricingInfo };

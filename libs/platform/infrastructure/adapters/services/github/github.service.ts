@@ -1,11 +1,12 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createAppAuth } from '@octokit/auth-app';
+import { INTEGRATION_REQUEST_TIMEOUT_MS } from '@libs/core/infrastructure/http/integration-timeouts';
 import { graphql } from '@octokit/graphql';
+import { enterpriseServer313 } from '@octokit/plugin-enterprise-server';
 import { retry } from '@octokit/plugin-retry';
 import { throttling } from '@octokit/plugin-throttling';
 import { Octokit, RestEndpointMethodTypes } from '@octokit/rest';
-import type { EndpointDefaults } from '@octokit/types';
 
 import * as moment from 'moment-timezone';
 
@@ -17,6 +18,7 @@ import {
     GitHubReaction,
     Reaction,
 } from '@libs/code-review/domain/codeReviewFeedback/enums/codeReviewCommentReaction.enum';
+import { fitPRDescription } from '@libs/code-review/utils/fit-pr-description';
 import { getCodeReviewBadge } from '@libs/common/utils/codeManagement/codeReviewBadge';
 import { getLabelShield } from '@libs/common/utils/codeManagement/labels';
 import { getSeverityLevelShield } from '@libs/common/utils/codeManagement/severityLevel';
@@ -74,6 +76,7 @@ import { AuthMode } from '@libs/platform/domain/platformIntegrations/enums/codeM
 import {
     CodeManagementConnectionStatus,
     ICodeManagementService,
+    PullRequestFileChange,
 } from '@libs/platform/domain/platformIntegrations/interfaces/code-management.interface';
 import { GitCloneParams } from '@libs/platform/domain/platformIntegrations/types/codeManagement/gitCloneParams.type';
 import {
@@ -99,6 +102,11 @@ import {
     ETagCacheEntry,
     ETagStore,
 } from './octokit-etag-allowlist';
+import {
+    buildDefaultSourceBranchName,
+    DEFAULT_COMMIT_MESSAGE,
+    DEFAULT_PR_TITLE,
+} from '../code-management-defaults.constants';
 
 interface GitHubAuthResponse {
     token: string;
@@ -124,18 +132,27 @@ interface GitHubInstallationData {
 @IntegrationServiceDecorator(PlatformType.GITHUB, 'codeManagement')
 export class GithubService
     implements
-    IGithubService,
-    Omit<
-        ICodeManagementService,
-        | 'getOrganizations'
-        | 'getUserById'
-        | 'getLanguageRepository'
-        | 'createSingleIssueComment'
-    > {
+        IGithubService,
+        Omit<
+            ICodeManagementService,
+            | 'getOrganizations'
+            | 'getUserById'
+            | 'getLanguageRepository'
+            | 'createSingleIssueComment'
+        >
+{
     private readonly MAX_RETRY_ATTEMPTS = 2;
     private readonly TTL = 50 * 60 * 1000; // 50 minutes
 
     private readonly logger = createLogger(GithubService.name);
+
+    private readonly enterpriseOctokit = Octokit.plugin(
+        enterpriseServer313,
+        retry,
+        throttling,
+    );
+
+    private readonly standardUserOctokit = Octokit.plugin(retry, throttling);
 
     constructor(
         @Inject(INTEGRATION_SERVICE_TOKEN)
@@ -149,7 +166,7 @@ export class GithubService
         private readonly cacheService: CacheService,
         private readonly configService: ConfigService,
         private readonly mcpManagerService?: MCPManagerService,
-    ) { }
+    ) {}
 
     private async handleIntegration(
         integration: any,
@@ -166,6 +183,108 @@ export class GithubService
                 authDetails,
             });
         }
+    }
+
+    private normalizeGithubHost(host?: string): string | undefined {
+        if (!host?.trim()) {
+            return undefined;
+        }
+
+        const normalized = host.trim().replace(/\/+$/, '');
+        const withProtocol = /^https?:\/\//i.test(normalized)
+            ? normalized
+            : `https://${normalized}`;
+
+        return withProtocol.replace(/\/+$/, '');
+    }
+
+    private getGithubApiBaseUrl(host?: string): string | undefined {
+        const normalizedHost = this.normalizeGithubHost(host);
+
+        if (!normalizedHost) {
+            return undefined;
+        }
+
+        return `${normalizedHost}/api/v3`;
+    }
+
+    private getGithubGraphqlBaseUrl(host?: string): string | undefined {
+        const normalizedHost = this.normalizeGithubHost(host);
+
+        if (!normalizedHost) {
+            return undefined;
+        }
+
+        return `${normalizedHost}/api/graphql`;
+    }
+
+    private getGithubWebBaseUrl(host?: string): string {
+        const normalizedHost = this.normalizeGithubHost(host);
+
+        if (!normalizedHost) {
+            return 'https://github.com';
+        }
+
+        return normalizedHost;
+    }
+
+    private createUserOctokitClient(params: {
+        auth: string;
+        host?: string;
+        retries?: number;
+        retry?: {
+            doNotRetry: number[];
+        };
+        throttle?: {
+            onRateLimit: (
+                retryAfter: number,
+                options: { method: string; url: string },
+                octokit: Octokit,
+            ) => boolean;
+            onSecondaryRateLimit: (
+                retryAfter: number,
+                options: { method: string; url: string },
+                octokit: Octokit,
+            ) => boolean;
+        };
+    }): Octokit {
+        const baseUrl = this.getGithubApiBaseUrl(params.host);
+        const throttleConfig =
+            params.throttle ??
+            ({
+                onRateLimit: () => false,
+                onSecondaryRateLimit: () => false,
+            } as {
+                onRateLimit: (
+                    retryAfter: number,
+                    options: { method: string; url: string },
+                    octokit: Octokit,
+                ) => boolean;
+                onSecondaryRateLimit: (
+                    retryAfter: number,
+                    options: { method: string; url: string },
+                    octokit: Octokit,
+                ) => boolean;
+            });
+
+        // Use the enterprise plugin only for GHES hosts to avoid changing
+        // endpoint behavior for github.com PAT integrations.
+        if (!baseUrl) {
+            return new this.standardUserOctokit({
+                auth: params.auth,
+                request: { retries: params.retries ?? 0 },
+                ...(params.retry && { retry: params.retry }),
+                throttle: throttleConfig,
+            }) as unknown as Octokit;
+        }
+
+        return new this.enterpriseOctokit({
+            auth: params.auth,
+            ...(baseUrl && { baseUrl }),
+            request: { retries: params.retries ?? 0 },
+            ...(params.retry && { retry: params.retry }),
+            throttle: throttleConfig,
+        }) as unknown as Octokit;
     }
 
     // Helper functions
@@ -245,19 +364,51 @@ export class GithubService
                 return;
             }
 
-            await this.integrationConfigService.createOrUpdateConfig(
-                params.configKey,
-                params.configValue,
-                integration?.uuid,
-                params.organizationAndTeamData,
-                params.type,
-            );
-
             const githubAuthDetail = await this.getGithubAuthDetails(
                 params.organizationAndTeamData,
             );
 
-            if (githubAuthDetail?.authMode === AuthMode.TOKEN) {
+            const shouldRefreshTokenWebhooks =
+                githubAuthDetail?.authMode === AuthMode.TOKEN &&
+                params.configKey === IntegrationConfigKey.REPOSITORIES;
+
+            const previousRepositories = shouldRefreshTokenWebhooks
+                ? ((await this.findOneByOrganizationAndTeamDataAndConfigKey(
+                      params.organizationAndTeamData,
+                      IntegrationConfigKey.REPOSITORIES,
+                  )) ?? [])
+                : [];
+
+            const updatedConfig =
+                await this.integrationConfigService.createOrUpdateConfig(
+                    params.configKey,
+                    params.configValue,
+                    integration?.uuid,
+                    params.organizationAndTeamData,
+                    params.type,
+                );
+
+            if (shouldRefreshTokenWebhooks) {
+                const nextRepositories = <Repositories[]>(
+                    (updatedConfig?.configValue ?? params.configValue ?? [])
+                );
+                const removedRepositories = previousRepositories.filter(
+                    (previousRepository) =>
+                        !nextRepositories.some(
+                            (nextRepository) =>
+                                nextRepository.id?.toString() ===
+                                    previousRepository.id?.toString() ||
+                                nextRepository.name === previousRepository.name,
+                        ),
+                );
+
+                if (removedRepositories.length > 0) {
+                    await this.deleteWebhook({
+                        organizationAndTeamData: params.organizationAndTeamData,
+                        repositories: removedRepositories,
+                    });
+                }
+
                 await this.createPullRequestWebhook({
                     organizationAndTeamData: params.organizationAndTeamData,
                 });
@@ -388,7 +539,11 @@ export class GithubService
     ): Promise<{ success: boolean; status?: CreateAuthIntegrationStatus }> {
         try {
             const { token } = params;
-            const userOctokit = new Octokit({ auth: token });
+            const normalizedHost = this.normalizeGithubHost(params.host);
+            const userOctokit = this.createUserOctokitClient({
+                auth: token,
+                host: normalizedHost,
+            });
 
             const user = await userOctokit.rest.users.getAuthenticated();
 
@@ -405,6 +560,7 @@ export class GithubService
                 authToken: encryptedPAT,
                 org: accountLogin,
                 authMode: params.authMode || AuthMode.TOKEN,
+                host: normalizedHost,
                 accountType: accountType as 'organization' | 'user',
             };
 
@@ -497,6 +653,478 @@ export class GithubService
         });
 
         return githubAuthDetail.org;
+    }
+
+    async findRepositoryByName(params: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        name: string;
+    }): Promise<Partial<Repository> | null> {
+        const repositories = await this.getRepositories({
+            organizationAndTeamData: params.organizationAndTeamData,
+        });
+
+        const wanted = params.name.trim().toLowerCase();
+        const foundRepo = repositories.find((repo) => {
+            const fullName = (
+                repo.full_name || `${repo.organizationName}/${repo.name}`
+            ).toLowerCase();
+
+            return repo.name.toLowerCase() === wanted || fullName === wanted;
+        });
+
+        if (!foundRepo) {
+            return null;
+        }
+
+        return {
+            id: foundRepo.id,
+            name: foundRepo.name,
+            fullName:
+                foundRepo.full_name ||
+                `${foundRepo.organizationName}/${foundRepo.name}`,
+            defaultBranch: foundRepo.default_branch,
+        };
+    }
+
+    async createPullRequestWithFiles(params: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        repository: { id: string; name: string };
+        sourceBranch?: string;
+        targetBranch?: string;
+        baseBranch?: string;
+        title?: string;
+        description?: string;
+        commitMessage?: string;
+        author?: { name: string; email?: string };
+        files: PullRequestFileChange[];
+    }): Promise<Partial<PullRequest> | null> {
+        const {
+            organizationAndTeamData,
+            repository,
+            sourceBranch,
+            targetBranch,
+            baseBranch,
+            title,
+            description = '',
+            commitMessage,
+            author,
+            files,
+        } = params;
+
+        const pullRequestTitle = title?.trim() || DEFAULT_PR_TITLE;
+        const resolvedBaseBranch =
+            baseBranch ||
+            targetBranch ||
+            (await this.getDefaultBranch({
+                organizationAndTeamData,
+                repository,
+            }));
+        const resolvedSourceBranch =
+            sourceBranch || buildDefaultSourceBranchName();
+        const resolvedTargetBranch = targetBranch || resolvedBaseBranch;
+        const resolvedCommitMessage =
+            commitMessage?.trim() || DEFAULT_COMMIT_MESSAGE;
+
+        try {
+            const uploadResult = await this.uploadFiles({
+                organizationAndTeamData,
+                repository,
+                branchName: resolvedSourceBranch,
+                baseBranch: resolvedBaseBranch,
+                files,
+                message: resolvedCommitMessage,
+                author,
+            });
+
+            if (!uploadResult) {
+                this.logger.error({
+                    message: 'Failed to upload files for pull request creation',
+                    context: GithubService.name,
+                    metadata: {
+                        repository: repository.name,
+                        sourceBranch: resolvedSourceBranch,
+                        targetBranch: resolvedTargetBranch,
+                        baseBranch: resolvedBaseBranch,
+                        title: pullRequestTitle,
+                        files: files.map((f) => f.path),
+                    },
+                });
+                return null;
+            }
+
+            const githubAuthDetail = await this.getGithubAuthDetails(
+                organizationAndTeamData,
+            );
+
+            const octokit = await this.instanceOctokit(
+                organizationAndTeamData,
+                githubAuthDetail,
+            );
+
+            const owner = await this.getCorrectOwner(githubAuthDetail, octokit);
+
+            const prResponse = await octokit.rest.pulls.create({
+                owner,
+                repo: repository.name,
+                title: pullRequestTitle,
+                head: resolvedSourceBranch,
+                base: resolvedTargetBranch,
+                body: description,
+            });
+
+            if (prResponse.status === 201) {
+                const prData = prResponse.data;
+
+                return {
+                    id: prData.id.toString(),
+                    number: prData.number,
+                    title: prData.title,
+                    prURL: prData.html_url,
+                };
+            } else {
+                this.logger.error({
+                    message: 'Failed to create pull request',
+                    context: GithubService.name,
+                    metadata: {
+                        repository: repository.name,
+                        sourceBranch: resolvedSourceBranch,
+                        targetBranch: resolvedTargetBranch,
+                        baseBranch: resolvedBaseBranch,
+                        title: pullRequestTitle,
+                        files: files.map((f) => f.path),
+                        status: prResponse.status,
+                    },
+                });
+
+                return null;
+            }
+        } catch (error) {
+            this.logger.error({
+                message: 'Error creating pull request with files',
+                context: GithubService.name,
+                error,
+                metadata: {
+                    repository: repository.name,
+                    sourceBranch: resolvedSourceBranch,
+                    targetBranch: resolvedTargetBranch,
+                    baseBranch: resolvedBaseBranch,
+                    title: pullRequestTitle,
+                    files: files.map((f) => f.path),
+                },
+            });
+
+            return null;
+        }
+    }
+
+    async uploadFiles(params: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        repository: { id: string; name: string };
+        branchName?: string;
+        baseBranch?: string;
+        files: PullRequestFileChange[];
+        message?: string;
+        author?: { name: string; email?: string };
+    }): Promise<boolean> {
+        const {
+            organizationAndTeamData,
+            repository,
+            branchName,
+            baseBranch,
+            files,
+            message,
+            author,
+        } = params;
+
+        const resolvedBaseBranch =
+            baseBranch ||
+            (await this.getDefaultBranch({
+                organizationAndTeamData,
+                repository,
+            }));
+        const resolvedBranchName = branchName || resolvedBaseBranch;
+        const resolvedMessage = message?.trim() || DEFAULT_COMMIT_MESSAGE;
+
+        try {
+            const githubAuthDetail = await this.getGithubAuthDetails(
+                organizationAndTeamData,
+            );
+
+            const tokenAuthorIdentity =
+                githubAuthDetail?.authMode === AuthMode.TOKEN && author?.name
+                    ? {
+                          name: author.name,
+                          email: author.email || 'kody@kodus.io',
+                      }
+                    : undefined;
+
+            const octokit = await this.instanceOctokit(
+                organizationAndTeamData,
+                githubAuthDetail,
+            );
+
+            const owner = await this.getCorrectOwner(githubAuthDetail, octokit);
+
+            const { data: baseRef } = await octokit.rest.git.getRef({
+                owner,
+                repo: repository.name,
+                ref: `heads/${resolvedBaseBranch}`,
+            });
+            const baseSha = baseRef.object.sha;
+
+            let parentSha = baseSha;
+            let branchAlreadyExists = resolvedBranchName === resolvedBaseBranch;
+
+            if (resolvedBranchName !== resolvedBaseBranch) {
+                try {
+                    const { data: sourceBranchRef } =
+                        await octokit.rest.git.getRef({
+                            owner,
+                            repo: repository.name,
+                            ref: `heads/${resolvedBranchName}`,
+                        });
+
+                    parentSha = sourceBranchRef.object.sha;
+                    branchAlreadyExists = true;
+                } catch (error) {
+                    if ((error as { status?: number })?.status !== 404) {
+                        throw error;
+                    }
+                }
+            }
+
+            const treeItems = await Promise.all(
+                files.map(async (file) => {
+                    const operation = file.operation || 'upsert';
+
+                    if (operation === 'delete') {
+                        return {
+                            path: file.path,
+                            mode: '100644' as const,
+                            type: 'blob' as const,
+                            sha: null,
+                        };
+                    }
+
+                    if (typeof file.content !== 'string') {
+                        throw new Error(
+                            `File content is required for upsert operation: ${file.path}`,
+                        );
+                    }
+
+                    const { data: blob } = await octokit.rest.git.createBlob({
+                        owner,
+                        repo: repository.name,
+                        content: Buffer.from(file.content).toString('base64'),
+                        encoding: 'base64',
+                    });
+
+                    return {
+                        path: file.path,
+                        mode: '100644' as const,
+                        type: 'blob' as const,
+                        sha: blob.sha,
+                    };
+                }),
+            );
+
+            // GitHub's createTree fails atomically with GitRPC::BadObjectState
+            // when any delete op targets a path that doesn't exist in
+            // base_tree. Filter and retry once before giving up — this covers
+            // DB/repo drift (e.g., a directory group with kody-rules but no
+            // kodus-config.yml override never produced a config file on disk).
+            let effectiveTreeItems = treeItems;
+            let createdTreeSha: string;
+            try {
+                const { data: tree } = await octokit.rest.git.createTree({
+                    owner,
+                    repo: repository.name,
+                    tree: effectiveTreeItems,
+                    base_tree: parentSha,
+                });
+                createdTreeSha = tree.sha;
+            } catch (treeError) {
+                if (!this.isBadObjectStateError(treeError)) {
+                    throw treeError;
+                }
+
+                const existingPaths = await this.fetchTreeBlobPaths(
+                    octokit,
+                    owner,
+                    repository.name,
+                    parentSha,
+                );
+
+                if (existingPaths === null) {
+                    // Couldn't reliably enumerate the tree — don't risk a
+                    // false-positive filter. Rethrow original error.
+                    throw treeError;
+                }
+
+                const filtered = effectiveTreeItems.filter((item) => {
+                    if (item.sha === null) {
+                        return existingPaths.has(item.path);
+                    }
+                    return true;
+                });
+
+                if (filtered.length === effectiveTreeItems.length) {
+                    // Nothing to drop — error came from something else.
+                    throw treeError;
+                }
+
+                const droppedPaths = effectiveTreeItems
+                    .filter(
+                        (item) =>
+                            item.sha === null &&
+                            !existingPaths.has(item.path),
+                    )
+                    .map((item) => item.path);
+
+                if (filtered.length === 0) {
+                    // Updating an existing tracked PR is fine — the branch
+                    // already has whatever it had before. For a fresh branch
+                    // there's nothing to commit and no branch to attach a PR
+                    // to, so signal failure to the caller.
+                    if (branchAlreadyExists) {
+                        this.logger.warn({
+                            message:
+                                'All requested file operations were no-ops on an existing branch; skipping commit',
+                            context: GithubService.name,
+                            metadata: {
+                                repository: repository.name,
+                                branchName: resolvedBranchName,
+                                droppedPaths,
+                            },
+                        });
+                        return true;
+                    }
+                    this.logger.warn({
+                        message:
+                            'All requested deletes targeted non-existent paths and no upserts remain; nothing to commit on a new branch',
+                        context: GithubService.name,
+                        metadata: {
+                            repository: repository.name,
+                            branchName: resolvedBranchName,
+                            droppedPaths,
+                        },
+                    });
+                    return false;
+                }
+
+                this.logger.warn({
+                    message:
+                        'Retrying tree creation after dropping deletes for non-existent paths',
+                    context: GithubService.name,
+                    metadata: {
+                        repository: repository.name,
+                        branchName: resolvedBranchName,
+                        droppedPaths,
+                    },
+                });
+
+                effectiveTreeItems = filtered;
+                const { data: retryTree } =
+                    await octokit.rest.git.createTree({
+                        owner,
+                        repo: repository.name,
+                        tree: effectiveTreeItems,
+                        base_tree: parentSha,
+                    });
+                createdTreeSha = retryTree.sha;
+            }
+
+            const { data: commit } = await octokit.rest.git.createCommit({
+                owner,
+                repo: repository.name,
+                message: resolvedMessage,
+                tree: createdTreeSha,
+                parents: [parentSha],
+                ...(tokenAuthorIdentity
+                    ? {
+                          author: tokenAuthorIdentity,
+                          committer: tokenAuthorIdentity,
+                      }
+                    : {}),
+            });
+
+            if (branchAlreadyExists) {
+                await octokit.rest.git.updateRef({
+                    owner,
+                    repo: repository.name,
+                    ref: `heads/${resolvedBranchName}`,
+                    sha: commit.sha,
+                });
+            } else {
+                await octokit.rest.git.createRef({
+                    owner,
+                    repo: repository.name,
+                    ref: `refs/heads/${resolvedBranchName}`,
+                    sha: commit.sha,
+                });
+            }
+
+            return true;
+        } catch (error) {
+            this.logger.error({
+                message: 'Error uploading files to GitHub',
+                context: GithubService.name,
+                error,
+                metadata: {
+                    repository: repository.name,
+                    branchName: resolvedBranchName,
+                    baseBranch: resolvedBaseBranch,
+                    files: files.map((f) => f.path),
+                },
+            });
+
+            return false;
+        }
+    }
+
+    private isBadObjectStateError(error: unknown): boolean {
+        if (!error) {
+            return false;
+        }
+        const message =
+            (error as { message?: unknown })?.message ?? String(error);
+        return typeof message === 'string'
+            ? message.toLowerCase().includes('badobjectstate')
+            : false;
+    }
+
+    private async fetchTreeBlobPaths(
+        octokit: any,
+        owner: string,
+        repo: string,
+        commitOrTreeSha: string,
+    ): Promise<Set<string> | null> {
+        try {
+            // The commit SHA resolves to its tree via `getTree` — GitHub's API
+            // accepts either a commit SHA or a tree SHA on this endpoint.
+            const { data } = await octokit.rest.git.getTree({
+                owner,
+                repo,
+                tree_sha: commitOrTreeSha,
+                recursive: 'true',
+            });
+
+            // Truncated responses can't be trusted for filtering — a missing
+            // path could still be present in a chunk we didn't see.
+            if (data.truncated) {
+                return null;
+            }
+
+            const paths = new Set<string>();
+            for (const node of data.tree ?? []) {
+                if (node.type === 'blob' && typeof node.path === 'string') {
+                    paths.add(node.path);
+                }
+            }
+            return paths;
+        } catch {
+            return null;
+        }
     }
 
     private async checkRepositoryPermissions(params: {
@@ -598,6 +1226,50 @@ export class GithubService
         });
     }
 
+    private async getSuspendedStatusBatch(
+        octokit: Octokit,
+        logins: string[],
+        batchSize: number = 100,
+    ): Promise<Map<string, boolean>> {
+        if (logins.length === 0) return new Map();
+
+        const statusMap = new Map<string, boolean>();
+        let aliasCounter = 0;
+
+        for (let i = 0; i < logins.length; i += batchSize) {
+            const batch = logins.slice(i, i + batchSize);
+
+            const aliasFields = batch.map((login) => {
+                const alias = `u${aliasCounter++}`;
+                const safeLogin = login.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+                return `${alias}: user(login: "${safeLogin}") { suspendedAt }`;
+            });
+
+            const query = `query { ${aliasFields.join('\n')} }`;
+
+            try {
+                const response = await octokit.graphql(query) as Record<string, { suspendedAt: string | null } | null>;
+
+                batch.forEach((login, idx) => {
+                    const alias = `u${aliasCounter - batch.length + idx}`;
+                    const userData = response[alias];
+                    statusMap.set(login, userData?.suspendedAt === null);
+                });
+            } catch (error) {
+                this.logger.error({
+                    message: 'GraphQL batch query failed for suspended status',
+                    context: GithubService.name,
+                    error,
+                    metadata: { batch: batch.join(', ') },
+                });
+
+                batch.forEach((login) => statusMap.set(login, true));
+            }
+        }
+
+        return statusMap;
+    }
+
     async getListMembers(
         params: any,
     ): Promise<{ name: string; id: string | number; type?: string }[]> {
@@ -605,13 +1277,19 @@ export class GithubService
             params.organizationAndTeamData,
         );
 
-        return members?.map((user) => {
-            return {
+        if (!members || members.length === 0) return [];
+
+        const octokit = await this.instanceOctokit(params.organizationAndTeamData);
+        const logins = members.map((user) => user.login);
+        const activeMap = await this.getSuspendedStatusBatch(octokit, logins);
+
+        return members
+            .filter((user) => activeMap.get(user.login) ?? true)
+            .map((user) => ({
                 name: user.login,
                 id: user.id,
                 type: user?.type === 'Bot' ? 'bot' : 'user',
-            };
-        });
+            }));
     }
 
     /**
@@ -1261,7 +1939,6 @@ export class GithubService
 
             if (
                 pathParts.length >= 4 &&
-                urlObj.hostname === 'github.com' &&
                 (pathParts[2] === 'pull' || pathParts[2] === 'pulls')
             ) {
                 const owner = pathParts[0];
@@ -1796,6 +2473,7 @@ export class GithubService
         try {
             const octokit = new Octokit({
                 auth: auth.token,
+                request: { timeout: INTEGRATION_REQUEST_TIMEOUT_MS },
             });
 
             await octokit.rest.rateLimit.get();
@@ -1870,60 +2548,87 @@ export class GithubService
                     },
                     throttle: {
                         onRateLimit: (
-                            retryAfter: number,
-                            options: Required<EndpointDefaults>,
-                            octokit: Octokit,
-                            retryCount: number,
+                            retryAfter,
+                            options,
+                            octokit,
+                            retryCount,
                         ) => {
                             const attempts = retryCount;
                             const jitter = Math.floor(Math.random() * 1000);
 
+                            const headers =
+                                (options.request as any)?.response?.headers ??
+                                {};
+                            const rateLimit = headers['x-ratelimit-limit'];
+                            const rateRemaining =
+                                headers['x-ratelimit-remaining'];
+                            const rateReset = headers['x-ratelimit-reset'];
+                            const rateResource =
+                                headers['x-ratelimit-resource'];
+
                             // Log do Octokit (mantém compatibilidade com plugin)
                             octokit.log.warn(
-                                `RATE-LIMIT core: ${options.method} ${options.url} — retryAfter=${retryAfter}s attempts=${attempts}`,
+                                `RATE-LIMIT ${rateResource ?? 'core'}: ${options.method} ${options.url} — retryAfter=${retryAfter}s attempts=${attempts} limit=${rateLimit ?? '?'} remaining=${rateRemaining ?? '?'}`,
                             );
 
                             // Log do Pino (integração com sistema de logging)
                             this.logger.warn({
-                                message: `RATE-LIMIT core: ${options.method} ${options.url} — retryAfter=${retryAfter}s attempts=${attempts}`,
+                                // Retries within octokit are intentionally
+                                // disabled below: each retry would dorme
+                                // for `retryAfter` (up to ~59 min on an
+                                // exhausted installation bucket) while
+                                // holding the worker slot. We instead let
+                                // the request throw immediately and have
+                                // the consumer error handler republish the
+                                // job with a delay aligned to the bucket
+                                // reset — that's what RateLimitError +
+                                // RabbitMQErrorHandler do.
+                                message: `RATE-LIMIT ${rateResource ?? 'core'}: ${options.method} ${options.url} — retryAfter=${retryAfter}s attempts=${attempts} limit=${rateLimit ?? '?'} remaining=${rateRemaining ?? '?'}`,
                                 context: GithubService.name,
                                 metadata: {
                                     method: options.method,
                                     url: options.url,
                                     retryAfter,
                                     attempts,
+                                    rateLimit:
+                                        rateLimit !== undefined
+                                            ? Number(rateLimit)
+                                            : undefined,
+                                    rateRemaining:
+                                        rateRemaining !== undefined
+                                            ? Number(rateRemaining)
+                                            : undefined,
+                                    rateReset:
+                                        rateReset !== undefined
+                                            ? Number(rateReset)
+                                            : undefined,
+                                    rateResource,
                                     organizationId:
                                         organizationAndTeamData.organizationId,
                                     teamId: organizationAndTeamData.teamId,
                                 },
                             });
 
-                            if (attempts < 2) {
-                                octokit.log.info(
-                                    `Retrying after ~${retryAfter}s (+${jitter}ms jitter)`,
-                                );
-
-                                this.logger.log({
-                                    message: `Retrying after ~${retryAfter}s (+${jitter}ms jitter)`,
-                                    context: GithubService.name,
-                                    metadata: {
-                                        method: options.method,
-                                        url: options.url,
-                                        retryAfter,
-                                        jitter,
-                                        attempts,
-                                    },
-                                });
-                                return true;
-                            }
-
+                            // Zero in-octokit retries. Returning false
+                            // here makes the throttling plugin re-throw
+                            // the original 403 immediately, which the
+                            // calling processor catches and converts to
+                            // `RateLimitError(resetAt)`. The RabbitMQ
+                            // error handler then republishes the job
+                            // with a delay aligned to the bucket reset.
+                            // The previous behavior (up to 2 retries
+                            // dorme by `retryAfter` each = up to ~3h
+                            // pinned inside a single octokit call) is
+                            // strictly worse: the same wait happens, but
+                            // the worker slot is held the entire time.
+                            void jitter; // kept for log shape parity
                             return false;
                         },
                         onSecondaryRateLimit: (
-                            retryAfter: number,
-                            options: Required<EndpointDefaults>,
-                            octokit: Octokit,
-                            retryCount: number,
+                            retryAfter,
+                            options,
+                            octokit,
+                            retryCount,
                         ) => {
                             octokit.log.error(
                                 `SECONDARY-RATE-LIMIT: ${options.method} ${options.url} — wait=${retryAfter}s`,
@@ -1961,11 +2666,10 @@ export class GithubService
                 // Decrypt the PAT before using it
                 const decryptedPAT = decrypt(githubAuthDetail?.authToken);
 
-                const MyOctokit = Octokit.plugin(retry, throttling);
-
-                const octokit = new MyOctokit({
+                const octokit = this.createUserOctokitClient({
                     auth: decryptedPAT,
-                    request: { retries: 2 },
+                    host: githubAuthDetail.host,
+                    retries: 2,
                     retry: {
                         doNotRetry: [400, 401, 403, 404, 422, 451],
                     },
@@ -1979,7 +2683,6 @@ export class GithubService
                                 `Request quota exhausted for request ${options.method} ${options.url}`,
                             );
 
-                            // If you decide to retry when the rate limit is reached, return true.
                             return true;
                         },
                         onSecondaryRateLimit: (
@@ -1991,7 +2694,6 @@ export class GithubService
                                 `Secondary rate limit hit for request ${options.method} ${options.url}`,
                             );
 
-                            // Similar logic can be added here for the secondary rate limit
                             return true;
                         },
                     },
@@ -2061,8 +2763,12 @@ export class GithubService
             ) {
                 // Decrypt the PAT before using it
                 const decryptedPAT = decrypt(githubAuthDetail?.authToken);
+                const graphQlBaseUrl = this.getGithubGraphqlBaseUrl(
+                    githubAuthDetail.host,
+                );
 
                 const graphqlClient = graphql.defaults({
+                    ...(graphQlBaseUrl && { baseUrl: graphQlBaseUrl }),
                     headers: {
                         authorization: `token ${decryptedPAT}`,
                     },
@@ -2105,6 +2811,7 @@ export class GithubService
                         'API_GITHUB_CLIENT_SECRET',
                     ),
                 },
+                request: { timeout: INTEGRATION_REQUEST_TIMEOUT_MS },
             });
 
             const installationAuthentication = await appOctokit.auth({
@@ -2517,11 +3224,11 @@ export class GithubService
                         const files = filters?.skipFiles
                             ? []
                             : await this.getPullRequestFiles(
-                                octokit,
-                                githubAuthDetail.org,
-                                repo,
-                                pullRequest?.number,
-                            );
+                                  octokit,
+                                  githubAuthDetail.org,
+                                  repo,
+                                  pullRequest?.number,
+                              );
                         return {
                             id: pullRequest.id,
                             pull_number: pullRequest?.number,
@@ -2741,7 +3448,28 @@ export class GithubService
     }
 
     async getFilesByPullRequestId(params: any): Promise<any[] | null> {
-        const { organizationAndTeamData, repository, prNumber } = params;
+        const { organizationAndTeamData, repository, prNumber, headSha } =
+            params;
+
+        // Cache: the list of changed files for a PR at a specific HEAD
+        // SHA is immutable — pushing a new commit produces a new SHA.
+        // The pipeline calls this twice per job (PullRequestManagerService
+        // `getChangedFiles` + `getChangedFilesMetadata`), and a paginated
+        // PR can fan out into 5-15+ subrequests. Caching by (prNumber,
+        // headSha) cuts the second call to a memory lookup.
+        //
+        // Callers that don't pass `headSha` (legacy paths, cron jobs that
+        // don't have the head SHA handy) skip the cache and pay the
+        // original cost — same behavior as before.
+        const cacheKey = headSha
+            ? `gh:pr-files:${organizationAndTeamData?.organizationId ?? 'no-org'}:${repository?.id ?? repository?.name}:${prNumber}:${headSha}`
+            : null;
+        if (cacheKey) {
+            const cached = await this.cacheService.getFromCache<any[]>(
+                cacheKey,
+            );
+            if (cached) return cached;
+        }
 
         const githubAuthDetail = await this.getGithubAuthDetails(
             organizationAndTeamData,
@@ -2754,7 +3482,7 @@ export class GithubService
             pull_number: prNumber,
         });
 
-        return files.map((file) => ({
+        const result = files.map((file) => ({
             filename: file.filename,
             sha: file?.sha ?? null,
             status: file.status,
@@ -2763,10 +3491,36 @@ export class GithubService
             changes: file.changes,
             patch: file.patch,
         }));
+
+        if (cacheKey && result.length > 0) {
+            await this.cacheService.addToCache(
+                cacheKey,
+                result,
+                10 * 60 * 1000, // 10min — short enough that a stale read after
+                // a fast force-push is unlikely, but long enough that the two
+                // calls in the same pipeline always hit.
+            );
+        }
+        return result;
     }
 
     formatCodeBlock(language: string, code: string) {
         return `\`\`\`${language}\n${code}\n\`\`\``;
+    }
+
+    private dedentCode(code: string): string {
+        const lines = code.split('\n');
+        const indents = lines
+            .filter((line) => line.trim().length > 0)
+            .map((line) => line.match(/^[ \t]*/)?.[0].length ?? 0);
+        if (indents.length === 0) return code;
+        const minIndent = Math.min(...indents);
+        if (minIndent === 0) return code;
+        return lines
+            .map((line) =>
+                line.length >= minIndent ? line.slice(minIndent) : line,
+            )
+            .join('\n');
     }
 
     formatSub(text: string) {
@@ -2823,14 +3577,19 @@ ${copyPrompt}
         const language = isCommittableSuggestion
             ? 'suggestion'
             : lineComment?.suggestion?.language?.toLowerCase() ||
-            repository?.language?.toLowerCase();
+              repository?.language?.toLowerCase();
 
         const severityShield = lineComment?.suggestion
             ? getSeverityLevelShield(lineComment.suggestion.severity)
             : '';
 
         const codeBlock = improvedCode
-            ? this.formatCodeBlock(language, improvedCode)
+            ? this.formatCodeBlock(
+                  language,
+                  isCommittableSuggestion
+                      ? improvedCode
+                      : this.dedentCode(improvedCode),
+              )
             : '';
         const suggestionContent = lineComment?.body?.suggestionContent || '';
         const actionStatement = lineComment?.body?.actionStatement
@@ -2869,7 +3628,7 @@ This is an experimental feature that generates committable changes. Review the d
             copyPrompt,
             this.formatSub(translations.talkToKody),
             this.formatSub(translations.feedback) +
-            '<!-- kody-codereview -->&#8203;\n&#8203;',
+                '<!-- kody-codereview -->&#8203;\n&#8203;',
         ]
             .join('\n')
             .trim();
@@ -3099,13 +3858,13 @@ This is an experimental feature that generates committable changes. Review the d
                         // So we need one of them to actually mark the thread as resolved and the other to match the id we saved in the database.
                         return firstComment
                             ? {
-                                id: firstComment.id, // Used to actually resolve the thread
-                                threadId: reviewThread.id,
-                                isResolved: reviewThread.isResolved,
-                                isOutdated: reviewThread.isOutdated,
-                                fullDatabaseId: firstComment.fullDatabaseId, // The REST API id, used to match comments saved in the database.
-                                body: firstComment.body,
-                            }
+                                  id: firstComment.id, // Used to actually resolve the thread
+                                  threadId: reviewThread.id,
+                                  isResolved: reviewThread.isResolved,
+                                  isOutdated: reviewThread.isOutdated,
+                                  fullDatabaseId: firstComment.fullDatabaseId, // The REST API id, used to match comments saved in the database.
+                                  body: firstComment.body,
+                              }
                             : null;
                     })
                     .filter((comment) => comment !== null);
@@ -3515,7 +4274,7 @@ This is an experimental feature that generates committable changes. Review the d
             owner: githubAuthDetail.org,
             repo: repository.name,
             pull_number: prNumber,
-            body: summary,
+            body: fitPRDescription(summary, PlatformType.GITHUB),
         });
 
         return response;
@@ -3557,6 +4316,26 @@ This is an experimental feature that generates committable changes. Review the d
 
             const octokit = await this.instanceOctokit(organizationAndTeamData);
 
+            // Cache by BLOB sha (not branch+path) so the entry invalidates
+            // automatically when the file content changes — pushing a new
+            // commit that modifies app.ts produces a new blob sha and a
+            // fresh cache miss, instead of serving stale content for the
+            // 5-min TTL window. Files unchanged across commits share the
+            // cache entry (PR with 200 files where 5 changed = 195 hits
+            // on the second pass).
+            //
+            // Defensive: skip cache entirely when sha is missing/empty —
+            // better a fresh fetch than a wrong-cached value.
+            const cacheKey = file?.sha
+                ? `gh:contents:${githubAuthDetail?.org}/${repository.name}:${file.sha}:${file.filename}`
+                : undefined;
+            if (cacheKey) {
+                const cached = await this.cacheService.getFromCache<any>(
+                    cacheKey,
+                );
+                if (cached) return cached;
+            }
+
             try {
                 // First, try to fetch from the head branch of the PR
                 const lines = (await octokit.repos.getContent({
@@ -3566,13 +4345,41 @@ This is an experimental feature that generates committable changes. Review the d
                     ref: pullRequest.head.ref,
                 })) as any;
 
+                if (cacheKey && lines) {
+                    // 24h TTL. The cache key includes the blob sha, and
+                    // a blob's content is immutable in Git by design —
+                    // the same sha always resolves to the same bytes
+                    // forever — so there is no stale-cache risk. Long
+                    // TTL maximizes cross-PR hits when reviews touch
+                    // overlapping unchanged files (cross-file context,
+                    // documentation manifests, retried/duplicated
+                    // webhooks, manual reruns).
+                    await this.cacheService.addToCache(
+                        cacheKey,
+                        lines,
+                        24 * 60 * 60 * 1000,
+                    );
+                }
                 return lines;
             } catch (error) {
-                this.logger.error({
-                    message: 'Error getting file content from pull request',
+                const status =
+                    (error as any)?.status ?? (error as any)?.response?.status;
+                const refDeleted =
+                    status === 404 &&
+                    /No commit found for the ref/i.test(
+                        (error as any)?.message ?? '',
+                    );
+                this.logger.warn({
+                    message: refDeleted
+                        ? 'PR head ref missing — falling back to base ref'
+                        : 'Error getting file content from pull request',
                     context: GithubService.name,
                     error,
-                    metadata: { ...params },
+                    metadata: {
+                        ...params,
+                        prHeadMissing: refDeleted,
+                        httpStatus: status,
+                    },
                 });
 
                 // If it fails, try to fetch from the base branch
@@ -3595,10 +4402,275 @@ This is an experimental feature that generates committable changes. Review the d
         }
     }
 
+    // Fetch many file contents in a single GraphQL request, keyed by blob
+    // SHA. Each PR file from `pulls.listFiles` already carries its blob
+    // sha, so we can resolve N files in 1 GraphQL point instead of N REST
+    // points (~5000/h on the installation bucket). Cache key shape is
+    // identical to `getRepositoryContentFile`, so warm entries from
+    // either path are reused.
+    //
+    // Falls back to per-file REST for: missing/invalid sha, binary
+    // blobs, blobs over ~1 MB (GraphQL returns text=null in both cases),
+    // and any GraphQL-side error (whole-batch fallback).
+    public async getRepositoryContentBatch(params: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        repository: { name: string; id: any };
+        files: Array<{ filename: string; sha?: string; [key: string]: any }>;
+        pullRequest?: any;
+    }): Promise<Map<string, any>> {
+        const { organizationAndTeamData, repository, files, pullRequest } =
+            params;
+        const result = new Map<string, any>();
+
+        if (!files?.length) return result;
+
+        const githubAuthDetail = await this.getGithubAuthDetails(
+            organizationAndTeamData,
+        );
+        if (!githubAuthDetail) return result;
+
+        const makeCacheKey = (file: { filename: string; sha?: string }) =>
+            file?.sha
+                ? `gh:contents:${githubAuthDetail?.org}/${repository.name}:${file.sha}:${file.filename}`
+                : undefined;
+
+        // 1. Cache lookup — collect hits, queue misses
+        const misses: Array<{ file: any; cacheKey?: string }> = [];
+        for (const file of files) {
+            const cacheKey = makeCacheKey(file);
+            if (cacheKey) {
+                const cached =
+                    await this.cacheService.getFromCache<any>(cacheKey);
+                if (cached) {
+                    result.set(file.filename, cached);
+                    continue;
+                }
+            }
+            misses.push({ file, cacheKey });
+        }
+
+        if (misses.length === 0) return result;
+
+        // 2. Split: batchable (valid 40-hex blob sha) vs REST-only
+        const SHA_RE = /^[a-f0-9]{40}$/i;
+        const batchable: Array<{ file: any; cacheKey?: string }> = [];
+        const restOnly: Array<{ file: any; cacheKey?: string }> = [];
+        for (const m of misses) {
+            if (SHA_RE.test(m.file?.sha || '')) batchable.push(m);
+            else restOnly.push(m);
+        }
+
+        // 3. GraphQL batch fetch (size 50 — conservative; GitHub accepts
+        //    up to ~100 aliases but 50 keeps payloads small and limits
+        //    blast radius on transient errors)
+        if (batchable.length > 0) {
+            const graphqlClient =
+                await this.instanceGraphQL(organizationAndTeamData);
+            const BATCH_SIZE = 50;
+
+            for (let i = 0; i < batchable.length; i += BATCH_SIZE) {
+                const batch = batchable.slice(i, i + BATCH_SIZE);
+                const varDefs = ['$owner: String!', '$repo: String!'];
+                const fields: string[] = [];
+                const variables: Record<string, any> = {
+                    owner: githubAuthDetail.org,
+                    repo: repository.name,
+                };
+
+                batch.forEach(({ file }, idx) => {
+                    varDefs.push(`$sha${idx}: GitObjectID!`);
+                    fields.push(
+                        `f${idx}: object(oid: $sha${idx}) { ... on Blob { text isBinary byteSize } }`,
+                    );
+                    variables[`sha${idx}`] = file.sha;
+                });
+
+                const query = `
+                    query(${varDefs.join(', ')}) {
+                        repository(owner: $owner, name: $repo) {
+                            ${fields.join('\n                            ')}
+                        }
+                        rateLimit {
+                            cost
+                            remaining
+                            limit
+                            resetAt
+                        }
+                    }
+                `;
+
+                try {
+                    const response: any = await graphqlClient(
+                        query,
+                        variables,
+                    );
+                    const repoNode = response?.repository;
+
+                    // Temporary instrumentation: log the actual GraphQL
+                    // cost reported by GitHub for this batch. Distinct
+                    // tag for easy `docker logs ... | grep` lookup.
+                    // Remove once we've validated the cost model.
+                    const rl = response?.rateLimit;
+                    if (rl) {
+                        this.logger.log({
+                            message: `[GRAPHQL_BATCH_COST] files=${batch.length} cost=${rl.cost} remaining=${rl.remaining} limit=${rl.limit} resetAt=${rl.resetAt}`,
+                            context: GithubService.name,
+                            metadata: {
+                                instrumentation:
+                                    'graphql_batch_content_cost',
+                                batchSize: batch.length,
+                                cost: rl.cost,
+                                remaining: rl.remaining,
+                                limit: rl.limit,
+                                resetAt: rl.resetAt,
+                                organizationAndTeamData,
+                                repositoryName: repository?.name,
+                            },
+                        });
+                    }
+
+                    for (let j = 0; j < batch.length; j++) {
+                        const { file, cacheKey } = batch[j];
+                        const blob = repoNode?.[`f${j}`];
+
+                        if (
+                            blob &&
+                            blob.isBinary === false &&
+                            typeof blob.text === 'string'
+                        ) {
+                            // Shape mirrors octokit's `repos.getContent`
+                            // response so `enrichFilesWithContent` reads
+                            // it transparently. Encoding `utf-8` skips
+                            // the base64 decode path on the caller.
+                            const fileContent = {
+                                data: {
+                                    content: blob.text,
+                                    encoding: 'utf-8',
+                                },
+                            };
+                            result.set(file.filename, fileContent);
+                            if (cacheKey) {
+                                // 24h TTL — see `getRepositoryContentFile`
+                                // for the immutability argument. Same
+                                // cache key shape, same safety guarantees.
+                                await this.cacheService.addToCache(
+                                    cacheKey,
+                                    fileContent,
+                                    24 * 60 * 60 * 1000,
+                                );
+                            }
+                        } else {
+                            // Binary, oversize, or missing — fall back
+                            // to REST single-file (which handles both
+                            // base64 binary returns and the head→base
+                            // ref fallback). Skip silently if we don't
+                            // have the PR refs available.
+                            if (pullRequest) {
+                                try {
+                                    const fallback =
+                                        await this.getRepositoryContentFile({
+                                            organizationAndTeamData,
+                                            repository,
+                                            file,
+                                            pullRequest,
+                                        });
+                                    if (fallback)
+                                        result.set(file.filename, fallback);
+                                } catch {
+                                    /* keep result without this file */
+                                }
+                            }
+                        }
+                    }
+                } catch (err) {
+                    this.logger.warn({
+                        message:
+                            'GraphQL batch content fetch failed — falling back to REST per-file for the batch',
+                        context: GithubService.name,
+                        error: err,
+                        metadata: {
+                            organizationAndTeamData,
+                            repositoryName: repository?.name,
+                            batchSize: batch.length,
+                        },
+                    });
+                    if (pullRequest) {
+                        // Concurrent fallback with pLimit — sequential
+                        // would 50× a single GraphQL hiccup into a
+                        // 15s+ stall on the FetchChangedFiles stage.
+                        // Same concurrency cap as the original
+                        // pullRequestManager `enrichFilesWithContent`.
+                        // allSettled lets individual file failures
+                        // reject without aborting the rest of the batch.
+                        const limit = pLimit(30);
+                        await Promise.allSettled(
+                            batch.map(({ file }) =>
+                                limit(async () => {
+                                    const fallback =
+                                        await this.getRepositoryContentFile(
+                                            {
+                                                organizationAndTeamData,
+                                                repository,
+                                                file,
+                                                pullRequest,
+                                            },
+                                        );
+                                    if (fallback)
+                                        result.set(file.filename, fallback);
+                                }),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+
+        // 4. Files without usable blob sha — REST fallback only.
+        //    Concurrent with pLimit, same rationale as the in-batch
+        //    catch above: avoid serializing N round-trips when GraphQL
+        //    isn't usable for these entries. allSettled keeps a
+        //    single-file failure from aborting the rest.
+        if (pullRequest && restOnly.length > 0) {
+            const limit = pLimit(30);
+            await Promise.allSettled(
+                restOnly.map(({ file }) =>
+                    limit(async () => {
+                        const fallback = await this.getRepositoryContentFile({
+                            organizationAndTeamData,
+                            repository,
+                            file,
+                            pullRequest,
+                        });
+                        if (fallback) result.set(file.filename, fallback);
+                    }),
+                ),
+            );
+        }
+
+        return result;
+    }
+
     async getCommitsForPullRequestForCodeReview(
         params: any,
     ): Promise<any[] | null> {
-        const { organizationAndTeamData, repository, prNumber } = params;
+        const { organizationAndTeamData, repository, prNumber, headSha } =
+            params;
+
+        // Cache: the commit list of a PR at a given HEAD SHA is immutable.
+        // Two callers in the same job hit this — PullRequestManagerService
+        // `getNewCommitsSinceLastExecution` and CommentManagerService
+        // (during comment threading) — so caching by (prNumber, headSha)
+        // halves the calls for the common path. Callers without a SHA
+        // (legacy/cron) skip the cache, same behavior as before.
+        const cacheKey = headSha
+            ? `gh:pr-commits:${organizationAndTeamData?.organizationId ?? 'no-org'}:${repository?.id ?? repository?.name}:${prNumber}:${headSha}`
+            : null;
+        if (cacheKey) {
+            const cached = await this.cacheService.getFromCache<any[]>(
+                cacheKey,
+            );
+            if (cached) return cached;
+        }
 
         const githubAuthDetail = await this.getGithubAuthDetails(
             organizationAndTeamData,
@@ -3614,7 +4686,7 @@ This is an experimental feature that generates committable changes. Review the d
             pull_number: prNumber,
         });
 
-        return commits
+        const result = commits
             ?.map((commit) => ({
                 sha: commit?.sha,
                 created_at: commit?.commit?.author?.date,
@@ -3635,6 +4707,15 @@ This is an experimental feature that generates committable changes. Review the d
                     new Date(b?.author?.date).getTime()
                 );
             });
+
+        if (cacheKey && result && result.length > 0) {
+            await this.cacheService.addToCache(
+                cacheKey,
+                result,
+                10 * 60 * 1000, // 10min, same rationale as getFilesByPullRequestId.
+            );
+        }
+        return result;
     }
 
     async createIssueComment(params: any): Promise<any | null> {
@@ -3711,12 +4792,12 @@ This is an experimental feature that generates committable changes. Review the d
         organizationAndTeamData: OrganizationAndTeamData;
         commentId: string;
         reason?:
-        | 'ABUSE'
-        | 'OFF_TOPIC'
-        | 'OUTDATED'
-        | 'RESOLVED'
-        | 'DUPLICATE'
-        | 'SPAM';
+            | 'ABUSE'
+            | 'OFF_TOPIC'
+            | 'OUTDATED'
+            | 'RESOLVED'
+            | 'DUPLICATE'
+            | 'SPAM';
     }): Promise<any | null> {
         try {
             const {
@@ -3842,6 +4923,19 @@ This is an experimental feature that generates committable changes. Review the d
     async getDefaultBranch(params: any): Promise<string> {
         const { organizationAndTeamData, repository } = params;
 
+        // Cache: default branch changes very rarely (renaming main/master
+        // is a manual operation done once per repo lifecycle). Each ECS
+        // worker keeps the result for 1h; this kills the ~500+ rate-limit
+        // hits/48h we observed on `GET /repos/{owner}/{repo}` while a
+        // single worker serves many PRs from the same repo. Memory store,
+        // so caches are independent per container — that's fine here, the
+        // worst case is each container does one fetch per repo per hour.
+        const cacheKey = `gh:default-branch:${organizationAndTeamData?.organizationId ?? 'no-org'}:${repository?.id ?? repository?.name ?? 'no-repo'}`;
+        const cached = await this.cacheService.getFromCache<string>(cacheKey);
+        if (cached) {
+            return cached;
+        }
+
         const githubAuthDetail = await this.getGithubAuthDetails(
             organizationAndTeamData,
         );
@@ -3853,7 +4947,15 @@ This is an experimental feature that generates committable changes. Review the d
             repo: repository?.name,
         });
 
-        return response?.data?.default_branch;
+        const defaultBranch = response?.data?.default_branch;
+        if (defaultBranch) {
+            await this.cacheService.addToCache(
+                cacheKey,
+                defaultBranch,
+                60 * 60 * 1000, // 1h
+            );
+        }
+        return defaultBranch;
     }
 
     async getPullRequestReviewComment(params: any): Promise<any[]> {
@@ -4008,9 +5110,11 @@ This is an experimental feature that generates committable changes. Review the d
             )
         );
 
-        const webhookUrl = this.configService.get<string>(
-            'API_GITHUB_CODE_MANAGEMENT_WEBHOOK',
-        );
+        const webhookUrl = this.getGithubWebhookUrl();
+
+        if (!webhookUrl || !repositories?.length) {
+            return;
+        }
 
         // Usar método centralizado para determinar o owner correto
         const owner = await this.getCorrectOwner(githubAuthDetail, octokit);
@@ -4022,7 +5126,6 @@ This is an experimental feature that generates committable changes. Review the d
                     repo: repo.name,
                 });
 
-                // Verificação segura do config para evitar erro "Parameter config does not exist"
                 const webhookToDelete = webhooks.find(
                     (webhook) =>
                         webhook.config && webhook.config.url === webhookUrl,
@@ -4080,6 +5183,12 @@ This is an experimental feature that generates committable changes. Review the d
         }
     }
 
+    private getGithubWebhookUrl(): string | undefined {
+        return this.configService.get<string>(
+            'API_GITHUB_CODE_MANAGEMENT_WEBHOOK',
+        );
+    }
+
     async countReactions(params: any) {
         const { comments, pr } = params;
         const githubAuthDetail = await this.getGithubAuthDetails(
@@ -4101,15 +5210,15 @@ This is an experimental feature that generates committable changes. Review the d
                 reactions: {
                     thumbsUp: isOAuth
                         ? Math.max(
-                            0,
-                            comment.reactions[GitHubReaction.THUMBS_UP] - 1,
-                        )
+                              0,
+                              comment.reactions[GitHubReaction.THUMBS_UP] - 1,
+                          )
                         : comment.reactions[GitHubReaction.THUMBS_UP],
                     thumbsDown: isOAuth
                         ? Math.max(
-                            0,
-                            comment.reactions[GitHubReaction.THUMBS_DOWN] - 1,
-                        )
+                              0,
+                              comment.reactions[GitHubReaction.THUMBS_DOWN] - 1,
+                          )
                         : comment.reactions[GitHubReaction.THUMBS_DOWN],
                 },
                 comment: {
@@ -4389,8 +5498,17 @@ This is an experimental feature that generates committable changes. Review the d
 
         const fileWithContent = {
             ...file,
-            content: null,
+            content: null as string | null,
         };
+
+        const cacheKey = `gh:contents:${owner}/${repo}@${branch}:${file.path}`;
+        const cached = await this.cacheService.getFromCache<string | null>(
+            cacheKey,
+        );
+        if (cached !== undefined && cached !== null) {
+            fileWithContent.content = cached;
+            return fileWithContent;
+        }
 
         try {
             const { data } = await octokit.rest.repos.getContent({
@@ -4405,6 +5523,11 @@ This is an experimental feature that generates committable changes. Review the d
                     data.content,
                     'base64',
                 ).toString('utf-8');
+                await this.cacheService.addToCache(
+                    cacheKey,
+                    fileWithContent.content,
+                    5 * 60 * 1000,
+                );
             }
         } catch (error) {
             this.logger.error({
@@ -4678,7 +5801,7 @@ This is an experimental feature that generates committable changes. Review the d
                     );
             }
 
-            const fullGithubUrl = `https://github.com/${params?.repository?.fullName}`;
+            const fullGithubUrl = `${this.getGithubWebBaseUrl(githubAuthDetail.host)}/${params?.repository?.fullName}`;
 
             return {
                 organizationId: params?.organizationAndTeamData?.organizationId,
@@ -4731,6 +5854,7 @@ This is an experimental feature that generates committable changes. Review the d
                 orgName: githubAuthDetail.org,
                 repository,
                 prNumber,
+                githubHost: githubAuthDetail.host,
             });
 
             const requestChangeBodyTitle =
@@ -4770,8 +5894,10 @@ This is an experimental feature that generates committable changes. Review the d
         orgName: string;
         repository: Partial<IRepository>;
         prNumber: number;
+        githubHost?: string;
     }): string {
-        const { criticalComments, orgName, prNumber, repository } = params;
+        const { criticalComments, orgName, prNumber, repository, githubHost } =
+            params;
 
         const criticalIssuesSummaryArray =
             this.getCriticalIssuesSummaryArray(criticalComments);
@@ -4784,7 +5910,7 @@ This is an experimental feature that generates committable changes. Review the d
                 const link =
                     !orgName || !repository?.name || !prNumber || !commentId
                         ? ''
-                        : `https://github.com/${orgName}/${repository.name}/pull/${prNumber}#discussion_r${commentId}`;
+                        : `${this.getGithubWebBaseUrl(githubHost)}/${orgName}/${repository.name}/pull/${prNumber}#discussion_r${commentId}`;
 
                 const formattedItem = commentId
                     ? `- [${summary}](${link})`
@@ -4853,6 +5979,14 @@ This is an experimental feature that generates committable changes. Review the d
     }): Promise<any> {
         const { organizationAndTeamData, username } = params;
 
+        const cacheKey = `gh:user:${organizationAndTeamData.organizationId}:${username.toLowerCase()}`;
+        const cached = await this.cacheService.getFromCache<any | null>(
+            cacheKey,
+        );
+        if (cached !== null && cached !== undefined) {
+            return cached;
+        }
+
         try {
             const octokit = await this.instanceOctokit(organizationAndTeamData);
 
@@ -4862,9 +5996,29 @@ This is an experimental feature that generates committable changes. Review the d
 
             const userData = userResponse.data;
 
+            // 24h TTL. User identity (login, name, email) changes rarely
+            // — and when it does, our save flow doesn't depend on
+            // realtime freshness. A long TTL lets follow-up saves of
+            // the same PR (webhook handler + pipeline-internal save)
+            // hit cache instead of refetching 4× per review.
+            await this.cacheService.addToCache(
+                cacheKey,
+                userData,
+                24 * 60 * 60 * 1000,
+            );
+
             return userData;
         } catch (error) {
             if (error?.response?.status === 404) {
+                // 24h null-cache: a deleted/nonexistent GitHub user
+                // doesn't reappear within a working day, and a cached
+                // null saves the round-trip when a stale reviewer is
+                // referenced repeatedly across saves.
+                await this.cacheService.addToCache(
+                    cacheKey,
+                    null,
+                    24 * 60 * 60 * 1000,
+                );
                 this.logger.warn({
                     message: `Github user not found: ${username}`,
                     context: GithubService.name,
@@ -4882,6 +6036,156 @@ This is an experimental feature that generates committable changes. Review the d
             });
             throw error;
         }
+    }
+
+    // Batch-fetch many users in a single GraphQL request using login
+    // aliases. Reads from the same Redis cache as `getUserByUsername`
+    // (key `gh:user:{orgId}:{login}`), so an entry warmed by either
+    // path is reused by both. Designed to be called as a pre-flight
+    // before extractUser/extractUsers fans out per-user, eliminating
+    // the N parallel REST round-trips during PR saves.
+    //
+    // Failure mode is opportunistic: on any GraphQL error this method
+    // logs and returns whatever it has so far. Callers proceed to
+    // their per-user REST path; uncached users pay the original cost.
+    public async getUsersByUsername(params: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        usernames: string[];
+    }): Promise<Map<string, any>> {
+        const { organizationAndTeamData, usernames } = params;
+        const result = new Map<string, any>();
+
+        if (!usernames?.length) return result;
+
+        // Dedupe & normalize. GitHub usernames are case-insensitive.
+        const normalized = Array.from(
+            new Set(
+                usernames
+                    .filter((u) => typeof u === 'string' && u.length > 0)
+                    .map((u) => u.toLowerCase()),
+            ),
+        );
+
+        const makeCacheKey = (login: string) =>
+            `gh:user:${organizationAndTeamData?.organizationId}:${login}`;
+
+        // 1. Cache lookup. Matches existing getUserByUsername semantics:
+        //    cached null falls through to refetch (the function reads
+        //    it as "absent"), so we re-batch nulls. With the 24h TTL
+        //    that's still much cheaper than the original 10min churn.
+        const misses: string[] = [];
+        for (const login of normalized) {
+            const cached = await this.cacheService.getFromCache<any | null>(
+                makeCacheKey(login),
+            );
+            if (cached !== null && cached !== undefined) {
+                result.set(login, cached);
+            } else {
+                misses.push(login);
+            }
+        }
+
+        if (misses.length === 0) return result;
+
+        // 2. GraphQL batch fetch. Aliases u0..uN; GitHub allows up to
+        //    ~100 in one query but we cap at 50 to stay consistent with
+        //    the file-content batch (smaller payload, less blast radius
+        //    on transient errors).
+        const BATCH_SIZE = 50;
+        let graphqlClient: any;
+        try {
+            graphqlClient = await this.instanceGraphQL(
+                organizationAndTeamData,
+            );
+        } catch (err) {
+            this.logger.warn({
+                message:
+                    'instanceGraphQL failed for getUsersByUsername — skipping batch (caller falls back to per-user REST)',
+                context: GithubService.name,
+                error: err,
+                metadata: { organizationAndTeamData },
+            });
+            return result;
+        }
+
+        for (let i = 0; i < misses.length; i += BATCH_SIZE) {
+            const batch = misses.slice(i, i + BATCH_SIZE);
+            const varDefs: string[] = [];
+            const fields: string[] = [];
+            const variables: Record<string, any> = {};
+
+            batch.forEach((login, idx) => {
+                varDefs.push(`$u${idx}: String!`);
+                fields.push(
+                    `u${idx}: user(login: $u${idx}) { login databaseId name email }`,
+                );
+                variables[`u${idx}`] = login;
+            });
+
+            const query = `
+                query(${varDefs.join(', ')}) {
+                    ${fields.join('\n                    ')}
+                }
+            `;
+
+            try {
+                const response: any = await graphqlClient(query, variables);
+
+                for (let j = 0; j < batch.length; j++) {
+                    const login = batch[j];
+                    const gqlUser = response?.[`u${j}`];
+                    const cacheKey = makeCacheKey(login);
+
+                    if (gqlUser) {
+                        // Map GraphQL shape → REST-like minimal shape
+                        // so downstream consumers (`extractUser` reads
+                        // `.email`, `.name`, `.id`) see what they
+                        // expect from `getUserByUsername`.
+                        const userData = {
+                            login: gqlUser.login,
+                            id: gqlUser.databaseId,
+                            name: gqlUser.name,
+                            email: gqlUser.email,
+                            type: 'User',
+                        };
+                        result.set(login, userData);
+                        await this.cacheService.addToCache(
+                            cacheKey,
+                            userData,
+                            24 * 60 * 60 * 1000,
+                        );
+                    } else {
+                        // Null result = user not found. Cache the null
+                        // with the same 24h TTL as getUserByUsername's
+                        // 404 path so future per-user lookups also
+                        // short-circuit (matching shape).
+                        await this.cacheService.addToCache(
+                            cacheKey,
+                            null,
+                            24 * 60 * 60 * 1000,
+                        );
+                    }
+                }
+            } catch (err) {
+                this.logger.warn({
+                    message:
+                        'GraphQL batch user fetch failed — partial results returned; caller falls back to per-user REST for the rest',
+                    context: GithubService.name,
+                    error: err,
+                    metadata: {
+                        organizationAndTeamData,
+                        batchSize: batch.length,
+                    },
+                });
+                // Don't process more batches if one fails — they're
+                // independent but a single GraphQL error usually
+                // indicates auth/quota issue that won't recover within
+                // the same request.
+                break;
+            }
+        }
+
+        return result;
     }
 
     getUserByEmailOrName(_params: {
@@ -4905,7 +6209,10 @@ This is an experimental feature that generates committable changes. Review the d
             }
 
             const token = decrypt(githubAuthDetail.authToken);
-            const userOctokit = new Octokit({ auth: token });
+            const userOctokit = this.createUserOctokitClient({
+                auth: token,
+                host: githubAuthDetail.host,
+            });
             const { data } = await userOctokit.rest.users.getAuthenticated();
 
             return data || null;
@@ -5054,13 +6361,13 @@ This is an experimental feature that generates committable changes. Review the d
                         // So we need one of them to actually mark the thread as resolved and the other to match the id we saved in the database.
                         return firstComment
                             ? {
-                                id: firstComment.id, // Used to actually resolve the thread
-                                threadId: reviewThread.id,
-                                isResolved: reviewThread.isResolved,
-                                isOutdated: reviewThread.isOutdated,
-                                fullDatabaseId: firstComment.fullDatabaseId, // The REST API id, used to match comments saved in the database.
-                                body: firstComment.body,
-                            }
+                                  id: firstComment.id, // Used to actually resolve the thread
+                                  threadId: reviewThread.id,
+                                  isResolved: reviewThread.isResolved,
+                                  isOutdated: reviewThread.isOutdated,
+                                  fullDatabaseId: firstComment.fullDatabaseId, // The REST API id, used to match comments saved in the database.
+                                  body: firstComment.body,
+                              }
                             : null;
                     })
                     .filter((comment) => comment !== null);
@@ -5087,11 +6394,11 @@ This is an experimental feature that generates committable changes. Review the d
                     // So we need one of them to actually mark the thread as resolved and the other to match the id we saved in the database.
                     return firstComment
                         ? {
-                            id: firstComment.id, // Used to actually resolve the thread
-                            reviewId: review.id,
-                            fullDatabaseId: firstComment.fullDatabaseId, // The REST API id, used to match comments saved in the database.
-                            body: firstComment.body,
-                        }
+                              id: firstComment.id, // Used to actually resolve the thread
+                              reviewId: review.id,
+                              fullDatabaseId: firstComment.fullDatabaseId, // The REST API id, used to match comments saved in the database.
+                              body: firstComment.body,
+                          }
                         : null;
                 })
                 .filter((comment) => comment !== null);
@@ -5172,10 +6479,9 @@ This is an experimental feature that generates committable changes. Review the d
                 repo: repository.name,
             });
 
-            const webhookUrl =
-                this.configService.get<string>(
-                    'API_GITHUB_CODE_MANAGEMENT_WEBHOOK',
-                ) ?? process.env.API_GITHUB_CODE_MANAGEMENT_WEBHOOK;
+            const webhookUrl = this.configService.get<string>(
+                'API_GITHUB_CODE_MANAGEMENT_WEBHOOK',
+            );
 
             if (!webhookUrl) {
                 return false;
@@ -5202,15 +6508,8 @@ This is an experimental feature that generates committable changes. Review the d
 
     async deleteWebhook(params: {
         organizationAndTeamData: OrganizationAndTeamData;
+        repositories?: Repositories[];
     }): Promise<void> {
-        const authDetails = await this.getGithubAuthDetails(
-            params.organizationAndTeamData,
-        );
-
-        const octokit = await this.instanceOctokit(
-            params.organizationAndTeamData,
-        );
-
         const integration = await this.integrationService.findOne({
             organization: {
                 uuid: params.organizationAndTeamData.organizationId,
@@ -5247,55 +6546,79 @@ This is an experimental feature that generates committable changes. Review the d
                 }
             }
         } else if (authMode === AuthMode.TOKEN) {
-            const repositories =
-                await this.findOneByOrganizationAndTeamDataAndConfigKey(
+            try {
+                const authDetails = await this.getGithubAuthDetails(
                     params.organizationAndTeamData,
-                    IntegrationConfigKey.REPOSITORIES,
                 );
 
-            if (repositories) {
-                // Usar método centralizado para determinar o owner correto
-                const owner = await this.getCorrectOwner(authDetails, octokit);
+                const octokit = await this.instanceOctokit(
+                    params.organizationAndTeamData,
+                );
 
-                for (const repo of repositories) {
-                    try {
-                        const { data: webhooks } =
-                            await octokit.repos.listWebhooks({
-                                owner: owner,
-                                repo: repo.name,
-                            });
+                const repositories =
+                    params.repositories ??
+                    (await this.findOneByOrganizationAndTeamDataAndConfigKey(
+                        params.organizationAndTeamData,
+                        IntegrationConfigKey.REPOSITORIES,
+                    ));
 
-                        const webhookUrl = this.configService.get<string>(
-                            'API_GITHUB_CODE_MANAGEMENT_WEBHOOK',
-                        );
+                if (repositories) {
+                    // Usar método centralizado para determinar o owner correto
+                    const owner = await this.getCorrectOwner(
+                        authDetails,
+                        octokit,
+                    );
 
-                        const webhookToDelete = webhooks.find(
-                            (webhook) =>
-                                webhook.config &&
-                                webhook.config.url === webhookUrl,
-                        );
+                    for (const repo of repositories) {
+                        try {
+                            const { data: webhooks } =
+                                await octokit.repos.listWebhooks({
+                                    owner: owner,
+                                    repo: repo.name,
+                                });
 
-                        if (webhookToDelete) {
-                            await octokit.repos.deleteWebhook({
-                                owner: owner,
-                                repo: repo.name,
-                                hook_id: webhookToDelete.id,
+                            const webhookUrl = this.configService.get<string>(
+                                'API_GITHUB_CODE_MANAGEMENT_WEBHOOK',
+                            );
+
+                            const webhookToDelete = webhooks.find(
+                                (webhook) =>
+                                    webhook.config &&
+                                    webhook.config.url === webhookUrl,
+                            );
+
+                            if (webhookToDelete) {
+                                await octokit.repos.deleteWebhook({
+                                    owner: owner,
+                                    repo: repo.name,
+                                    hook_id: webhookToDelete.id,
+                                });
+                            }
+                        } catch (error) {
+                            this.logger.error({
+                                message: `Error deleting webhook for repository ${repo.name}`,
+                                context: this.deleteWebhook.name,
+                                error: error,
+                                metadata: {
+                                    organizationAndTeamData:
+                                        params.organizationAndTeamData,
+                                    repoId: repo.id,
+                                    owner,
+                                },
                             });
                         }
-                    } catch (error) {
-                        this.logger.error({
-                            message: `Error deleting webhook for repository ${repo.name}`,
-                            context: this.deleteWebhook.name,
-                            error: error,
-                            metadata: {
-                                organizationAndTeamData:
-                                    params.organizationAndTeamData,
-                                repoId: repo.id,
-                                owner,
-                            },
-                        });
                     }
                 }
+            } catch (error) {
+                this.logger.error({
+                    message:
+                        'Error authenticating for webhook deletion in TOKEN mode',
+                    context: this.deleteWebhook.name,
+                    error: error,
+                    metadata: {
+                        organizationAndTeamData: params.organizationAndTeamData,
+                    },
+                });
             }
         }
     }
@@ -5304,7 +6627,7 @@ This is an experimental feature that generates committable changes. Review the d
     async getRepositoryTree(params: {
         organizationAndTeamData: OrganizationAndTeamData;
         repositoryId: string;
-    }): Promise<any[]> {
+    }): Promise<TreeItem[]> {
         try {
             const githubAuthDetail = await this.getGithubAuthDetails(
                 params.organizationAndTeamData,
@@ -5402,15 +6725,7 @@ This is an experimental feature that generates committable changes. Review the d
         repo: string;
         octokit: any;
         rootTreeSha: string;
-    }): Promise<
-        {
-            path: string;
-            type: 'file' | 'directory';
-            sha: string;
-            size?: number;
-            url: string;
-        }[]
-    > {
+    }): Promise<TreeItem[]> {
         const { owner, repo, octokit, rootTreeSha } = params;
         const allItems = [];
         const limit = pLimit(3);

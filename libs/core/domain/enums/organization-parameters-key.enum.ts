@@ -9,4 +9,8 @@ export enum OrganizationParametersKey {
     DRY_RUN_LIMIT = 'dry_run_limit',
     AUTO_LICENSE_ASSIGNMENT = 'auto_license_assignment',
     CODE_REVIEW_PRESET = 'code_review_preset',
+    LICENSE_KEY = 'license_key',
+    LICENSE_ASSIGNED_USERS = 'license_assigned_users',
+    FIRST_REVIEW_AT = 'first_review_at',
+    SPEND_LIMIT_CONFIG = 'spend_limit_config',
 }

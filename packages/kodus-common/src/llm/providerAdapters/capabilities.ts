@@ -13,6 +13,12 @@ function budget(
     return { type: 'budget', options: { min, default: defaultBudget } };
 }
 
+function adaptive(
+    options: Array<'low' | 'medium' | 'high'> = ['low', 'medium', 'high'],
+): ReasoningConfig {
+    return { type: 'adaptive', options };
+}
+
 function level(
     options: Array<'low' | 'medium' | 'high'> = ['low', 'medium', 'high'],
 ): ReasoningConfig {
@@ -97,6 +103,7 @@ export const MODELS_WITH_REASONING = new Map<string, ReasoningConfig>([
     ['gemini-2.5-pro', budget()],
     ['gemini-2.5-flash', budget()],
     ['gemini-2.5-flash-lite', budget()],
+    ['gemini-3.1-flash-lite-preview', budget()],
 
     // Anthropic Claude models - reasoning budget (numeric)
     ['claude-opus-4-1-20250805', budget()],
@@ -145,10 +152,15 @@ const REASONING_PATTERN_RULES: Array<[RegExp, ReasoningConfig]> = [
     [/^gemini-2\.5-pro(\b|[-_@])/, budget()],
     [/^gemini-2\.5-flash(\b|[-_@])/, budget()],
     [/^gemini-2\.5-flash-lite(\b|[-_@])/, budget()],
+    [/^gemini-3\.1-flash-lite(\b|[-_@])/, budget()],
     // Gemini 2.0 thinking experimental
     [/^gemini-2\.0-.*thinking.*/i, budget()],
 
-    // Anthropic Claude - budget for recent families
+    // Anthropic Claude - adaptive for 4.7+, budget for older families
+    [/^claude-opus-4-8(\b|[-_@])/, adaptive()],
+    [/^claude-opus-4-7(\b|[-_@])/, adaptive()],
+    [/^claude-sonnet-4-7(\b|[-_@])/, adaptive()],
+    [/^claude-sonnet-4-6(\b|[-_@])/, adaptive()],
     [/^claude-opus-4(\b|[-_@])/, budget()],
     [/^claude-sonnet-4(\b|[-_@])/, budget()],
     [/^claude-3-7-sonnet(\b|[-_@])/, budget()],
@@ -160,6 +172,7 @@ export const DEFAULT_MAX_TOKENS_BY_MODEL = new Map<string, number>([
     ['gemini-2.5-pro', 60000],
     ['gemini-2.5-flash', 60000],
     ['gemini-2.5-flash-lite', 30000],
+    ['gemini-3.1-flash-lite-preview', 65536],
 
     // Google Gemini 2.0
     ['gemini-2.0-flash', 8000],
@@ -184,6 +197,7 @@ const DEFAULT_MAX_TOKENS_PATTERN_RULES: Array<[RegExp, number]> = [
     [/^gemini-2\.5-pro(\b|[-_@])/, 60000],
     [/^gemini-2\.5-flash(\b|[-_@])/, 60000],
     [/^gemini-2\.5-flash-lite(\b|[-_@])/, 30000],
+    [/^gemini-3\.1-flash-lite(\b|[-_@])/, 65536],
     [/^gemini-2\.0-flash(\b|[-_@])/, 8000],
 
     // Anthropic Claude 4.x
@@ -262,7 +276,7 @@ export function supportsReasoning(model: string): boolean {
 
 export function getReasoningType(
     model: string,
-): 'level' | 'budget' | undefined {
+): 'level' | 'budget' | 'adaptive' | undefined {
     return getModelCapabilities(model).reasoningConfig?.type;
 }
 

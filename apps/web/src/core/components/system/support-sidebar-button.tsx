@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import NextLink from "next/link";
 import { SvgDiscord } from "@components/ui/icons/SvgDiscord";
 import { SvgFounder } from "@components/ui/icons/SvgFounder";
@@ -15,15 +15,27 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "@components/ui/tooltip";
-import { FileTextIcon, LifeBuoy } from "lucide-react";
+import { FileTextIcon, Headset, LifeBuoy } from "lucide-react";
+import { useConfig } from "@providers/ConfigProvider";
 import { cn } from "src/core/utils/components";
+import { useSubscriptionStatus } from "src/features/ee/subscription/_hooks/use-subscription-status";
+import { isSelfHosted } from "src/core/utils/self-hosted";
+
+function useShowHelpdesk() {
+    const subscription = useSubscriptionStatus();
+
+    if (isSelfHosted) return false;
+
+    const planType =
+        "planType" in subscription ? subscription.planType : undefined;
+    if (!planType) return false;
+
+    return planType.startsWith("enterprise");
+}
 
 export const SupportSidebarButton = () => {
-    const [mounted, setMounted] = useState(false);
-
-    useEffect(() => {
-        setMounted(true);
-    }, []);
+    const cfg = useConfig();
+    const showHelpdesk = useShowHelpdesk();
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -40,25 +52,6 @@ export const SupportSidebarButton = () => {
         return () => window.removeEventListener("keydown", handleKeyDown);
     }, []);
 
-    // Render a placeholder during SSR to avoid hydration mismatch with Radix IDs
-    if (!mounted) {
-        return (
-            <div
-                className={cn(
-                    "group relative flex flex-col items-center justify-center",
-                    "w-full py-4 px-2",
-                    "text-text-tertiary",
-                )}>
-                <LifeBuoy className="size-5 mb-2" />
-                <span
-                    className="text-sm font-medium tracking-tight leading-tight"
-                    style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}>
-                    Support
-                </span>
-            </div>
-        );
-    }
-
     return (
         <Popover>
             <TooltipProvider>
@@ -69,15 +62,18 @@ export const SupportSidebarButton = () => {
                                 data-support-button
                                 className={cn(
                                     "group relative flex flex-col items-center justify-center",
-                                    "w-full py-4 px-2",
+                                    "w-full px-2 py-4",
                                     "text-text-tertiary hover:text-text-primary",
                                     "hover:bg-background-tertiary transition-all duration-200",
                                     "cursor-pointer border-0 bg-transparent",
                                 )}>
-                                <LifeBuoy className="size-5 mb-2" />
+                                <LifeBuoy className="mb-2 size-5" />
                                 <span
-                                    className="text-sm font-medium tracking-tight leading-tight"
-                                    style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}>
+                                    className="text-sm leading-tight font-medium tracking-tight"
+                                    style={{
+                                        writingMode: "vertical-rl",
+                                        textOrientation: "mixed",
+                                    }}>
                                     Support
                                 </span>
                             </button>
@@ -94,15 +90,32 @@ export const SupportSidebarButton = () => {
                 </Tooltip>
             </TooltipProvider>
 
-            <PopoverContent align="end" side="left" sideOffset={10} className="w-52 p-0">
+            <PopoverContent
+                align="end"
+                side="left"
+                sideOffset={10}
+                className="w-52 p-0">
                 <div className="flex flex-col">
+                    {showHelpdesk && (
+                        <NextLink
+                            href="/helpdesk"
+                            className={cn(
+                                "flex items-center gap-3 px-4 py-3",
+                                "text-text-secondary hover:text-text-primary hover:bg-background-tertiary",
+                                "border-border-primary cursor-pointer border-b transition-colors",
+                            )}>
+                            <Headset className="size-4" />
+                            <span className="text-sm">Helpdesk</span>
+                        </NextLink>
+                    )}
+
                     <NextLink
                         target="_blank"
-                        href={process.env.NEXT_PUBLIC_WEB_SUPPORT_DOCS_URL ?? process.env.WEB_SUPPORT_DOCS_URL ?? ""}
+                        href={cfg.supportDocsUrl || ""}
                         className={cn(
                             "flex items-center gap-3 px-4 py-3",
                             "text-text-secondary hover:text-text-primary hover:bg-background-tertiary",
-                            "transition-colors cursor-pointer border-b border-border-primary",
+                            "border-border-primary cursor-pointer border-b transition-colors",
                         )}>
                         <FileTextIcon className="size-4" />
                         <span className="text-sm">View docs</span>
@@ -110,11 +123,11 @@ export const SupportSidebarButton = () => {
 
                     <NextLink
                         target="_blank"
-                        href={process.env.NEXT_PUBLIC_WEB_SUPPORT_DISCORD_INVITE_URL ?? process.env.WEB_SUPPORT_DISCORD_INVITE_URL ?? ""}
+                        href={cfg.supportDiscordInviteUrl || ""}
                         className={cn(
                             "flex items-center gap-3 px-4 py-3",
                             "text-text-secondary hover:text-text-primary hover:bg-background-tertiary",
-                            "transition-colors cursor-pointer border-b border-border-primary",
+                            "border-border-primary cursor-pointer border-b transition-colors",
                         )}>
                         <SvgDiscord className="size-4" />
                         <span className="text-md">Our Discord</span>
@@ -122,11 +135,11 @@ export const SupportSidebarButton = () => {
 
                     <NextLink
                         target="_blank"
-                        href={process.env.NEXT_PUBLIC_WEB_SUPPORT_TALK_TO_FOUNDER_URL ?? process.env.WEB_SUPPORT_TALK_TO_FOUNDER_URL ?? ""}
+                        href={cfg.supportTalkToFounderUrl || ""}
                         className={cn(
                             "flex items-center gap-3 px-4 py-3",
                             "text-text-secondary hover:text-text-primary hover:bg-background-tertiary",
-                            "transition-colors cursor-pointer",
+                            "cursor-pointer transition-colors",
                         )}>
                         <SvgFounder className="size-4" />
                         <span className="text-sm">Talk to a Founder</span>

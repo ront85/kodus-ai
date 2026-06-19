@@ -1,12 +1,23 @@
 import { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { Callbacks } from '@langchain/core/callbacks/manager';
 
+/** 5 minutes – kills hung LLM calls that never respond */
+export const LLM_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Retry on transient failures (5xx, timeout, 429). Total attempts = maxRetries + 1 */
+export const LLM_MAX_RETRIES = 2;
+
 export interface AdapterBuildParams {
     model: string;
     apiKey?: string;
+    /** BYOK subscription bearer token (Claude OAuth / Codex). When set, the
+     *  adapter authenticates via Authorization: Bearer instead of apiKey. */
     subscriptionToken?: string;
+    /** ChatGPT account id forwarded as ChatGPT-Account-ID for Codex subscription auth. */
     chatgptAccountId?: string;
     baseURL?: string;
+    /** Google Vertex region (BYOK). Falls back to env, then us-central1. */
+    vertexLocation?: string;
     options?: {
         temperature?: number;
         maxTokens?: number;

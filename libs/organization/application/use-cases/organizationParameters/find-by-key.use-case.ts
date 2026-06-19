@@ -36,60 +36,40 @@ export class FindByKeyOrganizationParametersUseCase implements IUseCase {
                 return null;
             }
 
-            // Process BYOK configuration by masking credentials
+            // Process BYOK configuration by masking sensitive credential
+            // fields (apiKey for non-Bedrock providers, awsBearerToken /
+            // awsAccessKeyId / awsSecretAccessKey / awsSessionToken for
+            // Bedrock). Bedrock configs have no apiKey, so the gating
+            // check has to consider the AWS fields as well.
             if (
                 organizationParametersKey ===
                 OrganizationParametersKey.BYOK_CONFIG
             ) {
                 const configValue = parameter.configValue;
 
-                const hasMainCredential =
-                    configValue?.main?.apiKey ||
-                    configValue?.main?.subscriptionToken;
-                const hasFallbackCredential =
-                    configValue?.fallback?.apiKey ||
-                    configValue?.fallback?.subscriptionToken;
-
                 if (
                     configValue &&
                     typeof configValue === 'object' &&
-                    (hasMainCredential || hasFallbackCredential)
+                    (this.slotHasSecrets(configValue.main) ||
+                        this.slotHasSecrets(configValue.fallback))
                 ) {
                     try {
                         const processedConfig = { ...configValue };
 
                         if (configValue.main) {
-                            processedConfig.main = {
-                                ...configValue.main,
-                                ...(configValue.main.apiKey
-                                    ? {
-                                          apiKey: this.maskApiKey(
-                                              decrypt(configValue.main.apiKey),
-                                          ),
-                                      }
-                                    : {}),
-                                ...(configValue.main.subscriptionToken
-                                    ? { subscriptionToken: undefined }
-                                    : {}),
-                            };
+                            processedConfig.main = this.maskSlotSecrets(
+                                configValue.main,
+                            );
+                        } else {
+                            processedConfig.main = null;
                         }
 
                         if (configValue.fallback) {
-                            processedConfig.fallback = {
-                                ...configValue.fallback,
-                                ...(configValue.fallback.apiKey
-                                    ? {
-                                          apiKey: this.maskApiKey(
-                                              decrypt(
-                                                  configValue.fallback.apiKey,
-                                              ),
-                                          ),
-                                      }
-                                    : {}),
-                                ...(configValue.fallback.subscriptionToken
-                                    ? { subscriptionToken: undefined }
-                                    : {}),
-                            };
+                            processedConfig.fallback = this.maskSlotSecrets(
+                                configValue.fallback,
+                            );
+                        } else {
+                            processedConfig.fallback = null;
                         }
 
                         return {
@@ -100,7 +80,7 @@ export class FindByKeyOrganizationParametersUseCase implements IUseCase {
                         };
                     } catch (error) {
                         this.logger.error({
-                            message: 'Error decrypting credential',
+                            message: 'Error decrypting BYOK credentials',
                             context:
                                 FindByKeyOrganizationParametersUseCase.name,
                             error: error,
@@ -145,5 +125,60 @@ export class FindByKeyOrganizationParametersUseCase implements IUseCase {
         const firstTwo = apiKey.substring(0, 2);
         const lastThree = apiKey.substring(apiKey.length - 3);
         return `${firstTwo}...${lastThree}`;
+    }
+
+    /**
+     * Names of the encrypted credential fields on a BYOK slot that are
+     * returned to the client in masked form. apiKey covers
+     * OpenAI/Anthropic/Gemini/OpenRouter/Novita/Vertex (SA JSON); the aws*
+     * fields cover Amazon Bedrock's two auth paths.
+     */
+    private static readonly SECRET_FIELDS = [
+        'apiKey',
+        'awsBearerToken',
+        'awsAccessKeyId',
+        'awsSecretAccessKey',
+        'awsSessionToken',
+    ] as const;
+
+    /**
+     * Subscription-token credentials (Claude OAuth / OpenAI Codex). Unlike
+     * apiKey/aws* these are never surfaced to the client — not even masked —
+     * so they are fully stripped from the response. They still count toward
+     * "this slot has a credential" for gating.
+     */
+    private static readonly STRIPPED_FIELDS = [
+        'subscriptionToken',
+        'refreshToken',
+    ] as const;
+
+    private slotHasSecrets(slot: any): boolean {
+        if (!slot || typeof slot !== 'object') return false;
+        const hasMaskable =
+            FindByKeyOrganizationParametersUseCase.SECRET_FIELDS.some(
+                (field) => typeof slot[field] === 'string' && slot[field],
+            );
+        const hasStripped =
+            FindByKeyOrganizationParametersUseCase.STRIPPED_FIELDS.some(
+                (field) => typeof slot[field] === 'string' && slot[field],
+            );
+        return hasMaskable || hasStripped;
+    }
+
+    private maskSlotSecrets(slot: any): any {
+        const masked: Record<string, any> = { ...slot };
+        for (const field of FindByKeyOrganizationParametersUseCase.SECRET_FIELDS) {
+            const value = slot[field];
+            if (typeof value === 'string' && value) {
+                masked[field] = this.maskApiKey(decrypt(value));
+            }
+        }
+        // Never return subscription/refresh tokens to the client.
+        for (const field of FindByKeyOrganizationParametersUseCase.STRIPPED_FIELDS) {
+            if (typeof slot[field] === 'string' && slot[field]) {
+                masked[field] = undefined;
+            }
+        }
+        return masked;
     }
 }

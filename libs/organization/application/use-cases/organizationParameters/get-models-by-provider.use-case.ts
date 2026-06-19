@@ -1,6 +1,5 @@
 import {
     BYOKProvider,
-    BYOKCredentialType,
     getModelCapabilities,
     ReasoningConfig,
 } from '@kodus/kodus-common/llm';
@@ -51,24 +50,6 @@ interface GeminiModel {
 
 interface GeminiResponse {
     models: GeminiModel[];
-}
-
-interface VertexModel {
-    name: string;
-    displayName?: string;
-    description?: string;
-    versionId?: string;
-    versionCreateTime?: string;
-    versionUpdateTime?: string;
-    versionDescription?: string;
-    supportedDeploymentResourcesTypes?: string[];
-    supportedInputStorageFormats?: string[];
-    supportedOutputStorageFormats?: string[];
-}
-
-interface VertexResponse {
-    models: VertexModel[];
-    nextPageToken?: string;
 }
 
 export interface ModelResponse {
@@ -165,12 +146,16 @@ export class GetModelsByProviderUseCase {
                         } catch { /* ignore */ }
                     }
 
-                    // Test with a minimal Codex API call using correct Codex CLI headers
-                    // Codex API requires stream:true and store:false
+                    // Test with a minimal Codex API call using correct Codex CLI headers.
+                    // Codex API requires stream:true and store:false. The model
+                    // MUST be one the ChatGPT-account Codex backend allows — the
+                    // legacy `*-codex` slugs (gpt-5.1-codex etc.) are rejected
+                    // with 400 "model is not supported when using Codex with a
+                    // ChatGPT account". gpt-5.5 is the current default.
                     const response = await axios.post(
                         'https://chatgpt.com/backend-api/codex/responses',
                         {
-                            model: 'gpt-5.1-codex',
+                            model: 'gpt-5.5',
                             instructions: 'Say ok',
                             input: [{ role: 'user', content: 'test' }],
                             store: false,
@@ -308,9 +293,7 @@ export class GetModelsByProviderUseCase {
                 );
 
             case BYOKProvider.GOOGLE_VERTEX:
-                return this.getVertexModels(
-                    credentials?.apiKey || process.env.API_GOOGLE_AI_API_KEY,
-                );
+                return this.getVertexModels();
 
             case BYOKProvider.OPEN_ROUTER:
                 return this.getOpenRouterModels(
@@ -329,11 +312,90 @@ export class GetModelsByProviderUseCase {
                         'https://api.openai.com',
                 );
 
+            case BYOKProvider.AMAZON_BEDROCK:
+                return this.getBedrockModels();
+
+            case BYOKProvider.ANTHROPIC_COMPATIBLE:
+                // Listing needs the user's baseURL + key, which aren't
+                // available here; the frontend forces free-form model input
+                // for baseURL-requiring providers, so this is never called
+                // in the normal flow.
+                throw new BadRequestException(
+                    'Model listing is not available for anthropic_compatible — enter the model ID manually.',
+                );
+
             default:
                 throw new BadRequestException(
                     `Unsupported provider: ${provider}`,
                 );
         }
+    }
+
+    /**
+     * Bedrock model IDs are region-scoped and cross-region inference
+     * profiles vary by AWS account. We can't list them generically without
+     * the user's AWS credentials (which are entered later in the wizard),
+     * so this returns a curated set of "us.*" cross-region inference
+     * profiles that cover the most common code-review use cases.
+     *
+     * Users on eu/apac regions or with custom inference profiles can still
+     * paste a model ID manually — the frontend allows free-form input on
+     * the Bedrock model field.
+     */
+    private getBedrockModels(): ModelResponse {
+        // Lookup by the Anthropic-style suffix (everything after
+        // "us.anthropic.") so we still pick up reasoning config from
+        // getModelCapabilities even though the catalog ID is prefixed.
+        const reasoningKeyOf = (id: string): string => {
+            const match = id.match(/^[a-z]{2,5}\.anthropic\.(.+?)-v\d+:\d+$/);
+            return match ? match[1] : id;
+        };
+
+        const catalog: Array<{ id: string; name: string }> = [
+            {
+                id: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+                name: 'Claude Sonnet 4.5 (us, cross-region)',
+            },
+            {
+                id: 'us.anthropic.claude-sonnet-4-20250514-v1:0',
+                name: 'Claude Sonnet 4 (us, cross-region)',
+            },
+            {
+                id: 'us.anthropic.claude-opus-4-1-20250805-v1:0',
+                name: 'Claude Opus 4.1 (us, cross-region)',
+            },
+            {
+                id: 'us.anthropic.claude-opus-4-20250514-v1:0',
+                name: 'Claude Opus 4 (us, cross-region)',
+            },
+            {
+                id: 'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                name: 'Claude 3.7 Sonnet (us, cross-region)',
+            },
+            {
+                id: 'us.anthropic.claude-3-5-sonnet-20241022-v2:0',
+                name: 'Claude 3.5 Sonnet v2 (us, cross-region)',
+            },
+            {
+                id: 'us.anthropic.claude-3-5-haiku-20241022-v1:0',
+                name: 'Claude 3.5 Haiku (us, cross-region)',
+            },
+        ];
+
+        return {
+            provider: BYOKProvider.AMAZON_BEDROCK,
+            models: catalog.map(({ id, name }) => {
+                const capabilities = getModelCapabilities(reasoningKeyOf(id));
+                return {
+                    id,
+                    name,
+                    ...(capabilities.supportsReasoning && {
+                        supportsReasoning: true,
+                        reasoningConfig: capabilities.reasoningConfig,
+                    }),
+                };
+            }),
+        };
     }
 
     private async loadSavedCredentials(
@@ -361,20 +423,25 @@ export class GetModelsByProviderUseCase {
         } catch (error) {
             this.logger.error({
                 message: 'Error loading saved credentials for test',
-                error,
+                context: GetModelsByProviderUseCase.name,
+                error: error instanceof Error ? error : new Error(String(error)),
             });
             return null;
         }
     }
 
     private getOpenAICodexStaticModels(): ModelResponse {
+        // Models the ChatGPT-account Codex backend actually accepts. The
+        // legacy `*-codex` slugs (gpt-5.1-codex, gpt-5-codex, …) are NOT
+        // valid for subscription-token (ChatGPT-account) access — the API
+        // rejects them with 400 "model is not supported when using Codex
+        // with a ChatGPT account". These slugs come from the codex CLI's
+        // own models cache (visibility=list).
         const codexModels = [
-            { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
-            { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex' },
-            { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex' },
-            { id: 'gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max' },
-            { id: 'gpt-5-codex', name: 'GPT-5 Codex' },
-            { id: 'gpt-5-codex-mini', name: 'GPT-5 Codex Mini' },
+            { id: 'gpt-5.5', name: 'GPT-5.5' },
+            { id: 'gpt-5.4', name: 'GPT-5.4' },
+            { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' },
+            { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark' },
         ];
 
         return {
@@ -485,6 +552,8 @@ export class GetModelsByProviderUseCase {
 
     private getAnthropicStaticModels(): ModelResponse {
         const staticModels = [
+            { id: 'claude-opus-4-8', name: 'Claude Opus 4.8' },
+            { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
             { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5' },
             { id: 'claude-sonnet-4-5-20251101', name: 'Claude Sonnet 4.5' },
             { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
@@ -663,59 +732,63 @@ export class GetModelsByProviderUseCase {
         }
     }
 
-    private async getVertexModels(apiKey?: string): Promise<ModelResponse> {
-        try {
-            if (!apiKey) {
-                throw new BadRequestException(
-                    'API key is required for Google Vertex',
-                );
-            }
+    /**
+     * Vertex models can't be listed generically: per-project/region
+     * availability requires the user's service-account JSON, which isn't
+     * available to this (GET, credential-less) endpoint. Listing it live
+     * would mean putting a sensitive ~3KB SA JSON in a query string.
+     *
+     * So, like Bedrock, return a curated catalog. It covers both Vertex
+     * model families served via different protocols:
+     *   - Gemini (`gemini-*`)  → Gemini protocol  (createVertex)
+     *   - Claude (`claude-*@…`) → Anthropic protocol on Vertex MaaS
+     *                            (createVertexAnthropic)
+     * Model-id routing happens in `byok-to-vercel.ts`. Users on other
+     * regions or with custom/newer models can still paste a model ID —
+     * the Vertex model field allows free-form input.
+     *
+     * Vertex Claude ID convention (per Anthropic's official Vertex docs):
+     * recent models use a bare id (e.g. `claude-opus-4-8`), older ones use
+     * the `@<version>` suffix (e.g. `claude-sonnet-4-5@20250929`). Both
+     * route through createVertexAnthropic. Catalog reflects models that are
+     * current (non-deprecated) on Vertex as of 2026-06.
+     */
+    private getVertexModels(): ModelResponse {
+        const catalog: Array<{ id: string; name: string }> = [
+            // gemini-3-pro-preview was discontinued on Vertex (2026-03-26);
+            // Google's migration target is gemini-3.1-pro-preview.
+            { id: 'gemini-3.1-pro-preview', name: 'Vertex Gemini 3.1 Pro' },
+            { id: 'gemini-3.5-flash', name: 'Vertex Gemini 3.5 Flash' },
+            { id: 'gemini-2.5-pro', name: 'Vertex Gemini 2.5 Pro' },
+            { id: 'gemini-2.5-flash', name: 'Vertex Gemini 2.5 Flash' },
+            // Only Claude models served by the GLOBAL endpoint (bare ids) are
+            // listed, so any catalog pick works with the default global region
+            // out of the box. Older @date-suffixed Claude models (Sonnet 4.5,
+            // Haiku 4.5, …) are region-only (e.g. us-east5) — users who want
+            // those can type the id manually and pin the region.
+            { id: 'claude-opus-4-8', name: 'Vertex Claude Opus 4.8' },
+            { id: 'claude-opus-4-7', name: 'Vertex Claude Opus 4.7' },
+            { id: 'claude-sonnet-4-6', name: 'Vertex Claude Sonnet 4.6' },
+        ];
 
-            this.logger.debug({
-                message: 'Fetching Vertex models',
-                context: GetModelsByProviderUseCase.name,
-                metadata: {
-                    apiKeyPrefix: apiKey.substring(0, 10) + '...',
-                },
-            });
+        // Capability lookup keys on a plain model name; strip the Vertex
+        // `@<version>` suffix so versioned Claude entries resolve their
+        // reasoning config (bare ids pass through unchanged).
+        const reasoningKeyOf = (id: string): string => id.split('@')[0];
 
-            // Use Gemini API to list models and map to Vertex
-            const response = await axios.get<GeminiResponse>(
-                `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
-            );
-
-            this.logger.debug({
-                message: 'Gemini response received',
-                context: GetModelsByProviderUseCase.name,
-                metadata: {
-                    modelCount: response.data.models?.length || 0,
-                },
-            });
-
-            return {
-                provider: BYOKProvider.GOOGLE_VERTEX,
-                models: response.data.models
-                    .filter(
-                        (model: GeminiModel) =>
-                            model.name.includes('gemini') &&
-                            model.supportedGenerationMethods.includes(
-                                'generateContent',
-                            ),
-                    )
-                    .map((model: GeminiModel) => ({
-                        id: model.name.split('/')[1],
-                        name: `Vertex ${model.displayName || model.name}`,
-                    })),
-            };
-        } catch (error) {
-            this.logger.error({
-                message: 'Error fetching Vertex models',
-                context: GetModelsByProviderUseCase.name,
-                error: error,
-            });
-            throw new BadRequestException(
-                `Error fetching Google Vertex models: ${(error as Error).message}`,
-            );
-        }
+        return {
+            provider: BYOKProvider.GOOGLE_VERTEX,
+            models: catalog.map(({ id, name }) => {
+                const capabilities = getModelCapabilities(reasoningKeyOf(id));
+                return {
+                    id,
+                    name,
+                    ...(capabilities.supportsReasoning && {
+                        supportsReasoning: true,
+                        reasoningConfig: capabilities.reasoningConfig,
+                    }),
+                };
+            }),
+        };
     }
 }

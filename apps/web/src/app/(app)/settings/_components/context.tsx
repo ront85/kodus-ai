@@ -1,6 +1,10 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import type {
+    LLMConfigStatus,
+    LLMProviderModel,
+} from "@services/organizationParameters/fetch";
 import { PlatformConfigValue } from "@services/parameters/types";
 import { CustomMessageConfig } from "@services/pull-request-messages/types";
 import { FEATURE_FLAGS } from "src/core/config/feature-flags";
@@ -8,62 +12,34 @@ import { FEATURE_FLAGS } from "src/core/config/feature-flags";
 import { useCodeReviewRouteParams } from "../_hooks";
 import type {
     CodeReviewGlobalConfig,
-    FormattedCodeReviewConfig,
     FormattedGlobalCodeReviewConfig,
 } from "../code-review/_types";
+import {
+    resolveCodeReviewConfigForScope,
+    type ScopedCodeReviewConfig,
+} from "./code-review-config-scope";
 
 const AutomationCodeReviewConfigContext =
     createContext<FormattedGlobalCodeReviewConfig>(
         {} as FormattedGlobalCodeReviewConfig,
     );
 
-export const useCodeReviewConfig = ():
-    | (FormattedCodeReviewConfig & {
-          id: string;
-          name: string;
-          isSelected: boolean;
-          displayName: string;
-      })
-    | undefined => {
+const ScopedCodeReviewConfigContext = createContext<
+    ScopedCodeReviewConfig | undefined
+>(undefined);
+
+export const useCodeReviewConfig = (): ScopedCodeReviewConfig | undefined => {
     const { repositoryId, directoryId } = useCodeReviewRouteParams();
-    const context = useFullCodeReviewConfig();
-
-    if (repositoryId === "global") {
-        const { configs } = context;
-
-        return {
-            ...configs,
-            id: "global",
-            name: "Global",
-            isSelected: true,
-            displayName: "Global",
-        };
+    const scopedContext = useContext(ScopedCodeReviewConfigContext);
+    if (scopedContext) {
+        return scopedContext;
     }
 
-    const repository = context.repositories.find((r) => r.id === repositoryId);
-    if (!repository) return;
-
-    const directory = repository?.directories?.find(
-        (d) => d.id === directoryId,
+    return resolveCodeReviewConfigForScope(
+        useFullCodeReviewConfig(),
+        repositoryId,
+        directoryId,
     );
-
-    if (!directory) {
-        const { configs, ...rest } = repository;
-
-        return {
-            ...configs,
-            ...rest,
-            displayName: repository.name,
-        };
-    }
-
-    const { configs, ...rest } = directory;
-
-    return {
-        ...configs,
-        ...rest,
-        displayName: `${repository?.name}${directory?.path}`,
-    };
 };
 
 export const useFullCodeReviewConfig = (): FormattedGlobalCodeReviewConfig => {
@@ -86,6 +62,16 @@ export const AutomationCodeReviewConfigProvider = (
     <AutomationCodeReviewConfigContext.Provider value={props.config}>
         {props.children}
     </AutomationCodeReviewConfigContext.Provider>
+);
+
+export const ScopedCodeReviewConfigProvider = (
+    props: React.PropsWithChildren & {
+        config: ScopedCodeReviewConfig | undefined;
+    },
+) => (
+    <ScopedCodeReviewConfigContext.Provider value={props.config}>
+        {props.children}
+    </ScopedCodeReviewConfigContext.Provider>
 );
 
 const PlatformConfigContext = createContext<PlatformConfigValue>(
@@ -157,3 +143,32 @@ export const FeatureFlagsProvider = (
         {props.children}
     </FeatureFlagsContext.Provider>
 );
+
+/**
+ * Data the BYOK model selector needs — the LLM config status (BYOK / env /
+ * none) and the provider's model catalog. Both are server-fetched in the
+ * settings layout and provided here so the selector renders fully with the
+ * rest of the page: no client round-trip, no loading skeleton.
+ */
+export type CodeReviewModelData = {
+    llmConfigStatus: LLMConfigStatus | null;
+    byokModels: LLMProviderModel[];
+};
+
+const CodeReviewModelDataContext = createContext<CodeReviewModelData>({
+    llmConfigStatus: null,
+    byokModels: [],
+});
+
+export const useCodeReviewModelData = () =>
+    useContext(CodeReviewModelDataContext);
+
+export const CodeReviewModelDataProvider = (
+    props: React.PropsWithChildren & { value: CodeReviewModelData },
+) => (
+    <CodeReviewModelDataContext.Provider value={props.value}>
+        {props.children}
+    </CodeReviewModelDataContext.Provider>
+);
+
+export { resolveCodeReviewConfigForScope };

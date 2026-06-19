@@ -4,9 +4,8 @@ import { SUGGESTION_SERVICE_TOKEN } from '@libs/code-review/domain/contracts/Sug
 import { PULL_REQUESTS_SERVICE_TOKEN } from '@libs/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
 import { FILE_REVIEW_CONTEXT_PREPARATION_TOKEN } from '@libs/core/domain/interfaces/file-review-context-preparation.interface';
 import { KODY_FINE_TUNING_CONTEXT_PREPARATION_TOKEN } from '@libs/core/domain/interfaces/kody-fine-tuning-context-preparation.interface';
-import { KODY_AST_ANALYZE_CONTEXT_PREPARATION_TOKEN } from '@libs/core/domain/interfaces/kody-ast-analyze-context-preparation.interface';
 import { CodeAnalysisOrchestrator } from '@libs/ee/codeBase/codeAnalysisOrchestrator.service';
-import { ASTContentFormatterService } from '@libs/code-review/infrastructure/adapters/services/astContentFormatter.service';
+import { GraphContentFormatter } from '@libs/code-review/infrastructure/adapters/services/graphContentFormatter.service';
 import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
 import {
     createSampleFileChange,
@@ -63,12 +62,6 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
                     },
                 },
                 {
-                    provide: KODY_AST_ANALYZE_CONTEXT_PREPARATION_TOKEN,
-                    useValue: {
-                        prepareKodyASTAnalyzeContext: jest.fn(),
-                    },
-                },
-                {
                     provide: CodeAnalysisOrchestrator,
                     useValue: {
                         executeStandardAnalysis: jest.fn(),
@@ -76,9 +69,9 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
                     },
                 },
                 {
-                    provide: ASTContentFormatterService,
+                    provide: GraphContentFormatter,
                     useValue: {
-                        fetchFormattedContent: jest.fn().mockResolvedValue(new Map()),
+                        formatContent: jest.fn().mockResolvedValue(new Map()),
                     },
                 },
             ],
@@ -97,18 +90,12 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
         ) => (stage as any).filterSnippetsForFile(allSnippets, file);
 
         it('should return empty array when allSnippets is empty', () => {
-            const result = filterSnippets(
-                [],
-                createSampleFileChange(),
-            );
+            const result = filterSnippets([], createSampleFileChange());
             expect(result).toEqual([]);
         });
 
         it('should return empty array when allSnippets is undefined', () => {
-            const result = filterSnippets(
-                undefined,
-                createSampleFileChange(),
-            );
+            const result = filterSnippets(undefined, createSampleFileChange());
             expect(result).toEqual([]);
         });
 
@@ -170,9 +157,7 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
             const file = createSampleFileChange({
                 patchWithLinesStr: '+const id = getUserId();',
             });
-            const snippets = [
-                createSampleSnippet({ relatedSymbol: 'x.id' }),
-            ];
+            const snippets = [createSampleSnippet({ relatedSymbol: 'x.id' })];
 
             // "x" is too short (<3), but "id" is only 2 chars — also skipped.
             // Neither part qualifies, so the snippet is excluded.
@@ -185,9 +170,7 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
                 patchWithLinesStr: undefined,
                 patch: '+import { greet } from "./utils";\n+greet("world");',
             });
-            const snippets = [
-                createSampleSnippet({ relatedSymbol: 'greet' }),
-            ];
+            const snippets = [createSampleSnippet({ relatedSymbol: 'greet' })];
 
             const result = filterSnippets(snippets, file);
             expect(result).toHaveLength(1);
@@ -235,7 +218,8 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
         it('should exclude snippet when targetFiles is populated but does not include file', () => {
             const file = createSampleFileChange({
                 filename: 'src/handler.ts',
-                patchWithLinesStr: '+import { greet } from "./utils";\n+greet("world");',
+                patchWithLinesStr:
+                    '+import { greet } from "./utils";\n+greet("world");',
             });
             const snippets = [
                 createSampleSnippet({
@@ -277,15 +261,15 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
             const resultB = filterSnippets(allSnippets, fileB);
 
             // fileA gets only EventBus snippet (config has no relatedSymbol → excluded)
-            expect(resultA.map((s: CrossFileContextSnippet) => s.filePath)).toEqual(
-                ['event-bus.ts'],
-            );
+            expect(
+                resultA.map((s: CrossFileContextSnippet) => s.filePath),
+            ).toEqual(['event-bus.ts']);
             expect(resultA).toHaveLength(1);
 
             // fileB gets only cacheKey snippet (config has no relatedSymbol → excluded)
-            expect(resultB.map((s: CrossFileContextSnippet) => s.filePath)).toEqual(
-                ['cache-keys.ts'],
-            );
+            expect(
+                resultB.map((s: CrossFileContextSnippet) => s.filePath),
+            ).toEqual(['cache-keys.ts']);
             expect(resultB).toHaveLength(1);
         });
     });
@@ -293,12 +277,11 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
     // ─── snippet pruning between batches ────────────────────────────────────
 
     describe('processBatchesSequentially() — snippet pruning', () => {
-        const processBatches = (
-            batches: any[][],
-            context: any,
-        ) => {
+        const processBatches = (batches: any[][], context: any) => {
             // Spy on processSingleBatch to skip real file processing
-            jest.spyOn(stage as any, 'processSingleBatch').mockResolvedValue([]);
+            jest.spyOn(stage as any, 'processSingleBatch').mockResolvedValue(
+                [],
+            );
 
             return (stage as any).processBatchesSequentially(
                 batches,
@@ -322,8 +305,12 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
                 crossFileSnippets: [snippetForFileA, snippetForFileB],
             };
 
-            const batch1 = [createSampleFileChange({ filename: 'src/fileA.ts' })];
-            const batch2 = [createSampleFileChange({ filename: 'src/fileB.ts' })];
+            const batch1 = [
+                createSampleFileChange({ filename: 'src/fileA.ts' }),
+            ];
+            const batch2 = [
+                createSampleFileChange({ filename: 'src/fileB.ts' }),
+            ];
 
             await processBatches([batch1, batch2], context);
 
@@ -346,7 +333,9 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
                 crossFileSnippets: [snippetForBoth, snippetForA],
             };
 
-            const batch1 = [createSampleFileChange({ filename: 'src/fileA.ts' })];
+            const batch1 = [
+                createSampleFileChange({ filename: 'src/fileA.ts' }),
+            ];
 
             await processBatches([batch1], context);
 
@@ -371,7 +360,9 @@ describe('ProcessFilesReview — Cross-File Filtering', () => {
                 crossFileSnippets: [snippetWithTarget, snippetWithoutTarget],
             };
 
-            const batch1 = [createSampleFileChange({ filename: 'src/fileA.ts' })];
+            const batch1 = [
+                createSampleFileChange({ filename: 'src/fileA.ts' }),
+            ];
 
             await processBatches([batch1], context);
 

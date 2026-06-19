@@ -1,26 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ProcessFilesReview } from '@libs/code-review/pipeline/stages/process-files-review.stage';
-import {
-    SUGGESTION_SERVICE_TOKEN,
-    ISuggestionService,
-} from '@libs/code-review/domain/contracts/SuggestionService.contract';
-import {
-    PULL_REQUESTS_SERVICE_TOKEN,
-} from '@libs/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
-import {
-    FILE_REVIEW_CONTEXT_PREPARATION_TOKEN,
-} from '@libs/core/domain/interfaces/file-review-context-preparation.interface';
-import {
-    KODY_FINE_TUNING_CONTEXT_PREPARATION_TOKEN,
-} from '@libs/core/domain/interfaces/kody-fine-tuning-context-preparation.interface';
-import {
-    KODY_AST_ANALYZE_CONTEXT_PREPARATION_TOKEN,
-} from '@libs/core/domain/interfaces/kody-ast-analyze-context-preparation.interface';
+import { SUGGESTION_SERVICE_TOKEN } from '@libs/code-review/domain/contracts/SuggestionService.contract';
+import { PULL_REQUESTS_SERVICE_TOKEN } from '@libs/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
+import { FILE_REVIEW_CONTEXT_PREPARATION_TOKEN } from '@libs/core/domain/interfaces/file-review-context-preparation.interface';
+import { KODY_FINE_TUNING_CONTEXT_PREPARATION_TOKEN } from '@libs/core/domain/interfaces/kody-fine-tuning-context-preparation.interface';
 import { CodeAnalysisOrchestrator } from '@libs/ee/codeBase/codeAnalysisOrchestrator.service';
-import { ASTContentFormatterService } from '@libs/code-review/infrastructure/adapters/services/astContentFormatter.service';
+import { GraphContentFormatter } from '@libs/code-review/infrastructure/adapters/services/graphContentFormatter.service';
 import {
     AnalysisContext,
-    AIAnalysisResult,
     CodeSuggestion,
 } from '@libs/core/infrastructure/config/types/general/codeReview.type';
 import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
@@ -75,7 +62,7 @@ function makeSuggestion(id: string, file: string): Partial<CodeSuggestion> {
 const mockSuggestionService = {
     filterCodeSuggestionsByReviewOptions: jest.fn((_opts, result) => result),
     filterSuggestionsCodeDiff: jest.fn((_patch, suggestions) => suggestions),
-    getDiscardedSuggestions: jest.fn(() => []),
+    getDiscardedSuggestions: jest.fn((..._args: any[]) => []),
     filterSuggestionsSafeGuard: jest.fn(),
     analyzeSuggestionsSeverity: jest.fn(
         (_org, _pr, suggestions) => suggestions,
@@ -114,14 +101,6 @@ const mockKodyFineTuningContextPreparation = {
     ),
 };
 
-const mockKodyAstAnalyzeContextPreparation = {
-    prepareKodyASTAnalyzeContext: jest.fn(() => ({ codeSuggestions: [] })),
-};
-
-const mockAstContentFormatter = {
-    fetchFormattedContent: jest.fn(() => new Map()),
-};
-
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -153,16 +132,14 @@ describe('ProcessFilesReview – file content chunking', () => {
                     useValue: mockKodyFineTuningContextPreparation,
                 },
                 {
-                    provide: KODY_AST_ANALYZE_CONTEXT_PREPARATION_TOKEN,
-                    useValue: mockKodyAstAnalyzeContextPreparation,
-                },
-                {
                     provide: CodeAnalysisOrchestrator,
                     useValue: mockCodeAnalysisOrchestrator,
                 },
                 {
-                    provide: ASTContentFormatterService,
-                    useValue: mockAstContentFormatter,
+                    provide: GraphContentFormatter,
+                    useValue: {
+                        formatContent: jest.fn().mockResolvedValue(new Map()),
+                    },
                 },
             ],
         }).compile();
@@ -237,9 +214,6 @@ describe('ProcessFilesReview – file content chunking', () => {
                 patchWithLinesStr: file.patchWithLinesStr || file.patch,
                 hasRelevantContent: true,
             },
-            tasks: {
-                astAnalysis: { status: 'completed' },
-            } as any,
             ...overrides,
         } as any;
     }
@@ -275,11 +249,12 @@ describe('ProcessFilesReview – file content chunking', () => {
 
             // Safeguard received the full file content
             const safeguardCall =
-                mockSuggestionService.filterSuggestionsSafeGuard.mock
-                    .calls[0];
+                mockSuggestionService.filterSuggestionsSafeGuard.mock.calls[0];
             expect(safeguardCall[3]).toBe('const a = 1;'); // relevantContent arg
 
-            expect(result.validSuggestionsToAnalyze.length).toBeGreaterThanOrEqual(1);
+            expect(
+                result.validSuggestionsToAnalyze.length,
+            ).toBeGreaterThanOrEqual(1);
         });
     });
 
@@ -331,9 +306,7 @@ describe('ProcessFilesReview – file content chunking', () => {
         // File with ~10000 tokens → needs ~3 chunks
         const MAX_INPUT_TOKENS = 10000;
 
-        function makeChunkingContext(
-            file: any,
-        ): AnalysisContext {
+        function makeChunkingContext(file: any): AnalysisContext {
             return makeAnalysisContext(file, {
                 codeReviewConfig: {
                     reviewOptions: {},
@@ -354,7 +327,7 @@ describe('ProcessFilesReview – file content chunking', () => {
 
             // Each chunk analysis returns 1 suggestion
             mockCodeAnalysisOrchestrator.executeStandardAnalysis.mockImplementation(
-                async (_org, _pr, fileContext) => ({
+                async (_org, _pr, _fileContext) => ({
                     codeSuggestions: [
                         makeSuggestion(
                             `s-${mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls.length}`,
@@ -370,8 +343,8 @@ describe('ProcessFilesReview – file content chunking', () => {
             const result = await stageAny.executeFileAnalysis(context);
 
             const analyzeCallCount =
-                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
-                    .calls.length;
+                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls
+                    .length;
             const safeguardCallCount =
                 mockSuggestionService.filterSuggestionsSafeGuard.mock.calls
                     .length;
@@ -386,8 +359,9 @@ describe('ProcessFilesReview – file content chunking', () => {
                     mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
                         .calls[i][2].relevantContent; // fileContext.relevantContent
                 const safeguardChunk =
-                    mockSuggestionService.filterSuggestionsSafeGuard.mock
-                        .calls[i][3]; // relevantContent arg (4th)
+                    mockSuggestionService.filterSuggestionsSafeGuard.mock.calls[
+                        i
+                    ][3]; // relevantContent arg (4th)
 
                 expect(analyzeChunk).toBe(safeguardChunk);
                 expect(analyzeChunk.length).toBeGreaterThan(0);
@@ -423,8 +397,8 @@ describe('ProcessFilesReview – file content chunking', () => {
             await stageAny.executeFileAnalysis(context);
 
             const chunkCount =
-                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
-                    .calls.length;
+                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls
+                    .length;
 
             // With these numbers we expect 3 chunks (10000 content tokens,
             // ~3800 available → ceil(10000/3800) = 3)
@@ -454,8 +428,8 @@ describe('ProcessFilesReview – file content chunking', () => {
             await stageAny.executeFileAnalysis(context);
 
             const chunkCount =
-                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
-                    .calls.length;
+                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls
+                    .length;
 
             expect(chunkCount).toBe(2);
         });
@@ -485,8 +459,8 @@ describe('ProcessFilesReview – file content chunking', () => {
             const result = await stageAny.executeFileAnalysis(context);
 
             const chunkCount =
-                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
-                    .calls.length;
+                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls
+                    .length;
 
             // 2 suggestions per chunk × N chunks
             expect(result.validSuggestionsToAnalyze.length).toBe(
@@ -523,17 +497,18 @@ describe('ProcessFilesReview – file content chunking', () => {
 
             // getDiscardedSuggestions returns the input suggestions as discarded
             mockSuggestionService.getDiscardedSuggestions.mockImplementation(
-                (input, _kept, _status) => input.map((s: any) => ({
-                    ...s,
-                    priorityStatus: PriorityStatus.DISCARDED_BY_SAFEGUARD,
-                })),
+                (input, _kept, _status) =>
+                    input.map((s: any) => ({
+                        ...s,
+                        priorityStatus: PriorityStatus.DISCARDED_BY_SAFEGUARD,
+                    })),
             );
 
             const result = await stageAny.executeFileAnalysis(context);
 
             const chunkCount =
-                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
-                    .calls.length;
+                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls
+                    .length;
 
             expect(result.validSuggestionsToAnalyze).toHaveLength(0);
             expect(
@@ -549,8 +524,9 @@ describe('ProcessFilesReview – file content chunking', () => {
     describe('when file has AST markers', () => {
         it('should split at AST marker boundaries', async () => {
             // Create content with CUT markers — 4 sections, budget fits ~1 section
-            const sections = Array.from({ length: 4 }, (_, i) =>
-                `section${i}_${'a'.repeat(3500 * 3 - 10)}`,
+            const sections = Array.from(
+                { length: 4 },
+                (_, i) => `section${i}_${'a'.repeat(3500 * 3 - 10)}`,
             );
             const contentWithMarkers = sections.join('<- CUT CONTENT ->');
 
@@ -583,8 +559,8 @@ describe('ProcessFilesReview – file content chunking', () => {
             await stageAny.executeFileAnalysis(context);
 
             const chunkCount =
-                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
-                    .calls.length;
+                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls
+                    .length;
 
             expect(chunkCount).toBeGreaterThan(1);
 
@@ -624,9 +600,7 @@ describe('ProcessFilesReview – file content chunking', () => {
 
             mockCodeAnalysisOrchestrator.executeStandardAnalysis.mockResolvedValueOnce(
                 {
-                    codeSuggestions: [
-                        makeSuggestion('s1', 'huge.ts'),
-                    ],
+                    codeSuggestions: [makeSuggestion('s1', 'huge.ts')],
                     codeReviewModelUsed: {
                         generateSuggestions: 'mock-model',
                     },
@@ -742,8 +716,7 @@ describe('ProcessFilesReview – file content chunking', () => {
                     } as any,
                 });
 
-                const result =
-                    await stageAny.executeFileAnalysis(context);
+                const result = await stageAny.executeFileAnalysis(context);
                 results.push(result);
             }
 
@@ -932,8 +905,8 @@ describe('ProcessFilesReview – file content chunking', () => {
             const result = await stageAny.executeFileAnalysis(context);
 
             const chunkCount =
-                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
-                    .calls.length;
+                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls
+                    .length;
 
             expect(chunkCount).toBeGreaterThan(1);
 
@@ -982,8 +955,8 @@ describe('ProcessFilesReview – file content chunking', () => {
             const result = await stageAny.executeFileAnalysis(context);
 
             const chunkCount =
-                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock
-                    .calls.length;
+                mockCodeAnalysisOrchestrator.executeStandardAnalysis.mock.calls
+                    .length;
 
             expect(chunkCount).toBeGreaterThan(1);
             expect(
@@ -1035,7 +1008,9 @@ describe('ProcessFilesReview – file content chunking', () => {
 
             // The file should have an error
             expect(result.error).toBeDefined();
-            expect(result.error.error.message).toContain('LLM rate limit exceeded');
+            expect(result.error.error.message).toContain(
+                'LLM rate limit exceeded',
+            );
             expect(result.filename).toBe('error-file.ts');
 
             // No suggestions should be returned (whole file failed)

@@ -13,25 +13,13 @@ import { safeArray } from "src/core/utils/safe-array";
 
 import type { CodeReviewFormType } from "../../../_types";
 
-const hasGitLabConnection = (
-    connections: ReturnType<typeof useSuspenseGetConnections>,
-): boolean => {
-    return safeArray(connections)
-        .filter((c) => c.category === "CODE_MANAGEMENT" && c.hasConnection)
-        .some((connection) => connection.platformName === PlatformType.GITLAB);
-};
-
 export const IsRequestChangesActive = () => {
     const form = useFormContext<CodeReviewFormType>();
-    const { teamId } = useSelectedTeamId();
-    const connections = useSuspenseGetConnections(teamId);
-    const isCodeManagementGitlab = hasGitLabConnection(connections);
 
     return (
         <div className="flex flex-col gap-2">
             <Controller
                 name="isRequestChangesActive.value"
-                disabled={isCodeManagementGitlab}
                 control={form.control}
                 render={({ field }) => (
                     <Button
@@ -44,8 +32,8 @@ export const IsRequestChangesActive = () => {
                             <div className="flex flex-col gap-1">
                                 <div className="flex flex-row items-center gap-2">
                                     <Heading variant="h3">
-                                        Enable changing status of Review to 'Request
-                                        Changes'
+                                        Enable changing status of Review to
+                                        'Request Changes'
                                     </Heading>
 
                                     <OverrideIndicatorForm fieldName="isRequestChangesActive" />
@@ -64,10 +52,6 @@ export const IsRequestChangesActive = () => {
                     </Button>
                 )}
             />
-
-            <p className="text-text-secondary text-xs">
-                Note: This option is not applicable to Gitlab.
-            </p>
         </div>
     );
 };

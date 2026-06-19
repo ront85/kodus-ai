@@ -9,13 +9,20 @@ import { IntegrationModule } from '@libs/integrations/modules/integrations.modul
 import { KodyRulesModule } from '@libs/kodyRules/modules/kodyRules.module';
 import { ParametersModule } from '@libs/organization/modules/parameters.module';
 import { TeamModule } from '@libs/organization/modules/team.module';
+import { CliReviewModule } from '@libs/cli-review/cli-review.module';
 import { PlatformModule } from '@libs/platform/modules/platform.module';
 import { forwardRef, Module } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 
+import { SpendLimitModule } from '@libs/analytics/modules/spend-limit.module';
+
 import { CheckIfPRCanBeApprovedCronProvider } from './CheckIfPRCanBeApproved.cron';
+import { ClassifyOrphanedSessionsCronProvider } from './classifyOrphanedSessions.cron';
 import { CodeReviewFeedbackCronProvider } from './codeReviewFeedback.cron';
 import { KodyLearningCronProvider } from './kodyLearning.cron';
+import { SpendLimitAlertCronProvider } from './spendLimitAlert.cron';
+import { SSOTestSessionCleanupCronProvider } from './ssoTestSessionCleanup.cron';
+import { SSOModule } from '@libs/ee/sso/sso.module';
 
 @Module({
     imports: [
@@ -31,11 +38,17 @@ import { KodyLearningCronProvider } from './kodyLearning.cron';
         forwardRef(() => CodebaseModule),
         IntegrationModule,
         IntegrationConfigModule,
+        forwardRef(() => CliReviewModule),
+        forwardRef(() => SSOModule),
+        SpendLimitModule,
     ],
     providers: [
         CheckIfPRCanBeApprovedCronProvider,
+        ClassifyOrphanedSessionsCronProvider,
         CodeReviewFeedbackCronProvider,
         KodyLearningCronProvider,
+        SSOTestSessionCleanupCronProvider,
+        SpendLimitAlertCronProvider,
         DistributedLockService,
     ],
 })

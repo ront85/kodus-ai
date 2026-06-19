@@ -1,8 +1,14 @@
+import './instrument';
 import 'source-map-support/register';
-import * as dotenv from 'dotenv';
-dotenv.config();
 
 import { initPyroscope } from '@libs/core/infrastructure/config/profiling/pyroscope';
+import { reportExceptionToSentry } from '@libs/core/infrastructure/config/log/sentry';
+import { configureLongFetchTimeouts } from '@libs/core/infrastructure/http/fetch-timeouts';
+
+// Bump undici HTTP timeouts for any outgoing fetch() — webhooks itself
+// doesn't make long LLM calls today, but keeping the dispatcher aligned
+// across entry points avoids surprises if that ever changes.
+configureLongFetchTimeouts();
 
 // Initialize profiling early (before NestJS bootstrap)
 initPyroscope({ appName: 'kodus-webhooks' });
@@ -89,6 +95,10 @@ async function bootstrap() {
         );
 
         process.on('uncaughtException', (error) => {
+            void reportExceptionToSentry(error, {
+                context: 'GlobalExceptionHandler',
+                extra: { component: 'webhook', type: 'uncaughtException' },
+            });
             logger.error({
                 message: `Uncaught Exception: ${error.message}`,
                 context: 'GlobalExceptionHandler',
@@ -97,17 +107,27 @@ async function bootstrap() {
         });
 
         process.on('unhandledRejection', (reason: any) => {
+            const error =
+                reason instanceof Error ? reason : new Error(String(reason));
+            void reportExceptionToSentry(error, {
+                context: 'GlobalExceptionHandler',
+                extra: { component: 'webhook', type: 'unhandledRejection' },
+            });
             logger.error({
                 message: `Unhandled Rejection: ${reason?.message || reason}`,
                 context: 'GlobalExceptionHandler',
-                error:
-                    reason instanceof Error
-                        ? reason
-                        : new Error(String(reason)),
+                error,
             });
         });
 
-        app.use(bodyParser.json({ limit: '25mb' }));
+        app.use(
+            bodyParser.json({
+                limit: '25mb',
+                verify: (req: any, _res, buf) => {
+                    req.rawBody = buf;
+                },
+            }),
+        );
         app.use(bodyParser.urlencoded({ limit: '25mb', extended: true }));
         app.set('trust proxy', 1);
 
@@ -124,6 +144,10 @@ async function bootstrap() {
 
         handleNestJSWebpackHmr(app, module);
     } catch (error) {
+        void reportExceptionToSentry(error, {
+            context: 'Bootstrap',
+            extra: { component: 'webhook', phase: 'bootstrap' },
+        });
         logger.error(
             `Bootstrap failed inside catch block: ${error.message}`,
             error.stack,

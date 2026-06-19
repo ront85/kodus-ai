@@ -8,6 +8,7 @@ import { Spinner } from "@components/ui/spinner";
 import { useReactQueryInvalidateQueries } from "@hooks/use-invalidate-queries";
 import { signOut } from "next-auth/react";
 import { deleteFiltersInLocalStorage } from "src/app/(app)/issues/_constants";
+import { getSetupCookieName } from "src/app/(setup)/setup/_components/setup-step-tracker";
 import { ClientSideCookieHelpers } from "src/core/utils/cookie";
 
 function SignOutContent() {
@@ -17,9 +18,26 @@ function SignOutContent() {
     const reason = searchParams?.get("reason");
 
     useEffect(() => {
+        const wipeOwnSetupCookie = async () => {
+            try {
+                const res = await fetch("/api/auth/session", {
+                    cache: "no-store",
+                });
+                const session = await res.json();
+                const userId = session?.user?.userId as string | undefined;
+                if (userId) {
+                    ClientSideCookieHelpers(getSetupCookieName(userId)).delete();
+                }
+            } catch {
+                // Session fetch can fail if the auth cookie is already
+                // invalid — that's fine, just means we can't target a
+                // specific uuid this time. Logout still proceeds.
+            }
+        };
+
         const redirectToSignInPage = async () => {
             let callbackUrl = "/sign-in";
-            
+
             // Add reason to callback URL if present
             if (reason) {
                 callbackUrl += `?reason=${reason}`;
@@ -44,7 +62,7 @@ function SignOutContent() {
 
         removeQueries();
 
-        redirectToSignInPage();
+        wipeOwnSetupCookie().finally(redirectToSignInPage);
     }, [reason, router, removeQueries]);
 
     return (
@@ -63,8 +81,7 @@ export default function App() {
                     <Spinner />
                     <Heading variant="h3">Disconnecting...</Heading>
                 </Page.Root>
-            }
-        >
+            }>
             <SignOutContent />
         </Suspense>
     );

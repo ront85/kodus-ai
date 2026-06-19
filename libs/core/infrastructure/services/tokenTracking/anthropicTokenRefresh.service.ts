@@ -4,12 +4,23 @@ import { createLogger } from '@kodus/flow';
 
 const logger = createLogger('AnthropicTokenRefresh');
 
-const ANTHROPIC_TOKEN_URL = 'https://console.anthropic.com/api/oauth/token';
+// Claude Code OAuth token endpoint. The fork's original
+// `console.anthropic.com/api/oauth/token` is outdated — it now 302-redirects
+// to platform.claude.com where the path 404s. `claude.ai/v1/oauth/token` is
+// the live endpoint (returns the canonical `invalid_grant` OAuth error for a
+// bad refresh token).
+const ANTHROPIC_TOKEN_URL = 'https://claude.ai/v1/oauth/token';
 const ANTHROPIC_OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 
 export interface AnthropicRefreshResult {
     accessToken: string;
     encryptedAccessToken: string;
+    /**
+     * Anthropic ROTATES the refresh token on refresh — the old one is
+     * invalidated. The caller MUST persist this new encrypted refresh token,
+     * or the NEXT refresh will fail.
+     */
+    encryptedRefreshToken: string;
     tokenExpiresAt: number;
 }
 
@@ -30,7 +41,11 @@ export async function refreshAnthropicAccessToken(
         client_id: ANTHROPIC_OAUTH_CLIENT_ID,
     });
 
-    const { access_token, expires_in } = response.data;
+    const {
+        access_token,
+        refresh_token: newRefreshToken,
+        expires_in,
+    } = response.data;
 
     if (!access_token) {
         throw new Error('Anthropic token refresh returned no access_token');
@@ -40,15 +55,21 @@ export async function refreshAnthropicAccessToken(
 
     logger.log({
         message: 'Anthropic OAuth token refreshed successfully',
+        context: 'AnthropicTokenRefresh',
         metadata: {
             expiresIn: expires_in,
             tokenExpiresAt: new Date(tokenExpiresAt).toISOString(),
+            rotatedRefreshToken: !!newRefreshToken,
         },
     });
 
     return {
         accessToken: access_token,
         encryptedAccessToken: encrypt(access_token),
+        // Anthropic normally rotates; keep the existing one if it didn't.
+        encryptedRefreshToken: newRefreshToken
+            ? encrypt(newRefreshToken)
+            : encryptedRefreshToken,
         tokenExpiresAt,
     };
 }

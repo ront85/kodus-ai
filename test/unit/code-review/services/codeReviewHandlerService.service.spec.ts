@@ -31,8 +31,12 @@ describe('CodeReviewHandlerService - skip feedback control', () => {
 
     const service = new CodeReviewHandlerService(
         mockPipelineFactory as any,
-        {} as any,
         mockCodeManagement as any,
+        {
+            findByKey: jest.fn(),
+            createOrUpdateConfig: jest.fn(),
+        } as any,
+        { firstReviewCompleted: jest.fn() } as any,
     );
 
     const organizationAndTeamData = {
@@ -182,7 +186,9 @@ describe('CodeReviewHandlerService - skip feedback control', () => {
             'execution-id',
         );
 
-        expect(mockCodeManagement.removeReactionsFromPR).toHaveBeenCalledTimes(1);
+        expect(mockCodeManagement.removeReactionsFromPR).toHaveBeenCalledTimes(
+            1,
+        );
         expect(mockCodeManagement.addReactionToPR).toHaveBeenCalledTimes(1);
     });
 
@@ -209,7 +215,9 @@ describe('CodeReviewHandlerService - skip feedback control', () => {
             'execution-id',
         );
 
-        expect(mockCodeManagement.removeReactionsFromPR).toHaveBeenCalledTimes(1);
+        expect(mockCodeManagement.removeReactionsFromPR).toHaveBeenCalledTimes(
+            1,
+        );
         expect(mockCodeManagement.addReactionToPR).toHaveBeenCalledTimes(1);
     });
 });

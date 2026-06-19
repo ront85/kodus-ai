@@ -215,6 +215,56 @@ describe('Forgejo Service', () => {
                 parents: [{ sha: '8cd80e38659f5aee787e5a8ec60ffe495fb5fac6' }],
             });
         });
+
+        it('should normalize Forgejo PR commits to oldest-first order', () => {
+            const newerCommit = {
+                sha: 'newer',
+                commit: {
+                    message: 'newer commit',
+                    author: {
+                        name: 'Jane Doe',
+                        email: 'jane@example.com',
+                        date: '2024-01-16T10:00:00Z',
+                    },
+                },
+                author: {
+                    id: 2,
+                    login: 'janedoe',
+                    username: 'janedoe',
+                },
+                parents: [{ sha: 'older' }],
+            };
+            const olderCommit = {
+                sha: 'older',
+                commit: {
+                    message: 'older commit',
+                    author: {
+                        name: 'John Doe',
+                        email: 'john@example.com',
+                        date: '2024-01-15T10:00:00Z',
+                    },
+                },
+                author: {
+                    id: 1,
+                    login: 'johndoe',
+                    username: 'johndoe',
+                },
+                parents: [{ sha: 'base' }],
+            };
+
+            const mapped = [newerCommit, olderCommit]
+                .map(mapForgejoCommit)
+                .sort(
+                    (a, b) =>
+                        new Date(a.author.date).getTime() -
+                        new Date(b.author.date).getTime(),
+                );
+
+            expect(mapped.map((commit) => commit.sha)).toEqual([
+                'older',
+                'newer',
+            ]);
+        });
     });
 
     describe('File Data Mapping', () => {
@@ -443,7 +493,10 @@ describe('Forgejo Draft PR Detection', () => {
      * Mirrors the draft detection logic in ForgejoService.transformPullRequest()
      * Forgejo marks PRs as draft via the `draft` field or title prefixes
      */
-    function isDraftPullRequest(pr: { draft?: boolean; title?: string }): boolean {
+    function isDraftPullRequest(pr: {
+        draft?: boolean;
+        title?: string;
+    }): boolean {
         return (
             pr.draft ||
             pr.title?.toLowerCase().startsWith('wip:') ||
@@ -485,9 +538,9 @@ describe('Forgejo Draft PR Detection', () => {
     });
 
     it('should not detect regular PR as draft', () => {
-        expect(
-            isDraftPullRequest({ draft: false, title: 'Add feature' }),
-        ).toBe(false);
+        expect(isDraftPullRequest({ draft: false, title: 'Add feature' })).toBe(
+            false,
+        );
     });
 
     it('should handle case-insensitive prefixes', () => {

@@ -4,49 +4,29 @@ import {
     type ContextPack,
 } from '@kodus/flow';
 import {
+    BYOKConfig,
     LLMModelProvider,
-    PromptRunnerService,
     ParserType,
     PromptRole,
-    BYOKConfig,
+    PromptRunnerService,
 } from '@kodus/kodus-common/llm';
 import { Inject, Injectable } from '@nestjs/common';
 import { v4 as uuidv4, validate as uuidValidate } from 'uuid';
 
-import { IKodyRulesAnalysisService } from '@libs/code-review/domain/contracts/KodyRulesAnalysisService.contract';
-import {
-    CODE_BASE_CONFIG_SERVICE_TOKEN,
-    ICodeBaseConfigService,
-} from '@libs/code-review/domain/contracts/CodeBaseConfigService.contract';
-import { BYOKPromptRunnerService } from '@libs/core/infrastructure/services/tokenTracking/byokPromptRunner.service';
-import type { ContextAugmentationsMap } from '@libs/ai-engine/infrastructure/adapters/services/context/interfaces/code-review-context-pack.interface';
 import {
     getAugmentationsFromPack,
     getOverridesFromPack,
 } from '@libs/ai-engine/infrastructure/adapters/services/context/code-review-context.utils';
 import { FileContextAugmentationService } from '@libs/ai-engine/infrastructure/adapters/services/context/file-context-augmentation.service';
+import type { ContextAugmentationsMap } from '@libs/ai-engine/infrastructure/adapters/services/context/interfaces/code-review-context-pack.interface';
 import {
-    AIAnalysisResult,
-    AnalysisContext,
-    CodeSuggestion,
-    FileChangeContext,
-    ReviewModeResponse,
-    ReviewOptions,
-    SuggestionControlConfig,
-    CodeReviewConfig,
-} from '@libs/core/infrastructure/config/types/general/codeReview.type';
-import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
-import { SeverityLevel } from '@libs/common/utils/enums/severityLevel.enum';
-import {
-    IKodyRule,
-    KodyRulesScope,
-} from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
-import { KodyRulesValidationService } from '../kodyRules/service/kody-rules-validation.service';
-import { KODY_RULES_SERVICE_TOKEN } from '@libs/kodyRules/domain/contracts/kodyRules.service.contract';
-import { KodyRuleDependencyService } from '@libs/kodyRules/infrastructure/adapters/services/kodyRulesDependency.service';
-import { ObservabilityService } from '@libs/core/log/observability.service';
-import { ExternalReferenceLoaderService } from '@libs/kodyRules/infrastructure/adapters/services/externalReferenceLoader.service';
+    CODE_BASE_CONFIG_SERVICE_TOKEN,
+    ICodeBaseConfigService,
+} from '@libs/code-review/domain/contracts/CodeBaseConfigService.contract';
+import { IKodyRulesAnalysisService } from '@libs/code-review/domain/contracts/KodyRulesAnalysisService.contract';
+import { buildKodyRuleLink } from '@libs/code-review/utils/build-kody-rule-link';
 import { LabelType } from '@libs/common/utils/codeManagement/labels';
+import { SeverityLevel } from '@libs/common/utils/enums/severityLevel.enum';
 import {
     KodyRulesClassifierSchema,
     kodyRulesClassifierSchema,
@@ -63,6 +43,28 @@ import {
     prompt_kodyrules_updatestdsuggestions_user,
 } from '@libs/common/utils/langchainCommon/prompts/kodyRules';
 import { tryParseJSONObject } from '@libs/common/utils/transforms/json';
+import {
+    AIAnalysisResult,
+    AnalysisContext,
+    CodeReviewConfig,
+    CodeSuggestion,
+    DocumentationContextItem,
+    FileChangeContext,
+    ReviewModeResponse,
+    ReviewOptions,
+    SuggestionControlConfig,
+} from '@libs/core/infrastructure/config/types/general/codeReview.type';
+import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
+import { BYOKPromptRunnerService } from '@libs/core/infrastructure/services/tokenTracking/byokPromptRunner.service';
+import { ObservabilityService } from '@libs/core/log/observability.service';
+import { KODY_RULES_SERVICE_TOKEN } from '@libs/kodyRules/domain/contracts/kodyRules.service.contract';
+import {
+    IKodyRule,
+    KodyRulesScope,
+} from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
+import { ExternalReferenceLoaderService } from '@libs/kodyRules/infrastructure/adapters/services/externalReferenceLoader.service';
+import { KodyRuleDependencyService } from '@libs/kodyRules/infrastructure/adapters/services/kodyRulesDependency.service';
+import { KodyRulesValidationService } from '../kodyRules/service/kody-rules-validation.service';
 import { KodyRulesService } from '../kodyRules/service/kodyRules.service';
 
 interface KodyRulesExtendedContext {
@@ -78,6 +80,8 @@ interface KodyRulesExtendedContext {
     severityLevelFilter?: SeverityLevel;
     organizationAndTeamData: OrganizationAndTeamData;
     kodyRules: Array<Partial<IKodyRule>>;
+    memories?: Array<Partial<IKodyRule>>;
+    documentationContext?: DocumentationContextItem[];
     v2PromptOverrides?: CodeReviewConfig['v2PromptOverrides'];
     contextAugmentations?: ContextAugmentationsMap;
     contextPack?: ContextPack;
@@ -125,16 +129,15 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
                 }
 
                 const baseUrl = process.env.API_USER_INVITE_BASE_URL || '';
-                let ruleLink: string;
-
-                if (rule.repositoryId === 'global') {
-                    ruleLink = `${baseUrl}/settings/code-review/global/kody-rules/${ruleId}`;
-                } else {
-                    ruleLink = `${baseUrl}/settings/code-review/${rule.repositoryId}/kody-rules/${ruleId}`;
-                }
+                const ruleLink = buildKodyRuleLink(
+                    baseUrl,
+                    ruleId,
+                    rule,
+                    organizationAndTeamData,
+                );
 
                 const escapeMarkdownSyntax = (text: string): string =>
-                    text.replace(/([\[\]\\`*_{}()#+\-.!])/g, '\\$1');
+                    text.replace(/([[\\`*_{}()#+\-.!\]])/g, '\\$1');
                 const markdownLink = `[${escapeMarkdownSyntax(rule.title)}](${ruleLink})`;
 
                 // Check if ID is between single backticks `id`
@@ -318,6 +321,7 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
                     spanName,
                     runName,
                     attrs: spanAttrs,
+                    byokConfig,
                     exec: async (callbacks) => {
                         return await promptRunner
                             .builder()
@@ -425,7 +429,7 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
 
         for (const [ruleId, dependencies] of dependenciesByRule.entries()) {
             const ruleAugmentations: Record<string, unknown> = {};
-            for (const dep of dependencies) {
+            for (const _dep of dependencies) {
                 for (const fileName in augmentationsByFile) {
                     const fileAugmentations = augmentationsByFile[fileName];
                     for (const pathKey in fileAugmentations) {
@@ -459,7 +463,11 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
             !!suggestions?.codeSuggestions &&
             suggestions?.codeSuggestions?.length > 0;
         const provider = LLMModelProvider.GEMINI_2_5_PRO;
-        const fallbackProvider = LLMModelProvider.VERTEX_CLAUDE_3_5_SONNET;
+        // Fallback to a Vertex (SA-auth) Gemini model. The legacy v2 engine
+        // builds Vertex models via `ChatVertexAI` (Gemini protocol only), so
+        // `VERTEX_CLAUDE_3_5_SONNET` was silently broken as a fallback here.
+        // Claude on Vertex is supported via BYOK (v5) only.
+        const fallbackProvider = LLMModelProvider.VERTEX_GEMINI_2_5_PRO;
 
         const baseContext = await this.prepareAnalysisContext(
             fileContext,
@@ -604,11 +612,14 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
             file: { name: fileContext?.file?.filename },
         };
 
+        const byokConfigRef = context?.codeReviewConfig?.byokConfig;
+
         try {
             const { result } = await this.observabilityService.runLLMInSpan({
                 spanName,
                 runName,
                 attrs: spanAttrs,
+                byokConfig: byokConfigRef,
                 exec: async (callbacks) => {
                     const classifier = this.getClassifier(
                         promptRunner,
@@ -945,7 +956,11 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
         }
 
         const updatedSuggestions = suggestions.codeSuggestions.map(
-            (suggestion: CodeSuggestion & { brokenKodyRulesIds: string[] }) => {
+            (
+                suggestion: Partial<CodeSuggestion> & {
+                    brokenKodyRulesIds?: string[];
+                },
+            ) => {
                 if (!suggestion.brokenKodyRulesIds?.length) {
                     return suggestion;
                 }
@@ -1037,6 +1052,7 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
                 : undefined,
             organizationAndTeamData: context?.organizationAndTeamData,
             kodyRules: kodyRulesFiltered,
+            memories: context?.codeReviewConfig?.kodyMemoryRules || [],
             v2PromptOverrides:
                 context?.activeOverrides ??
                 getOverridesFromPack(context?.sharedContextPack) ??
@@ -1047,6 +1063,7 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
                 ...(context?.fileAugmentations ?? {}),
             } as ContextAugmentationsMap,
             contextPack: context?.sharedContextPack as ContextPack | undefined,
+            documentationContext: context?.documentationContext || [],
         };
 
         return baseContext;
@@ -1206,8 +1223,8 @@ export class KodyRulesAnalysisService implements IKodyRulesAnalysisService {
         prNumber: number,
         response: string,
         fileContext: FileChangeContext,
-        provider: LLMModelProvider,
-        extendedContext: KodyRulesExtendedContext,
+        _provider: LLMModelProvider,
+        _extendedContext: KodyRulesExtendedContext,
     ): AIAnalysisResult | null {
         // Tipo específico para a resposta do UPDATE
         interface KodyRulesUpdateResponse {

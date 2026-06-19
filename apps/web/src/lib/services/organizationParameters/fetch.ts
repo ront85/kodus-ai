@@ -25,9 +25,14 @@ export const createOrUpdateOrganizationParameter = async (
 export const getBYOK = async () => {
     const byokConfig = await getOrganizationParameterByKey<{
         configValue: { main: BYOKConfig; fallback: BYOKConfig };
-    }>({
-        key: OrganizationParametersConfigKey.BYOK_CONFIG,
-    });
+    }>(
+        {
+            key: OrganizationParametersConfigKey.BYOK_CONFIG,
+        },
+        {
+            cache: "no-store",
+        },
+    );
 
     return byokConfig?.configValue;
 };
@@ -57,16 +62,106 @@ export const swapBYOK = async () => {
     );
 };
 
+export type TestBYOKResultCode =
+    | "ok"
+    | "auth"
+    | "not_found"
+    | "bad_request"
+    | "payment"
+    | "rate_limit"
+    | "server_error"
+    | "network"
+    | "unknown";
+
+export type TestBYOKResult = {
+    ok: boolean;
+    code: TestBYOKResultCode;
+    latencyMs: number;
+    message?: string;
+    providerMessage?: string;
+    httpStatus?: number;
+};
+
+export const testBYOK = async (params: {
+    provider: string;
+    apiKey?: string;
+    baseURL?: string;
+    model?: string;
+    vertexLocation?: string;
+    awsBearerToken?: string;
+    awsAccessKeyId?: string;
+    awsSecretAccessKey?: string;
+    awsRegion?: string;
+    awsSessionToken?: string;
+}): Promise<TestBYOKResult> => {
+    const envelope = await axiosAuthorized.post<{ data: TestBYOKResult }>(
+        ORGANIZATION_PARAMETERS_PATHS.TEST_BYOK,
+        params,
+    );
+    return envelope.data;
+};
+
+export type LLMConfigSource = "byok" | "env" | "none";
+
+export type LLMConfigStatus = {
+    source: LLMConfigSource;
+    byok: {
+        configured: boolean;
+        model?: string;
+        providerId?: string;
+        baseUrl?: string;
+    };
+    env: {
+        configured: boolean;
+        model?: string;
+        providerId?:
+            | "openai"
+            | "openai_compatible"
+            | "anthropic"
+            | "google_gemini"
+            | "google_vertex";
+        baseUrl?: string;
+        vertexLocation?: string;
+    };
+};
+
+export const getLLMConfigStatus = async (): Promise<LLMConfigStatus> => {
+    return await authorizedFetch<LLMConfigStatus>(
+        ORGANIZATION_PARAMETERS_PATHS.GET_LLM_CONFIG_STATUS,
+        { cache: "no-store" },
+    );
+};
+
+export type LLMProviderModel = { id: string; name: string };
+
+export const getLLMProviderModels = async (
+    provider: string,
+): Promise<LLMProviderModel[]> => {
+    const response = await authorizedFetch<{ models: LLMProviderModel[] }>(
+        ORGANIZATION_PARAMETERS_PATHS.GET_PROVIDER_MODELS_LIST,
+        { cache: "no-store", params: { provider } },
+    );
+    return response?.models ?? [];
+};
+
 export const getOrganizationParameterByKey = async <
     T extends { configValue: unknown },
->(params: {
-    key: OrganizationParametersConfigKey;
-}) =>
+>(
+    params: {
+        key: OrganizationParametersConfigKey;
+    },
+    config?: Parameters<typeof authorizedFetch<T | null>>[1],
+) =>
     await authorizedFetch<T | null>(ORGANIZATION_PARAMETERS_PATHS.GET_BY_KEY, {
+        ...config,
         params,
     });
 
 const DEFAULT_COCKPIT_METRICS_VISIBILITY: CockpitMetricsVisibility = {
+    tabs: {
+        kodusReview: true,
+        productivity: true,
+    },
     summary: {
         deployFrequency: true,
         prCycleTime: true,

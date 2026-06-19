@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
 import { ContextResolutionModule } from '@libs/core/context-resolution/context-resolution.module';
+import { LicenseModule } from '@libs/ee/license/license.module';
 import { PermissionValidationModule } from '@libs/ee/shared/permission-validation.module';
 import { PermissionsModule } from '@libs/identity/modules/permissions.module';
 import { FindCodeReviewSettingsLogsUseCase } from './application/use-cases/find-code-review-settings-logs.use-case';
@@ -21,6 +22,11 @@ import { PullRequestMessagesLogHandler } from './infrastructure/adapters/service
 import { RepositoriesLogHandler } from './infrastructure/adapters/services/repositoriesLog.handler';
 import { UnifiedLogHandler } from './infrastructure/adapters/services/unifiedLog.handler';
 import { UserStatusLogHandler } from './infrastructure/adapters/services/userStatusLog.handler';
+import { UserInviteLogHandler } from './infrastructure/adapters/services/userInviteLog.handler';
+import { UserManagementLogHandler } from './infrastructure/adapters/services/userManagementLog.handler';
+import { OrgSettingsLogHandler } from './infrastructure/adapters/services/orgSettingsLog.handler';
+import { CliKeyLogHandler } from './infrastructure/adapters/services/cliKeyLog.handler';
+import { AuditLogListener } from './listeners/audit-log.listener';
 
 @Module({
     imports: [
@@ -33,6 +39,7 @@ import { UserStatusLogHandler } from './infrastructure/adapters/services/userSta
         forwardRef(() => PermissionValidationModule),
         ContextResolutionModule,
         forwardRef(() => PermissionsModule),
+        LicenseModule,
     ],
     providers: [
         {
@@ -50,8 +57,13 @@ import { UserStatusLogHandler } from './infrastructure/adapters/services/userSta
         RepositoriesLogHandler,
         UnifiedLogHandler,
         UserStatusLogHandler,
+        UserInviteLogHandler,
+        UserManagementLogHandler,
+        OrgSettingsLogHandler,
+        CliKeyLogHandler,
         RegisterUserStatusLogUseCase,
         FindCodeReviewSettingsLogsUseCase,
+        AuditLogListener,
     ],
     exports: [
         CODE_REVIEW_SETTINGS_LOG_SERVICE_TOKEN,

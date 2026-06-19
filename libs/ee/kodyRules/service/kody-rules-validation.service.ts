@@ -5,11 +5,13 @@
 
 import { isFileMatchingGlob } from '@libs/common/utils/glob-utils';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
-import { PermissionValidationService } from '@libs/ee/shared/services/permissionValidation.service';
 import { environment } from '@libs/ee/configs/environment';
+import { PermissionValidationService } from '@libs/ee/shared/services/permissionValidation.service';
 import {
     IKodyRule,
+    KodyRuleCentralizedStatus,
     KodyRulesStatus,
+    KodyRulesType,
 } from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
 import { Injectable } from '@nestjs/common';
 
@@ -96,9 +98,13 @@ export class KodyRulesValidationService {
         rules: Partial<IKodyRule>[] = [],
         repositoryId: string,
         directoryId?: string,
-    ): Partial<IKodyRule>[] {
+        limited?: boolean,
+    ): {
+        standardRules: Partial<IKodyRule>[];
+        memoryRules: Partial<IKodyRule>[];
+    } {
         if (!rules?.length) {
-            return [];
+            return { standardRules: [], memoryRules: [] };
         }
 
         const repositoryRules: Partial<IKodyRule>[] = [];
@@ -107,6 +113,13 @@ export class KodyRulesValidationService {
 
         for (const rule of rules) {
             if (rule.status !== KodyRulesStatus.ACTIVE) {
+                continue;
+            }
+
+            if (
+                rule.centralizedConfig?.status ===
+                KodyRuleCentralizedStatus.PENDING_ADD
+            ) {
                 continue;
             }
 
@@ -136,14 +149,27 @@ export class KodyRulesValidationService {
         const mergedRulesWithoutDuplicates =
             this.extractUniqueKodyRules(mergedRules);
 
-        const limit = this.isCloud ? 0 : this.MAX_KODY_RULES;
+        const limit = limited ? this.MAX_KODY_RULES : 0;
         const orderedRules = this.orderByCreatedAtAndLimit(
             mergedRulesWithoutDuplicates,
             limit,
             'asc',
         );
 
-        return orderedRules;
+        const [standardRules, memoryRules] = orderedRules.reduce(
+            (acc, rule) => {
+                if (rule.type === KodyRulesType.MEMORY) {
+                    acc[1].push(rule);
+                } else {
+                    acc[0].push(rule);
+                }
+                return acc;
+            },
+            [[], []] as [Partial<IKodyRule>[], Partial<IKodyRule>[]],
+        );
+
+        // Memory rules should be last in the list, so they are applied after all standard rules.
+        return { standardRules, memoryRules };
     }
 
     /**
@@ -223,6 +249,38 @@ export class KodyRulesValidationService {
         );
     }
 
+    getMemoryRulesForContext(
+        path: string | null,
+        kodyRules: Partial<IKodyRule>[],
+        filters: {
+            directoryId?: string;
+            repositoryId?: string;
+            useInclude?: boolean;
+            useExclude?: boolean;
+        },
+    ): Partial<IKodyRule>[] {
+        if (!kodyRules?.length) {
+            return [];
+        }
+
+        const activeMemoryRules = kodyRules.filter(
+            (rule) =>
+                rule?.type === KodyRulesType.MEMORY &&
+                rule?.status === KodyRulesStatus.ACTIVE,
+        );
+
+        const normalizedFilters = {
+            ...filters,
+            directoryId: filters.repositoryId ? filters.directoryId : undefined,
+        };
+
+        return this.getKodyRulesForFolder(
+            path,
+            activeMemoryRules,
+            normalizedFilters,
+        );
+    }
+
     private getKodyRules(
         path: string | null,
         kodyRules: Partial<IKodyRule>[],
@@ -286,6 +344,27 @@ export class KodyRulesValidationService {
 
             // If the rule is not inheritable, it doesn't match.
             if (!inheritable) {
+                return false;
+            }
+
+            // Cross-directory leak guard. The historical default for a
+            // rule's `inheritance.include` is `[]`, which the matcher
+            // below reads as "inherit everywhere" — and so a rule
+            // scoped to one directory would silently apply in every
+            // sibling directory of the same repo (reported by
+            // quintoandar/backend-services on rule b207a89c).
+            //
+            // A directory-scoped rule (`rule.directoryId` set) must NOT
+            // leak into a different directory unless that directory is
+            // explicitly in `include`. Repo-level and global rules
+            // (`rule.directoryId` undefined) keep their original
+            // semantics and continue to match across all contexts.
+            if (
+                directoryId &&
+                rule.directoryId &&
+                rule.directoryId !== directoryId &&
+                !include.includes(directoryId)
+            ) {
                 return false;
             }
 

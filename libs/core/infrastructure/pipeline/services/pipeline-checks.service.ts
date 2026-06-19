@@ -41,6 +41,12 @@ export const checkStageMap = {
         summary:
             'An error occurred during the review. Please check the logs for details.',
     },
+    _pipelineEndPartial: {
+        name: 'Code Review Completed with Warnings',
+        title: 'Code Review Completed with Warnings',
+        summary:
+            'Review finished, but one or more non-critical stages failed. See details below.',
+    },
     _pipelineEndSkipped: {
         name: 'Code Review Skipped',
         title: 'Code Review Skipped',
@@ -174,6 +180,21 @@ export class PipelineChecksService implements IPipelineChecksService {
             });
 
             parts.push(errorList.join('\n'));
+        }
+
+        // 3. Timeout-specific section
+        const timeoutFiles = (context.errors || [])
+            .filter((e) => e.metadata?.isTimeout && e.substage)
+            .map((e) => e.substage as string);
+
+        if (timeoutFiles.length > 0) {
+            const displayFiles = timeoutFiles.slice(0, 10);
+            const remaining = timeoutFiles.length - displayFiles.length;
+            let timeoutSection = `### Timeouts\n- ${displayFiles.join(', ')}`;
+            if (remaining > 0) {
+                timeoutSection += ` (+${remaining} more)`;
+            }
+            parts.push(timeoutSection);
         }
 
         if (parts.length === 0) {
@@ -396,7 +417,10 @@ export class PipelineChecksService implements IPipelineChecksService {
             }
         }
 
-        if (stageName === CheckStageNames._pipelineEndFailure) {
+        if (
+            stageName === CheckStageNames._pipelineEndFailure ||
+            stageName === CheckStageNames._pipelineEndPartial
+        ) {
             const shouldBuildFailureSummaryFromContext =
                 !summary || this.isGenericFailureMessage(summary);
 

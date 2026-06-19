@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createLogger } from '@kodus/flow';
 import { IUseCase } from '@libs/core/domain/interfaces/use-case.interface';
 import {
@@ -20,6 +21,11 @@ import {
 } from '@libs/organization/domain/teamMembers/contracts/teamMembers.service.contracts';
 import { UpdateAnotherUserDto } from '@libs/identity/dtos/update-another-user.dto';
 import { IUser } from '@libs/identity/domain/user/interfaces/user.interface';
+import { AuditLogEvents } from '@libs/ee/codeReviewSettingsLog/events/audit-log.events';
+import { UserRoleChangeLogParams } from '@libs/ee/codeReviewSettingsLog/infrastructure/adapters/services/userManagementLog.handler';
+import { ActionType } from '@libs/core/infrastructure/config/types/general/codeReviewSettingsLog.type';
+import { NotificationService } from '@libs/notifications/application/notification.service';
+import { NotificationEvent } from '@libs/notifications/domain/catalog/events';
 
 @Injectable()
 export class UpdateAnotherUserUseCase implements IUseCase {
@@ -37,6 +43,10 @@ export class UpdateAnotherUserUseCase implements IUseCase {
 
         @Inject(TEAM_MEMBERS_SERVICE_TOKEN)
         private readonly teamMembersService: ITeamMemberService,
+
+        private readonly eventEmitter: EventEmitter2,
+
+        private readonly notificationService: NotificationService,
     ) {}
 
     async execute(
@@ -85,6 +95,8 @@ export class UpdateAnotherUserUseCase implements IUseCase {
                 );
             }
 
+            const previousRole = targetUser.role;
+
             const updatedUser = await this.usersService.update(
                 { uuid: targetUserId },
                 {
@@ -102,6 +114,60 @@ export class UpdateAnotherUserUseCase implements IUseCase {
                 context: UpdateAnotherUserUseCase.name,
                 metadata: { userId, targetUserId, data },
             });
+
+            if (role && previousRole !== role) {
+                const actingUser = await this.usersService.findOne({
+                    uuid: userId,
+                });
+
+                const logParams: UserRoleChangeLogParams = {
+                    organizationAndTeamData: {
+                        organizationId,
+                        teamId: teamMember.team.uuid,
+                    },
+                    userInfo: {
+                        userId,
+                        userEmail: actingUser?.email,
+                    },
+                    actionType: ActionType.EDIT,
+                    targetUserEmail: targetUser.email,
+                    previousRole,
+                    newRole: role,
+                };
+
+                this.eventEmitter.emit(
+                    AuditLogEvents.USER_ROLE_CHANGE,
+                    logParams,
+                );
+
+                // Notify that a member's role changed. The audience (org
+                // owners) is declared as `defaultRoles` in the catalog and
+                // resolved config-driven by the dispatcher — no recipients
+                // here. Best-effort: emit failures don't break the flow.
+                try {
+                    await this.notificationService.emit({
+                        event: NotificationEvent.ORG_ROLE_CHANGED,
+                        payload: {
+                            affectedUserEmail: targetUser.email ?? '',
+                            previousRole: String(previousRole ?? 'unknown'),
+                            newRole: String(role),
+                            changedBy: actingUser?.email ?? userId,
+                            organizationName: organization.name ?? '',
+                        },
+                        organizationId,
+                    });
+                } catch (notifyError) {
+                    this.logger.error({
+                        message:
+                            'Failed to emit org.role_changed notification',
+                        error:
+                            notifyError instanceof Error
+                                ? notifyError
+                                : new Error(String(notifyError)),
+                        context: UpdateAnotherUserUseCase.name,
+                    });
+                }
+            }
 
             return updatedUser.toObject();
         } catch (error) {

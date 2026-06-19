@@ -5,14 +5,28 @@ import { getConnections } from "@services/setup/fetch";
 import { getTeams } from "@services/teams/fetch";
 import { HelpCircleIcon } from "lucide-react";
 import { ErrorCard } from "src/core/components/ui/error-card";
+import { FEATURE_FLAGS } from "src/core/config/feature-flags";
 import { getGlobalSelectedTeamId } from "src/core/utils/get-global-selected-team-id";
+import { isFeatureEnabled } from "src/core/feature-gate/resolver";
 import { safeArray } from "src/core/utils/safe-array";
+import { getOrganizationReleaseTrack } from "@services/organizations/release-track";
 
 export default async function IntegrationsPage() {
-    const [teamId, teams] = await Promise.all([
-        getGlobalSelectedTeamId(),
-        getTeams(),
-    ]);
+    const releaseTrackPromise = getOrganizationReleaseTrack();
+    const [teamId, teams, githubEnterpriseServerPatEnabled] = await Promise.all(
+        [
+            getGlobalSelectedTeamId(),
+            getTeams(),
+            releaseTrackPromise
+                .then((releaseTrack) =>
+                    isFeatureEnabled({
+                        feature: FEATURE_FLAGS.githubEnterpriseServerPat,
+                        releaseTrack,
+                    }),
+                )
+                .catch(() => false),
+        ],
+    );
 
     let connectionsError = false;
     const connectionsResult = await getConnections(teamId).catch(() => {
@@ -35,7 +49,13 @@ export default async function IntegrationsPage() {
                         message="Failed to load integrations. Please try again."
                     />
                 ) : (
-                    <CardsGroup connections={connections} team={team} />
+                    <CardsGroup
+                        connections={connections}
+                        team={team}
+                        githubEnterpriseServerPatEnabled={
+                            githubEnterpriseServerPatEnabled
+                        }
+                    />
                 )}
 
                 <Alert>

@@ -50,9 +50,19 @@ export class GetCodeReviewParameterUseCase {
         private readonly promptReferenceManager: IPromptExternalReferenceManagerService,
     ) {}
 
-    async execute(user: Partial<IUser>, teamId: string) {
+    async execute(
+        user: Partial<IUser>,
+        teamId: string,
+        options: {
+            skipAuthorization?: boolean;
+            organizationId?: string;
+        } = {},
+    ) {
         try {
-            if (!user?.organization?.uuid) {
+            const organizationId =
+                options.organizationId ?? user?.organization?.uuid;
+
+            if (!organizationId) {
                 throw new Error('User organization data is missing');
             }
 
@@ -61,7 +71,7 @@ export class GetCodeReviewParameterUseCase {
             }
 
             const organizationAndTeamData = {
-                organizationId: user.organization.uuid,
+                organizationId,
                 teamId: teamId,
             };
 
@@ -78,12 +88,14 @@ export class GetCodeReviewParameterUseCase {
 
             const filteredRepositories = [];
             for (const repo of parameters.configValue.repositories) {
-                const hasPermission = await this.authorizationService.check({
-                    user,
-                    action: Action.Read,
-                    resource: ResourceType.CodeReviewSettings,
-                    repoIds: [repo.id],
-                });
+                const hasPermission = options.skipAuthorization
+                    ? true
+                    : await this.authorizationService.check({
+                          user,
+                          action: Action.Read,
+                          resource: ResourceType.CodeReviewSettings,
+                          repoIds: [repo.id],
+                      });
 
                 if (hasPermission) {
                     filteredRepositories.push(repo);
@@ -206,10 +218,11 @@ export class GetCodeReviewParameterUseCase {
                 );
 
                 // Buscar e adicionar referências externas do nível repositório
-                const repoConfigKey = this.promptReferenceManager.buildConfigKey(
-                    organizationAndTeamData,
-                    repo.id,
-                );
+                const repoConfigKey =
+                    this.promptReferenceManager.buildConfigKey(
+                        organizationAndTeamData,
+                        repo.id,
+                    );
                 formattedRepoFileConfig =
                     await this.enrichConfigWithExternalReferences(
                         formattedRepoFileConfig,
@@ -220,18 +233,29 @@ export class GetCodeReviewParameterUseCase {
 
                 for (const dir of repo.directories || []) {
                     try {
+                        const isDirectoryGroup =
+                            Array.isArray(dir.folders) &&
+                            dir.folders.length > 0;
+
                         const directoryFile =
-                            await this.codeBaseConfigService.getKodusConfigFile({
-                                organizationAndTeamData,
-                                repository,
-                                directoryPath: dir.path,
-                                overrideConfig:
-                                    dir.configs
-                                        ?.kodusConfigFileOverridesWebPreferences ??
-                                    repo.configs
-                                        ?.kodusConfigFileOverridesWebPreferences ??
-                                    false,
-                            });
+                            await this.codeBaseConfigService.getKodusConfigFile(
+                                {
+                                    organizationAndTeamData,
+                                    repository,
+                                    ...(isDirectoryGroup
+                                        ? { directoryId: dir.id }
+                                        : {
+                                              directoryPath:
+                                                  (dir as any).path,
+                                          }),
+                                    overrideConfig:
+                                        dir.configs
+                                            ?.kodusConfigFileOverridesWebPreferences ??
+                                        repo.configs
+                                            ?.kodusConfigFileOverridesWebPreferences ??
+                                        false,
+                                },
+                            );
 
                         const formattedDirConfig = this.formatLevel(
                             formattedRepoFileConfig,
@@ -274,7 +298,7 @@ export class GetCodeReviewParameterUseCase {
                                 teamId: organizationAndTeamData.teamId,
                                 repositoryId: repo.id,
                                 directoryId: dir.id,
-                                directoryPath: dir.path,
+                                directoryPath: dir.folders?.[0]?.path,
                             },
                         });
                         continue;

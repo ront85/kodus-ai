@@ -36,13 +36,14 @@ const checkStatusMap = {
 const checkConclusionMap = {
     [CheckConclusion.FAILURE]: GithubCheckConclusion.FAILURE,
     [CheckConclusion.SUCCESS]: GithubCheckConclusion.SUCCESS,
+    [CheckConclusion.NEUTRAL]: GithubCheckConclusion.NEUTRAL,
     [CheckConclusion.SKIPPED]: GithubCheckConclusion.SKIPPED,
 } as const;
 @Injectable()
 export class GithubChecksService implements IChecksAdapter {
     private readonly logger = createLogger(GithubChecksService.name);
 
-    constructor(private readonly gitHubService: GithubService) { }
+    constructor(private readonly gitHubService: GithubService) {}
 
     async createCheckRun(params: CreateCheckRunParams): Promise<number | null> {
         const {
@@ -55,7 +56,6 @@ export class GithubChecksService implements IChecksAdapter {
         } = params;
 
         try {
-
             const authDetails = await this.gitHubService.getGithubAuthDetails(
                 organizationAndTeamData,
             );

@@ -25,7 +25,6 @@ import { useAuth } from "src/core/providers/auth.provider";
 import { useSelectedTeamId } from "src/core/providers/selected-team-context";
 import { PlatformType } from "src/core/types";
 import { ClientSideCookieHelpers } from "src/core/utils/cookie";
-import { captureSegmentEvent } from "src/core/utils/segment";
 import { useOrganizationContext } from "src/features/organization/_providers/organization-context";
 
 type Integration = (typeof INTEGRATIONS_KEY)[keyof typeof INTEGRATIONS_KEY];
@@ -88,8 +87,8 @@ export default function Redirect() {
             const selectedTeamCookie = getCookie("selectedTeam") as any;
             const savedTeam =
                 selectedTeamCookie &&
-                    selectedTeamCookie !== "undefined" &&
-                    selectedTeamCookie !== ""
+                selectedTeamCookie !== "undefined" &&
+                selectedTeamCookie !== ""
                     ? (JSON.parse(selectedTeamCookie) as any)
                     : null;
 
@@ -164,15 +163,6 @@ export default function Redirect() {
                     organizationAndTeamData,
                     installationId,
                 });
-
-                captureSegmentEvent({
-                    userId: userId!,
-                    event: "setup_git_integration_success",
-                    properties: {
-                        platform: params.id,
-                        teamId: teamId,
-                    },
-                });
             }
         } else if (integration === INTEGRATIONS_KEY.GITLAB) {
             if (organizationId) {
@@ -181,26 +171,17 @@ export default function Redirect() {
                     integrationType: PlatformType.GITLAB,
                     organizationAndTeamData,
                 });
-
-                captureSegmentEvent({
-                    userId: userId!,
-                    event: "setup_git_integration_success",
-                    properties: {
-                        platform: params.id,
-                        teamId: teamId,
-                    },
-                });
             }
         }
 
         switch (integration) {
             case INTEGRATIONS_KEY.GITHUB: {
                 switch (
-                (
-                    integrationResponse as Awaited<
-                        ReturnType<typeof createCodeManagementIntegration>
-                    >
-                ).data.status
+                    (
+                        integrationResponse as Awaited<
+                            ReturnType<typeof createCodeManagementIntegration>
+                        >
+                    ).data.status
                 ) {
                     case "SUCCESS": {
                         await redirectToConfiguration(
@@ -257,11 +238,11 @@ export default function Redirect() {
 
             case INTEGRATIONS_KEY.GITLAB: {
                 switch (
-                (
-                    integrationResponse as Awaited<
-                        ReturnType<typeof createCodeManagementIntegration>
-                    >
-                ).data.status
+                    (
+                        integrationResponse as Awaited<
+                            ReturnType<typeof createCodeManagementIntegration>
+                        >
+                    ).data.status
                 ) {
                     case "SUCCESS": {
                         await redirectToConfiguration(

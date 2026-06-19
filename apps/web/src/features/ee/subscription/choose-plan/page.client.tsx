@@ -1,7 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@components/ui/button";
 import {
@@ -29,7 +28,6 @@ import {
     GitPullRequestIcon,
     HeadphonesIcon,
     KeyIcon,
-    type LucideIcon,
     MessageCircleIcon,
     PlugIcon,
     RadarIcon,
@@ -37,8 +35,10 @@ import {
     ShieldCheckIcon,
     SparklesIcon,
     UsersIcon,
+    type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "src/core/providers/auth.provider";
+import { useConfig } from "@providers/ConfigProvider";
 import { useSelectedTeamId } from "src/core/providers/selected-team-context";
 import { CurrencyHelpers } from "src/core/utils/currency";
 import { addSearchParamsToUrl } from "src/core/utils/url";
@@ -97,7 +97,10 @@ const FEATURE_ICONS: Array<{ keywords: string[]; icon: LucideIcon }> = [
     { keywords: ["soc 2", "soc2"], icon: ShieldCheckIcon },
     { keywords: ["rbac", "audit"], icon: ShieldCheckIcon },
     { keywords: ["hours", "onboarding", "dedicated"], icon: HeadphonesIcon },
-    { keywords: ["private discord", "private channel"], icon: MessageCircleIcon },
+    {
+        keywords: ["private discord", "private channel"],
+        icon: MessageCircleIcon,
+    },
 ];
 
 function getFeatureIcon(feature: string): LucideIcon {
@@ -216,7 +219,7 @@ function FreePlan({ plan }: { plan: Plan }) {
                 </CardDescription>
             </CardHeader>
 
-            <CardContent className="flex-none pb-4 pt-2">
+            <CardContent className="flex-none pt-2 pb-4">
                 <div className="bg-card-lv1 rounded-lg p-4">
                     <Heading variant="h2" className="text-primary-light">
                         Free
@@ -234,7 +237,7 @@ function FreePlan({ plan }: { plan: Plan }) {
                 <PlanFeatures features={plan.features} />
             </CardContent>
 
-            <CardContent className="flex-none pb-5 pt-0">
+            <CardContent className="flex-none pt-0 pb-5">
                 <Button
                     size="md"
                     variant="secondary"
@@ -274,7 +277,7 @@ function TeamsPlan({ plan }: { plan: Plan }) {
     return (
         <Card className="border-primary-dark relative flex flex-col overflow-hidden border-2">
             {/* Popular badge */}
-            <div className="bg-primary-light absolute right-4 top-4 rounded-full px-3 py-1">
+            <div className="bg-primary-light absolute top-4 right-4 rounded-full px-3 py-1">
                 <span className="text-xs font-semibold text-black">
                     Most popular
                 </span>
@@ -292,7 +295,7 @@ function TeamsPlan({ plan }: { plan: Plan }) {
                 </CardDescription>
             </CardHeader>
 
-            <CardContent className="flex-none pb-4 pt-2">
+            <CardContent className="flex-none pt-2 pb-4">
                 <div className="bg-primary-dark/30 rounded-lg p-4">
                     <div className="flex items-baseline gap-1">
                         <Heading
@@ -351,7 +354,7 @@ function TeamsPlan({ plan }: { plan: Plan }) {
                 <PlanFeatures features={plan.features} />
             </CardContent>
 
-            <CardContent className="flex flex-none flex-col gap-4 pb-5 pt-0">
+            <CardContent className="flex flex-none flex-col gap-4 pt-0 pb-5">
                 <FormControl.Root>
                     <FormControl.Label htmlFor="teams-quantity">
                         Quantity of licenses
@@ -386,6 +389,7 @@ function TeamsPlan({ plan }: { plan: Plan }) {
 
 function EnterprisePlan({ plan }: { plan: Plan }) {
     const { email } = useAuth();
+    const cfg = useConfig();
 
     return (
         <Card className="flex flex-col overflow-hidden">
@@ -401,7 +405,7 @@ function EnterprisePlan({ plan }: { plan: Plan }) {
                 </CardDescription>
             </CardHeader>
 
-            <CardContent className="flex-none pb-4 pt-2">
+            <CardContent className="flex-none pt-2 pb-4">
                 <div className="bg-card-lv1 rounded-lg p-4">
                     <Heading variant="h2" className="text-primary-light">
                         Custom
@@ -419,11 +423,11 @@ function EnterprisePlan({ plan }: { plan: Plan }) {
                 <PlanFeatures features={plan.features} />
             </CardContent>
 
-            <CardContent className="flex-none pb-5 pt-0">
+            <CardContent className="flex-none pt-0 pb-5">
                 <Link
                     target="_blank"
                     href={addSearchParamsToUrl(
-                        process.env.WEB_SUPPORT_TALK_TO_FOUNDER_URL ?? "",
+                        cfg.supportTalkToFounderUrl || "",
                         {
                             email,
                             notes: "I want to know more about Enterprise plan.",

@@ -1,5 +1,5 @@
-import { IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString } from 'class-validator';
 
 export class DeleteRepositoryCodeReviewParameterDto {
     @IsString()
@@ -13,5 +13,10 @@ export class DeleteRepositoryCodeReviewParameterDto {
     @IsOptional()
     @IsString()
     @ApiPropertyOptional({ example: 'src/services' })
-    directoryId: string;
+    directoryId?: string;
+
+    @IsOptional()
+    @IsString()
+    @ApiPropertyOptional({ example: 'folder-uuid' })
+    folderId?: string;
 }

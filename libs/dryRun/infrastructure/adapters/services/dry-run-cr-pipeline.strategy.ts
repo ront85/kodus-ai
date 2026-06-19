@@ -41,6 +41,7 @@ export class DryRunCodeReviewPipelineStrategy implements IPipelineStrategy<CodeR
             this.resolveConfigStage,
             this.validateConfigStage,
             this.fetchChangedFilesStage,
+            // GatherDocumentationContextStage retired 2026-05-13.
             this.loadExternalContextStage,
             this.initialCommentStage,
             this.processFilesPrLevelReviewStage,

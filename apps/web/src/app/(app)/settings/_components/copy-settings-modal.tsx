@@ -1,6 +1,15 @@
-import { Suspense, useMemo } from "react";
+import { Suspense, useMemo, useState } from "react";
+import { Badge } from "@components/ui/badge";
 import { Button } from "@components/ui/button";
 import { Card, CardHeader } from "@components/ui/card";
+import {
+    Command,
+    CommandEmpty,
+    CommandGroup,
+    CommandInput,
+    CommandItem,
+    CommandList,
+} from "@components/ui/command";
 import {
     Dialog,
     DialogContent,
@@ -10,23 +19,20 @@ import {
 } from "@components/ui/dialog";
 import { FormControl } from "@components/ui/form-control";
 import { magicModal } from "@components/ui/magic-modal";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@components/ui/select";
 import { Spinner } from "@components/ui/spinner";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useReactQueryInvalidateQueries } from "@hooks/use-invalidate-queries";
 import { PARAMETERS_PATHS } from "@services/parameters";
 import { createOrUpdateCodeReviewParameter } from "@services/parameters/fetch";
 import { ParametersConfigKey } from "@services/parameters/types";
-import { ArrowDownIcon, CopyPlusIcon } from "lucide-react";
-import { Controller, useForm } from "react-hook-form";
+import { Check, CopyPlusIcon, InfoIcon, XIcon } from "lucide-react";
 import { useSelectedTeamId } from "src/core/providers/selected-team-context";
-import { z } from "zod";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipPortal,
+    TooltipProvider,
+    TooltipTrigger,
+} from "@components/ui/tooltip";
 
 import { GitDirectorySelector } from "../code-review/_components/git-directory-selector";
 
@@ -36,201 +42,334 @@ type Repository = {
     isSelected?: boolean;
 };
 
-interface IForm {
-    originRepositoryId: string;
-    targetRepositoryId: string;
-    targetDirectoryPath: string;
-}
+type EditGroupContext = {
+    repositoryId: string;
+    directoryId: string;
+    initialPaths: string[];
+};
 
-const formSchema = z.object({
-    originRepositoryId: z.string(),
-    targetRepositoryId: z.string(),
-    targetDirectoryPath: z.string(),
-});
 export const AddRepoModal = ({
     repositories,
+    editGroup,
 }: {
     repositories: Repository[];
+    editGroup?: EditGroupContext;
 }) => {
     const { teamId } = useSelectedTeamId();
+    const { invalidateQueries, generateQueryKey } =
+        useReactQueryInvalidateQueries();
 
-    const availableOriginRepositories = useMemo<Repository[]>(
-        () => [{ id: "global", name: "Global" }, ...repositories],
-        [repositories],
+    const isEditMode = !!editGroup;
+    const [selectedIds, setSelectedIds] = useState<string[]>(
+        editGroup ? [editGroup.repositoryId] : [],
+    );
+    const [directoryPaths, setDirectoryPaths] = useState<string[]>(
+        editGroup?.initialPaths ?? [],
+    );
+    const [search, setSearch] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [showRepoList, setShowRepoList] = useState(false);
+
+    const selectedRepositories = useMemo(
+        () => repositories.filter((r) => selectedIds.includes(r.id)),
+        [repositories, selectedIds],
     );
 
-    const form = useForm<IForm>({
-        mode: "all",
-        reValidateMode: "onChange",
-        criteriaMode: "firstError",
-        resolver: zodResolver(formSchema),
-        defaultValues: {
-            originRepositoryId: "global",
-        },
-    });
+    const unselectedRepositories = useMemo(
+        () => repositories.filter((r) => !selectedIds.includes(r.id)),
+        [repositories, selectedIds],
+    );
 
-    const repositoryId = form.watch("targetRepositoryId");
+    const singleSelectedRepoId =
+        selectedIds.length === 1 ? selectedIds[0] : null;
 
-    const formState = form.formState;
-
-    const { resetQueries, generateQueryKey } = useReactQueryInvalidateQueries();
-
-    const handleSubmit = form.handleSubmit(async (values) => {
+    const handleSubmit = async () => {
         magicModal.lock();
+        setIsSubmitting(true);
 
-        await createOrUpdateCodeReviewParameter(
-            {},
-            teamId,
-            values.targetRepositoryId,
-            undefined,
-            values.targetDirectoryPath,
-        );
+        try {
+            const paths =
+                singleSelectedRepoId && directoryPaths.length > 0
+                    ? directoryPaths
+                    : undefined;
 
-        await Promise.all([
-            resetQueries({
-                queryKey: generateQueryKey(PARAMETERS_PATHS.GET_BY_KEY, {
-                    params: {
-                        key: ParametersConfigKey.CODE_REVIEW_CONFIG,
+            if (isEditMode) {
+                await createOrUpdateCodeReviewParameter(
+                    {},
+                    teamId,
+                    editGroup.repositoryId,
+                    editGroup.directoryId,
+                    paths,
+                );
+            } else {
+                for (const repoId of selectedIds) {
+                    await createOrUpdateCodeReviewParameter(
+                        {},
                         teamId,
-                    },
-                }),
-            }),
-            resetQueries({
-                queryKey: generateQueryKey(
-                    PARAMETERS_PATHS.GET_CODE_REVIEW_PARAMETER,
-                    {
+                        repoId,
+                        undefined,
+                        paths,
+                    );
+                }
+            }
+
+            await Promise.all([
+                invalidateQueries({
+                    queryKey: generateQueryKey(PARAMETERS_PATHS.GET_BY_KEY, {
                         params: {
+                            key: ParametersConfigKey.CODE_REVIEW_CONFIG,
                             teamId,
                         },
-                    },
-                ),
-            }),
-        ]);
+                    }),
+                }),
+                invalidateQueries({
+                    queryKey: generateQueryKey(
+                        PARAMETERS_PATHS.GET_CODE_REVIEW_PARAMETER,
+                        {
+                            params: {
+                                teamId,
+                            },
+                        },
+                    ),
+                }),
+            ]);
 
-        magicModal.hide(true);
-    });
+            magicModal.hide(true);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
 
     return (
         <Dialog open onOpenChange={() => magicModal.hide()}>
-            <DialogContent>
+            <DialogContent
+                className="max-w-5xl"
+                onOpenAutoFocus={(e) => e.preventDefault()}>
                 <DialogHeader>
-                    <DialogTitle>Create repository settings</DialogTitle>
+                    <DialogTitle>
+                        {isEditMode
+                            ? "Edit directory group"
+                            : "Create repository settings"}
+                    </DialogTitle>
                 </DialogHeader>
 
-                <Controller
-                    name="targetRepositoryId"
-                    control={form.control}
-                    render={({ field }) => (
-                        <FormControl.Root>
-                            <FormControl.Label htmlFor={field.name}>
-                                Select the target repository
-                            </FormControl.Label>
+                {!isEditMode && <FormControl.Root>
+                    <FormControl.Label>
+                        Select the target repository
+                    </FormControl.Label>
 
-                            <FormControl.Input>
-                                <Select
-                                    value={field.value}
+                    <FormControl.Input>
+                        <Card className="ring-1">
+                            <Command
+                                filter={(value, search) => {
+                                    const repository = repositories.find(
+                                        (r) => r.id === value,
+                                    );
+
+                                    if (!repository) return 0;
+
+                                    return repository.name
+                                        .toLowerCase()
+                                        .includes(search.toLowerCase())
+                                        ? 1
+                                        : 0;
+                                }}>
+                                <CommandInput
+                                    placeholder={
+                                        selectedRepositories.length > 0
+                                            ? selectedRepositories
+                                                  .map((r) => r.name)
+                                                  .join(", ")
+                                            : "Search repository..."
+                                    }
                                     onValueChange={(value) => {
-                                        field.onChange(value);
+                                        setSearch(value);
+                                        setShowRepoList(true);
+                                    }}
+                                    onClick={() => setShowRepoList(true)}
+                                    onBlur={() =>
+                                        setTimeout(
+                                            () => setShowRepoList(false),
+                                            150,
+                                        )
+                                    }
+                                />
 
-                                        const repository = repositories.find(
-                                            (r) => r.id === value,
-                                        );
+                                {showRepoList && (
+                                    <CommandList
+                                        className="max-h-56 overflow-y-auto"
+                                        onMouseDown={(e) => e.preventDefault()}>
+                                        <CommandEmpty>
+                                            No repository found.
+                                        </CommandEmpty>
 
-                                        if (!repository?.isSelected) {
-                                            form.setValue(
-                                                "targetDirectoryPath",
-                                                "/",
-                                            );
-                                        }
-                                    }}>
-                                    <SelectTrigger
-                                        id={field.name}
-                                        className="w-full"
-                                        aria-label="Select target repository">
-                                        <SelectValue placeholder="Select" />
-                                    </SelectTrigger>
-
-                                    <SelectContent className="max-h-56 w-[var(--radix-popper-anchor-width)] overflow-y-auto">
-                                        {repositories.length === 0 ? (
-                                            <div className="text-text-secondary px-5 py-4 text-sm">
-                                                No repositories to select
-                                            </div>
-                                        ) : (
-                                            <>
-                                                {repositories.map(
-                                                    (availableRepository) => (
-                                                        <SelectItem
-                                                            key={
-                                                                availableRepository.id
-                                                            }
-                                                            value={
-                                                                availableRepository.id
-                                                            }>
-                                                            {
-                                                                availableRepository.name
-                                                            }
-                                                        </SelectItem>
+                                        {selectedRepositories.length > 0 && (
+                                            <CommandGroup heading="Selected">
+                                                {selectedRepositories.map(
+                                                    (r) => (
+                                                        <CommandItem
+                                                            key={r.id}
+                                                            value={r.id}
+                                                            onSelect={(
+                                                                currentValue,
+                                                            ) => {
+                                                                setSelectedIds(
+                                                                    selectedIds.filter(
+                                                                        (id) =>
+                                                                            id !==
+                                                                            currentValue,
+                                                                    ),
+                                                                );
+                                                            }}>
+                                                            {r.name}
+                                                            <Check className="text-primary-light -mr-2 size-5" />
+                                                        </CommandItem>
                                                     ),
                                                 )}
-                                            </>
+                                            </CommandGroup>
                                         )}
-                                    </SelectContent>
-                                </Select>
-                            </FormControl.Input>
 
-                            <FormControl.Helper>
-                                The changes you make in this repository will
-                                override global defaults.
-                            </FormControl.Helper>
-                        </FormControl.Root>
-                    )}
-                />
-
-                {repositoryId && (
-                    <Controller
-                        name="targetDirectoryPath"
-                        control={form.control}
-                        render={({ field }) => (
-                            <FormControl.Root>
-                                <FormControl.Label htmlFor={field.name}>
-                                    Select the target directory
-                                </FormControl.Label>
-
-                                <FormControl.Input>
-                                    <Card className="ring-1">
-                                        <Suspense
-                                            fallback={
-                                                <CardHeader className="flex-row items-center gap-5 py-4 text-sm">
-                                                    <Spinner className="size-6" />
-                                                    <span className="text-text-secondary">
-                                                        Loading directories
-                                                    </span>
-                                                </CardHeader>
-                                            }>
-                                            <CardHeader className="max-h-64 overflow-y-auto py-4">
-                                                <GitDirectorySelector
-                                                    value={field.value}
-                                                    repositoryId={repositoryId}
-                                                    onValueChange={
-                                                        field.onChange
-                                                    }
-                                                />
-                                            </CardHeader>
-                                        </Suspense>
-                                    </Card>
-                                </FormControl.Input>
-
-                                {field.value && (
-                                    <FormControl.Helper>
-                                        Selected directory is
-                                        <span className="text-primary-light ml-1">
-                                            {field.value}
-                                        </span>
-                                    </FormControl.Helper>
+                                        {unselectedRepositories.length > 0 && (
+                                            <CommandGroup heading="Not selected">
+                                                {unselectedRepositories.map(
+                                                    (r) => (
+                                                        <CommandItem
+                                                            key={r.id}
+                                                            value={r.id}
+                                                            onSelect={(
+                                                                currentValue,
+                                                            ) => {
+                                                                setSelectedIds([
+                                                                    ...selectedIds,
+                                                                    currentValue,
+                                                                ]);
+                                                            }}>
+                                                            {r.name}
+                                                        </CommandItem>
+                                                    ),
+                                                )}
+                                            </CommandGroup>
+                                        )}
+                                    </CommandList>
                                 )}
-                            </FormControl.Root>
-                        )}
-                    />
+                            </Command>
+                        </Card>
+                    </FormControl.Input>
+
+                    <FormControl.Helper>
+                        The changes you make in this repository will override
+                        global defaults.
+                    </FormControl.Helper>
+                </FormControl.Root>}
+
+                {singleSelectedRepoId && (
+                    <FormControl.Root>
+                        <FormControl.Label>
+                            Select the target directories
+                        </FormControl.Label>
+
+                        <FormControl.Input>
+                            <div className="flex gap-4">
+                                <Card className="min-w-0 flex-1 ring-1">
+                                    <Suspense
+                                        fallback={
+                                            <CardHeader className="flex-row items-center gap-5 py-4 text-sm">
+                                                <Spinner className="size-6" />
+                                                <span className="text-text-secondary">
+                                                    Loading directories
+                                                </span>
+                                            </CardHeader>
+                                        }>
+                                        <CardHeader className="max-h-[28rem] overflow-y-auto py-4">
+                                            <GitDirectorySelector
+                                                multiple
+                                                value={directoryPaths}
+                                                repositoryId={
+                                                    singleSelectedRepoId
+                                                }
+                                                excludeGroupId={
+                                                    editGroup?.directoryId
+                                                }
+                                                onValueChange={
+                                                    setDirectoryPaths
+                                                }
+                                            />
+                                        </CardHeader>
+                                    </Suspense>
+                                </Card>
+
+                                <Card className="w-80 shrink-0 ring-1">
+                                    <CardHeader className="max-h-[28rem] overflow-y-auto py-4">
+                                        <p className="text-text-secondary mb-2 text-xs font-medium">
+                                            Selected directories
+                                        </p>
+
+                                        {directoryPaths.length === 0 && (
+                                            <p className="text-text-tertiary text-xs">
+                                                No directories selected
+                                            </p>
+                                        )}
+
+                                        <TooltipProvider delayDuration={300}>
+                                            <div className="flex flex-col gap-1.5">
+                                                {directoryPaths.map((path) => (
+                                                    <Badge
+                                                        key={path}
+                                                        variant="helper"
+                                                        className="w-full justify-between gap-1 pr-1">
+                                                        <Tooltip>
+                                                            <TooltipTrigger
+                                                                asChild>
+                                                                <span
+                                                                    dir="rtl"
+                                                                    className="min-w-0 truncate">
+                                                                    {path}
+                                                                </span>
+                                                            </TooltipTrigger>
+                                                            <TooltipPortal>
+                                                                <TooltipContent
+                                                                    side="left">
+                                                                    {path}
+                                                                </TooltipContent>
+                                                            </TooltipPortal>
+                                                        </Tooltip>
+                                                        <button
+                                                            type="button"
+                                                            className="text-text-tertiary hover:text-text-primary shrink-0 rounded-sm transition-colors"
+                                                            onClick={() =>
+                                                                setDirectoryPaths(
+                                                                    directoryPaths.filter(
+                                                                        (p) =>
+                                                                            p !==
+                                                                            path,
+                                                                    ),
+                                                                )
+                                                            }>
+                                                            <XIcon className="size-3" />
+                                                        </button>
+                                                    </Badge>
+                                                ))}
+                                            </div>
+                                        </TooltipProvider>
+                                    </CardHeader>
+                                </Card>
+                            </div>
+                        </FormControl.Input>
+                    </FormControl.Root>
+                )}
+
+                {singleSelectedRepoId && directoryPaths.length > 0 && (
+                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-400">
+                        <InfoIcon className="mt-0.5 size-3.5 shrink-0" />
+                        <span>
+                            PRs will be reviewed when at least one changed
+                            file is inside any of the selected{" "}
+                            {directoryPaths.length === 1
+                                ? "directory"
+                                : "directories"}
+                            .
+                        </span>
+                    </div>
                 )}
 
                 <DialogFooter>
@@ -239,9 +378,13 @@ export const AddRepoModal = ({
                         variant="primary"
                         onClick={handleSubmit}
                         leftIcon={<CopyPlusIcon />}
-                        disabled={!formState.isValid}
-                        loading={formState.isSubmitting}>
-                        Create settings
+                        disabled={
+                            isEditMode
+                                ? directoryPaths.length === 0
+                                : selectedIds.length === 0
+                        }
+                        loading={isSubmitting}>
+                        {isEditMode ? "Save directories" : "Create settings"}
                     </Button>
                 </DialogFooter>
             </DialogContent>

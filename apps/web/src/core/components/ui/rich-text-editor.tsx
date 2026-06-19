@@ -1,16 +1,17 @@
 "use client";
 
 import * as React from "react";
-import { useEditor, EditorContent, Editor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
+import { Editor, EditorContent, useEditor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
 import { cn } from "src/core/utils/components";
+
+import { CodeBlock } from "./code-block-extension";
 import { MCPMention } from "./mcp-mention-extension";
 import { MentionTrigger } from "./mention-trigger-extension";
-import { CodeBlock } from "./code-block-extension";
+import { RichTextEditorSearch } from "./rich-text-editor-search";
 import { RichTextEditorToolbar } from "./rich-text-editor-toolbar";
 import { SearchReplace } from "./search-replace-extension";
-import { RichTextEditorSearch } from "./rich-text-editor-search";
 
 type RichTextEditorProps = {
     value: string | object;
@@ -21,7 +22,12 @@ type RichTextEditorProps = {
     maxLength?: number;
     enableMentions?: boolean;
     saveFormat?: "json" | "text";
-    onTriggerAction?: (pos: number) => void;
+    /**
+     * Called when the user types `@`. Return `true` if the consumer is going
+     * to open a mention popup (the `@` will be swallowed); return `false`/void
+     * to let Tiptap insert the literal `@` character.
+     */
+    onTriggerAction?: (pos: number) => boolean | void;
     editorRefAction?: (el: HTMLDivElement | null) => void;
     editorInstanceAction?: (editor: Editor | null) => void;
     showToolbar?: boolean;
@@ -31,8 +37,16 @@ type RichTextEditorProps = {
 
 const TOKEN_REGEX = /@?mcp\s*<([a-z0-9_-]+)\s*\|\s*([a-z0-9_-]+)>/gi;
 
-function parseValueToTiptapContent(value: string | object, enableMentions: boolean) {
-    if (typeof value === "object" && value !== null && "type" in value && value.type === "doc") {
+function parseValueToTiptapContent(
+    value: string | object,
+    enableMentions: boolean,
+) {
+    if (
+        typeof value === "object" &&
+        value !== null &&
+        "type" in value &&
+        value.type === "doc"
+    ) {
         return value;
     }
 
@@ -90,7 +104,8 @@ function parseValueToTiptapContent(value: string | object, enableMentions: boole
         content: [
             {
                 type: "paragraph",
-                content: nodes.length > 0 ? nodes : [{ type: "text", text: "" }],
+                content:
+                    nodes.length > 0 ? nodes : [{ type: "text", text: "" }],
             },
         ],
     };
@@ -127,7 +142,8 @@ export function getTextLengthFromTiptapJSON(json: any): number {
             length += (node.text || "").length;
         } else if (node.type === "mcpMention") {
             // Count mention as @mcp<app|tool>
-            length += `@mcp<${node.attrs?.app || ""}|${node.attrs?.tool || ""}>`.length;
+            length += `@mcp<${node.attrs?.app || ""}|${node.attrs?.tool || ""}>`
+                .length;
         } else if (node.content && Array.isArray(node.content)) {
             node.content.forEach(traverse);
         }
@@ -153,7 +169,10 @@ export function getWordCountFromTiptapJSON(json: any): number {
     traverse(json);
 
     // Split by whitespace and filter empty strings
-    const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
+    const words = text
+        .trim()
+        .split(/\s+/)
+        .filter((w) => w.length > 0);
     return words.length;
 }
 
@@ -182,7 +201,10 @@ export function getTextStatsFromTiptapJSON(json: any): TextStats {
     }
     traverse(json);
 
-    const words = text.trim().split(/\s+/).filter((w) => w.length > 0).length;
+    const words = text
+        .trim()
+        .split(/\s+/)
+        .filter((w) => w.length > 0).length;
 
     return {
         characters: text.length,
@@ -218,7 +240,8 @@ export function RichTextEditor(props: RichTextEditorProps) {
     }, [onTrigger]);
 
     const handleTriggerMemoized = React.useCallback((pos: number) => {
-        onTriggerRef.current?.(pos);
+        const result = onTriggerRef.current?.(pos);
+        return result === true;
     }, []);
 
     const extensions = React.useMemo(() => {
@@ -233,7 +256,6 @@ export function RichTextEditor(props: RichTextEditorProps) {
                 heading: {
                     levels: [1, 2, 3],
                 },
-
             }),
             CodeBlock.configure({
                 HTMLAttributes: {
@@ -288,8 +310,14 @@ export function RichTextEditor(props: RichTextEditorProps) {
                 const json = editor.getJSON();
                 onChangeRef.current?.(json);
             } else {
-                const text = serializeTiptapContent(editor, currentEnableMentions);
-                const final = currentMaxLength && text.length > currentMaxLength ? text.slice(0, currentMaxLength) : text;
+                const text = serializeTiptapContent(
+                    editor,
+                    currentEnableMentions,
+                );
+                const final =
+                    currentMaxLength && text.length > currentMaxLength
+                        ? text.slice(0, currentMaxLength)
+                        : text;
                 onChangeRef.current?.(final);
             }
         },
@@ -314,6 +342,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
         },
     });
 
+    // Keep editable state in sync when disabled prop changes after creation
+    React.useEffect(() => {
+        if (editor && !editor.isDestroyed) {
+            editor.setEditable(!disabled);
+        }
+    }, [editor, disabled]);
+
     React.useEffect(() => {
         if (editor) {
             editorInstanceRef.current = editor;
@@ -328,10 +363,12 @@ export function RichTextEditor(props: RichTextEditorProps) {
             const handleRemoveClick = (event: MouseEvent) => {
                 const target = event.target as HTMLElement;
 
-                const removeButton = target.closest('[data-remove-mention="true"]') as HTMLElement;
+                const removeButton = target.closest(
+                    '[data-remove-mention="true"]',
+                ) as HTMLElement;
 
                 if (!removeButton) {
-                    if (target.getAttribute('data-remove-mention') !== 'true') {
+                    if (target.getAttribute("data-remove-mention") !== "true") {
                         return;
                     }
                 }
@@ -340,7 +377,9 @@ export function RichTextEditor(props: RichTextEditorProps) {
                 event.preventDefault();
                 event.stopPropagation();
 
-                const mention = button.closest('[data-type="mcp-mention"]') as HTMLElement;
+                const mention = button.closest(
+                    '[data-type="mcp-mention"]',
+                ) as HTMLElement;
                 if (!mention) {
                     console.error("Mention element not found");
                     return;
@@ -359,8 +398,7 @@ export function RichTextEditor(props: RichTextEditorProps) {
                             if (firstChild) {
                                 try {
                                     pos = editor.view.posAtDOM(firstChild, 0);
-                                } catch {
-                                }
+                                } catch {}
                             }
                         }
                     }
@@ -388,57 +426,78 @@ export function RichTextEditor(props: RichTextEditorProps) {
                         }
 
                         if (!found) {
-                            const app = mention.getAttribute('data-app');
-                            const tool = mention.getAttribute('data-tool');
+                            const app = mention.getAttribute("data-app");
+                            const tool = mention.getAttribute("data-tool");
 
                             if (app && tool) {
                                 let mentionFrom: number | null = null;
                                 let mentionTo: number | null = null;
 
-                                state.doc.nodesBetween(0, state.doc.content.size, (node, nodePos) => {
-                                    if (node.type.name === "mcpMention" &&
-                                        node.attrs.app === app &&
-                                        node.attrs.tool === tool) {
-                                        mentionFrom = nodePos;
-                                        mentionTo = nodePos + node.nodeSize;
-                                        return false;
-                                    }
-                                });
+                                state.doc.nodesBetween(
+                                    0,
+                                    state.doc.content.size,
+                                    (node, nodePos) => {
+                                        if (
+                                            node.type.name === "mcpMention" &&
+                                            node.attrs.app === app &&
+                                            node.attrs.tool === tool
+                                        ) {
+                                            mentionFrom = nodePos;
+                                            mentionTo = nodePos + node.nodeSize;
+                                            return false;
+                                        }
+                                    },
+                                );
 
-                                if (mentionFrom !== null && mentionTo !== null) {
+                                if (
+                                    mentionFrom !== null &&
+                                    mentionTo !== null
+                                ) {
                                     editor
                                         .chain()
                                         .focus()
-                                        .setTextSelection({ from: mentionFrom, to: mentionTo })
+                                        .setTextSelection({
+                                            from: mentionFrom,
+                                            to: mentionTo,
+                                        })
                                         .deleteSelection()
                                         .run();
                                 }
                             }
                         }
                     } else {
-                        const app = mention.getAttribute('data-app');
-                        const tool = mention.getAttribute('data-tool');
+                        const app = mention.getAttribute("data-app");
+                        const tool = mention.getAttribute("data-tool");
 
                         if (app && tool) {
                             const { state } = editor.view;
                             let mentionFrom: number | null = null;
                             let mentionTo: number | null = null;
 
-                            state.doc.nodesBetween(0, state.doc.content.size, (node, nodePos) => {
-                                if (node.type.name === "mcpMention" &&
-                                    node.attrs.app === app &&
-                                    node.attrs.tool === tool) {
-                                    mentionFrom = nodePos;
-                                    mentionTo = nodePos + node.nodeSize;
-                                    return false;
-                                }
-                            });
+                            state.doc.nodesBetween(
+                                0,
+                                state.doc.content.size,
+                                (node, nodePos) => {
+                                    if (
+                                        node.type.name === "mcpMention" &&
+                                        node.attrs.app === app &&
+                                        node.attrs.tool === tool
+                                    ) {
+                                        mentionFrom = nodePos;
+                                        mentionTo = nodePos + node.nodeSize;
+                                        return false;
+                                    }
+                                },
+                            );
 
                             if (mentionFrom !== null && mentionTo !== null) {
                                 editor
                                     .chain()
                                     .focus()
-                                    .setTextSelection({ from: mentionFrom, to: mentionTo })
+                                    .setTextSelection({
+                                        from: mentionFrom,
+                                        to: mentionTo,
+                                    })
                                     .deleteSelection()
                                     .run();
                             }
@@ -475,13 +534,23 @@ export function RichTextEditor(props: RichTextEditorProps) {
     }, [value]);
 
     React.useEffect(() => {
-        if (!editor) { return; }
+        if (!editor) {
+            return;
+        }
 
-        const currentContent = saveFormat === "json" ? editor.getJSON() : serializeTiptapContent(editor, enableMentions);
-        const currentKey = typeof currentContent === "object" ? JSON.stringify(currentContent) : currentContent;
+        const currentContent =
+            saveFormat === "json"
+                ? editor.getJSON()
+                : serializeTiptapContent(editor, enableMentions);
+        const currentKey =
+            typeof currentContent === "object"
+                ? JSON.stringify(currentContent)
+                : currentContent;
 
         if (valueKey !== currentKey) {
-            editor.commands.setContent(parseValueToTiptapContent(value || "", enableMentions) as any);
+            editor.commands.setContent(
+                parseValueToTiptapContent(value || "", enableMentions) as any,
+            );
         }
     }, [valueKey, editor, enableMentions, saveFormat, value]);
 
@@ -491,7 +560,13 @@ export function RichTextEditor(props: RichTextEditorProps) {
 
     return (
         <div className="flex flex-col gap-2">
-            {showToolbar && <RichTextEditorToolbar editor={editor} className={toolbarClassName} extraActions={toolbarExtraActions} />}
+            {showToolbar && (
+                <RichTextEditorToolbar
+                    editor={editor}
+                    className={toolbarClassName}
+                    extraActions={toolbarExtraActions}
+                />
+            )}
             <RichTextEditorSearch editor={editor} />
             <EditorContent editor={editor} />
         </div>

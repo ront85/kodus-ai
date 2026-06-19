@@ -39,7 +39,9 @@ export function useSuspenseGetLLMProviderModels({
                 provider,
                 ...(apiKey ? { apiKey } : {}),
                 ...(subscriptionToken ? { subscriptionToken } : {}),
-                ...(useSavedKey && !apiKey && !subscriptionToken ? { useSavedKey: 'true' } : {}),
+                ...(useSavedKey && !apiKey && !subscriptionToken
+                    ? { useSavedKey: "true" }
+                    : {}),
             },
         },
     );

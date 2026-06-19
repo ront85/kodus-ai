@@ -21,16 +21,14 @@ import {
     DialogTitle,
 } from "src/core/components/ui/dialog";
 import { AuthMode, PlatformType } from "src/core/types";
-import { captureSegmentEvent } from "src/core/utils/segment";
-import { isSelfHosted } from "src/core/utils/self-hosted";
 import { z } from "zod";
 
 const tokenFormSchema = z.object({
     token: z.string().min(1, {
-        error: "Enter a Token"
+        error: "Enter a Token",
     }),
     orgName: z.string().min(1, {
-        error: "Enter a Organization Name"
+        error: "Enter a Organization Name",
     }),
 });
 
@@ -44,9 +42,7 @@ export const AzureReposTokenModal = (props: {
     userEmail: string;
 }) => {
     const router = useRouter();
-    const nextStepPath = isSelfHosted
-        ? "/setup/byok"
-        : "/setup/choosing-repositories";
+    const nextStepPath = "/setup/choosing-repositories";
 
     const form = useForm({
         resolver: zodResolver(tokenFormSchema),
@@ -69,16 +65,6 @@ export const AzureReposTokenModal = (props: {
                     teamId: props.teamId,
                 },
                 orgName: data.orgName,
-            });
-
-            await captureSegmentEvent({
-                userId: props?.userId!,
-                event: "setup_git_integration_success",
-                properties: {
-                    platform: "azure_repos",
-                    method: "token",
-                    teamId: props?.teamId,
-                },
             });
 
             switch (integrationResponse.data.status) {
@@ -125,8 +111,8 @@ export const AzureReposTokenModal = (props: {
                         <DialogDescription></DialogDescription>
                     </DialogHeader>
 
-                    <div className="my-4 flex flex-col gap-3 rounded-xl border border-informative/20 bg-informative/5 p-4">
-                        <p className="text-sm text-text-secondary">
+                    <div className="border-informative/20 bg-informative/5 my-4 flex flex-col gap-3 rounded-xl border p-4">
+                        <p className="text-text-secondary text-sm">
                             Reviews will be posted from the token owner's
                             account:
                         </p>

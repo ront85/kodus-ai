@@ -51,8 +51,11 @@ export default async function BugRatioAnalytics() {
     });
     const data = extractApiData(response);
 
-    if (!data?.currentPeriod || !data?.previousPeriod ||
-        (data.currentPeriod.ratio === 0 && data.previousPeriod.ratio === 0)) {
+    if (
+        !data?.currentPeriod ||
+        !data?.previousPeriod ||
+        (data.currentPeriod.ratio === 0 && data.previousPeriod.ratio === 0)
+    ) {
         return <NoData />;
     }
 
@@ -112,7 +115,7 @@ export default async function BugRatioAnalytics() {
                 </Tooltip>
             </BugRatioAnalyticsHeader>
 
-            <CardContent className="flex items-center justify-center">
+            <CardContent className="flex items-center justify-start">
                 <div className="text-3xl font-bold">
                     {data?.currentPeriod?.ratio}
                     <small>%</small>

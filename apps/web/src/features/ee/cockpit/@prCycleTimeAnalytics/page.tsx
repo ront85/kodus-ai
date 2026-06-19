@@ -9,10 +9,10 @@ import {
 import { formatISO, subWeeks } from "date-fns";
 import { getLeadTimeForChangeAnalytics } from "src/features/ee/cockpit/_services/analytics/productivity/fetch";
 import { getPercentageDiff } from "src/features/ee/cockpit/_services/analytics/utils";
-import { extractApiData } from "../_helpers/api-data-extractor";
 
 import { InsightsBadge } from "../_components/insights-badge";
 import { PercentageDiff } from "../_components/percentage-diff";
+import { extractApiData } from "../_helpers/api-data-extractor";
 import { PRCycleTimeAnalyticsHeader } from "./_components/header";
 import NoData from "./_components/no-data";
 
@@ -131,7 +131,7 @@ export default async function LeadTimeForChangeAnalytics() {
                 </Tooltip>
             </PRCycleTimeAnalyticsHeader>
 
-            <CardContent className="flex items-center justify-center">
+            <CardContent className="flex items-center justify-start">
                 <div className="text-3xl font-bold">
                     {currentPeriod.hours}
                     <small className="text-text-secondary">h</small>{" "}

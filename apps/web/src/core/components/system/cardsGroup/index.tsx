@@ -13,6 +13,7 @@ import { magicModal } from "@components/ui/magic-modal";
 import { toast } from "@components/ui/toaster/use-toast";
 import { INTEGRATIONS_KEY, type INTEGRATIONS_TYPES } from "@enums";
 import { useReactQueryInvalidateQueries } from "@hooks/use-invalidate-queries";
+import { useConfig } from "@providers/ConfigProvider";
 import {
     createCodeManagementIntegration,
     deleteIntegration,
@@ -72,8 +73,10 @@ const codeManagementPlatforms = {
 export default function CardsGroup({
     team,
     connections: connectionsBack,
+    githubEnterpriseServerPatEnabled,
 }: {
     team: ReturnType<typeof useAllTeams>["teams"][number];
+    githubEnterpriseServerPatEnabled: boolean;
     connections: {
         platformName: string;
         isSetupComplete: boolean;
@@ -85,6 +88,7 @@ export default function CardsGroup({
 }) {
     const router = useRouter();
     const pathname = usePathname();
+    const cfg = useConfig();
     const { teams } = useAllTeams();
     const { organizationId } = useOrganizationContext();
     const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -199,6 +203,7 @@ export default function CardsGroup({
 
             const integrationConnector = integrationFactory.getConnector(
                 key.toLowerCase(),
+                cfg,
             );
 
             if (!integrationConnector) return;
@@ -229,12 +234,13 @@ export default function CardsGroup({
         email?: string;
         organizationName?: string;
         selfHostedUrl?: string;
+        authMode?: AuthMode;
         integrationKey: INTEGRATIONS_KEY;
         integrationType: PlatformType;
     }) => {
         const integrationResponse = await createCodeManagementIntegration({
             integrationType: params.integrationType,
-            authMode: AuthMode.TOKEN,
+            authMode: params.authMode ?? AuthMode.TOKEN,
             token: params.token,
             host: params?.selfHostedUrl,
             username: params.username,
@@ -307,7 +313,11 @@ export default function CardsGroup({
                         integrationKey,
                     });
                 }}
-                showSelfHosted={integrationKey === INTEGRATIONS_KEY.GITLAB}
+                showSelfHosted={
+                    integrationKey === INTEGRATIONS_KEY.GITLAB ||
+                    (integrationKey === INTEGRATIONS_KEY.GITHUB &&
+                        githubEnterpriseServerPatEnabled)
+                }
             />
         ));
     };
@@ -315,11 +325,19 @@ export default function CardsGroup({
     const openBitbucketModal = async () => {
         magicModal.show(() => (
             <BitbucketModal
-                onSave={async (token, username, email) => {
+                onSave={async (
+                    token,
+                    username,
+                    email,
+                    selfHostedUrl,
+                    authMode,
+                ) => {
                     await onSaveToken({
                         token,
                         username,
                         email,
+                        selfHostedUrl,
+                        authMode,
                         integrationKey: INTEGRATIONS_KEY.BITBUCKET,
                         integrationType: PlatformType.BITBUCKET,
                     });

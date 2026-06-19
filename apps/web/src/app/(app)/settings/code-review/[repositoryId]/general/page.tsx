@@ -1,31 +1,31 @@
 "use client";
 
+import { useState } from "react";
 import { Button } from "@components/ui/button";
 import { Page } from "@components/ui/page";
 import { toast } from "@components/ui/toaster/use-toast";
-import { useReactQueryInvalidateQueries } from "@hooks/use-invalidate-queries";
-import { PARAMETERS_PATHS } from "@services/parameters";
-import {
-    createOrUpdateCodeReviewParameter,
-    createOrUpdateParameter,
-    getGenerateKodusConfigFile,
-} from "@services/parameters/fetch";
+import { createOrUpdateParameter } from "@services/parameters/fetch";
+import { useOptionalParameterQuery } from "@services/parameters/hooks";
 import {
     KodyLearningStatus,
     ParametersConfigKey,
+    type CentralizedConfigValue,
 } from "@services/parameters/types";
 import { usePermission } from "@services/permissions/hooks";
 import { Action, ResourceType } from "@services/permissions/types";
-import { DownloadIcon, SaveIcon } from "lucide-react";
+import { RotateCcwIcon, SaveIcon, Settings2Icon } from "lucide-react";
 import { FormProvider, useFormContext } from "react-hook-form";
+import { AsyncBoundary } from "src/core/components/async-boundary";
 import { useSelectedTeamId } from "src/core/providers/selected-team-context";
 import { unformatConfig } from "src/core/utils/helpers";
 
-import { AsyncBoundary } from "src/core/components/async-boundary";
-
 import { CodeReviewPagesBreadcrumb } from "../../_components/breadcrumb";
+import { CentralizedConfigReadOnlyAlert } from "../../_components/centralized-config-readonly-alert";
 import GeneratingConfig from "../../_components/generating-config";
+import { CodeReviewSaveButton } from "../../_components/save-button";
+import { useCodeReviewSettingsMutation } from "../../_hooks/use-code-review-settings-mutation";
 import { FormattedConfigLevel, type CodeReviewFormType } from "../../_types";
+import { getCentralizedPrToastPayload } from "../../_utils/centralized-pr-feedback";
 import { usePlatformConfig } from "../../../_components/context";
 import {
     useCodeReviewRouteParams,
@@ -33,7 +33,8 @@ import {
 } from "../../../_hooks";
 import { AutomatedReviewActive } from "./_components/automated-review-active";
 import { BaseBranches } from "./_components/base-branches";
-import { CrossfileDependenciesAnalysis } from "./_components/crossfile-dependencies-analysis";
+import { BYOKModelSelectorSection } from "./_components/byok-model-selector";
+import { CentralizedConfigModal } from "./_components/centralized-config-modal";
 import { EnableCommittableSuggestions } from "./_components/enable-committable-suggestions";
 import { IgnorePaths } from "./_components/ignore-paths";
 import { IgnoredTitleKeywords } from "./_components/ignored-title-keywords";
@@ -49,14 +50,40 @@ export default function General() {
     const form = useFormContext<CodeReviewFormType>();
     const { teamId } = useSelectedTeamId();
     const { repositoryId, directoryId } = useCodeReviewRouteParams();
-    const { resetQueries, generateQueryKey } = useReactQueryInvalidateQueries();
     const currentLevel = useCurrentConfigLevel();
+    const [isCentralizedModalOpen, setIsCentralizedModalOpen] = useState(false);
+    const { saveSettings } = useCodeReviewSettingsMutation({
+        teamId,
+        repositoryId,
+        directoryId,
+        form,
+    });
 
     const canEdit = usePermission(
         Action.Update,
         ResourceType.CodeReviewSettings,
         repositoryId,
     );
+
+    const centralizedConfig = useOptionalParameterQuery<CentralizedConfigValue>(
+        ParametersConfigKey.CENTRALIZED_CONFIG,
+        teamId,
+        {
+            uuid: "",
+            configKey: ParametersConfigKey.CENTRALIZED_CONFIG,
+            configValue: {
+                enabled: false,
+                repository: {
+                    id: "",
+                    name: "",
+                },
+            },
+        },
+    );
+
+    const isGlobalGeneralView =
+        repositoryId === "global" &&
+        currentLevel === FormattedConfigLevel.GLOBAL;
 
     const handleSubmit = form.handleSubmit(async (formData) => {
         const { language, ...config } = formData;
@@ -67,53 +94,36 @@ export default function General() {
         const unformattedConfig = unformatConfig(config);
 
         try {
-            const [languageResult, reviewResult] = await Promise.all([
-                createOrUpdateParameter(
-                    ParametersConfigKey.LANGUAGE_CONFIG,
-                    language,
-                    teamId,
-                ),
-                createOrUpdateCodeReviewParameter(
-                    unformattedConfig,
-                    teamId,
-                    repositoryId,
-                    directoryId,
-                ),
-            ]);
+            const saveResult = await saveSettings(formData, {
+                prepare: async () => {
+                    const languageResult = await createOrUpdateParameter(
+                        ParametersConfigKey.LANGUAGE_CONFIG,
+                        language,
+                        teamId,
+                    );
 
-            if (languageResult.error || reviewResult.error) {
-                throw new Error(
-                    `Failed to save settings: ${[
-                        languageResult.error,
-                        reviewResult.error,
-                    ]
-                        .filter(Boolean)
-                        .join(", ")}`,
-                );
-            }
+                    if (languageResult.error) {
+                        throw new Error(
+                            `Failed to save settings: ${languageResult.error}`,
+                        );
+                    }
 
-            await Promise.all([
-                resetQueries({
-                    queryKey: generateQueryKey(PARAMETERS_PATHS.GET_BY_KEY, {
-                        params: {
-                            key: ParametersConfigKey.CODE_REVIEW_CONFIG,
-                            teamId,
-                        },
-                    }),
-                }),
-                resetQueries({
-                    queryKey: generateQueryKey(
-                        PARAMETERS_PATHS.GET_CODE_REVIEW_PARAMETER,
-                        {
-                            params: {
-                                teamId,
-                            },
-                        },
+                    return {
+                        savedFormData: { ...config, language },
+                        codeReviewConfig: unformattedConfig,
+                    };
+                },
+            });
+
+            if (saveResult.centralizedPr) {
+                toast(
+                    getCentralizedPrToastPayload(
+                        saveResult.centralizedPr,
+                        "Change proposed through centralized pull request.",
                     ),
-                }),
-            ]);
-
-            form.reset({ ...config, language });
+                );
+                return;
+            }
 
             toast({
                 description: "Settings saved",
@@ -131,44 +141,6 @@ export default function General() {
         }
     });
 
-    const handleFileDownload = async () => {
-        try {
-            const downloadFile = await getGenerateKodusConfigFile(
-                teamId,
-                repositoryId,
-                directoryId,
-            );
-
-            const blob = new Blob([downloadFile], { type: "text/yaml" });
-            const url = window.URL.createObjectURL(blob);
-
-            const a = document.createElement("a");
-            a.href = url;
-
-            a.download = "kodus-config.yml";
-
-            document.body.appendChild(a);
-            a.click();
-
-            a.remove();
-            window.URL.revokeObjectURL(url);
-
-            toast({
-                description: "File downloaded",
-                variant: "success",
-            });
-        } catch (error) {
-            console.error("Error saving settings:", error);
-
-            toast({
-                title: "Error",
-                description:
-                    "An error occurred while generating the yml file. Please try again.",
-                variant: "danger",
-            });
-        }
-    };
-
     const {
         isDirty: formIsDirty,
         isValid: formIsValid,
@@ -182,13 +154,6 @@ export default function General() {
         return <GeneratingConfig />;
     }
 
-    const downloadFileText =
-        currentLevel === FormattedConfigLevel.GLOBAL
-            ? "default"
-            : currentLevel === FormattedConfigLevel.REPOSITORY
-              ? "repository"
-              : "directory";
-
     return (
         <Page.Root>
             <Page.Header>
@@ -198,16 +163,29 @@ export default function General() {
             <Page.Header>
                 <Page.Title>General settings</Page.Title>
                 <Page.HeaderActions>
-                    <Button
-                        size="md"
-                        leftIcon={<DownloadIcon />}
-                        onClick={async () => await handleFileDownload()}
-                        variant="secondary"
-                        loading={formIsSubmitting}>
-                        Download {downloadFileText} YML configuration file
-                    </Button>
+                    {isGlobalGeneralView && (
+                        <Button
+                            size="md"
+                            leftIcon={<Settings2Icon />}
+                            onClick={() => setIsCentralizedModalOpen(true)}
+                            variant="secondary"
+                            disabled={!canEdit}>
+                            Configure centralized config
+                        </Button>
+                    )}
 
-                    <Button
+                    {formIsDirty && (
+                        <Button
+                            size="md"
+                            variant="cancel"
+                            leftIcon={<RotateCcwIcon />}
+                            onClick={() => form.reset()}
+                            disabled={formIsSubmitting}>
+                            Reset
+                        </Button>
+                    )}
+
+                    <CodeReviewSaveButton
                         size="md"
                         variant="primary"
                         leftIcon={<SaveIcon />}
@@ -215,33 +193,81 @@ export default function General() {
                         disabled={!canEdit || !formIsDirty || !formIsValid}
                         loading={formIsSubmitting}>
                         Save settings
-                    </Button>
+                    </CodeReviewSaveButton>
                 </Page.HeaderActions>
             </Page.Header>
 
             <Page.Content>
-                <AutomatedReviewActive />
-                <KodusConfigFileOverridesWebPreferences />
-                <PullRequestApprovalActive />
+                <CentralizedConfigReadOnlyAlert />
+
+                <div data-field-name="automatedReviewActive">
+                    <AutomatedReviewActive />
+                </div>
+
+                {repositoryId !== "global" && (
+                    <div data-field-name="byokModel">
+                        <BYOKModelSelectorSection />
+                    </div>
+                )}
+
+                <div data-field-name="kodusConfigFileOverridesWebPreferences">
+                    <KodusConfigFileOverridesWebPreferences />
+                </div>
+                <div data-field-name="pullRequestApprovalActive">
+                    <PullRequestApprovalActive />
+                </div>
                 <AsyncBoundary errorVariant="minimal">
-                    <IsRequestChangesActive />
+                    <div data-field-name="isRequestChangesActive">
+                        <IsRequestChangesActive />
+                    </div>
                 </AsyncBoundary>
-                <RunOnDraft />
-                <ShowStatusFeedback />
+                <div data-field-name="runOnDraft">
+                    <RunOnDraft />
+                </div>
+                <div data-field-name="showStatusFeedback">
+                    <ShowStatusFeedback />
+                </div>
                 <AsyncBoundary errorVariant="minimal">
-                    <EnableCommittableSuggestions />
+                    <div data-field-name="enableCommittableSuggestions">
+                        <EnableCommittableSuggestions />
+                    </div>
                 </AsyncBoundary>
-                <AsyncBoundary errorVariant="minimal">
-                    <CrossfileDependenciesAnalysis />
-                </AsyncBoundary>
-                <IgnorePaths />
-                <IgnoredTitleKeywords />
-                <BaseBranches />
+                <div data-field-name="ignorePaths">
+                    <IgnorePaths />
+                </div>
+                <div data-field-name="ignoredTitleKeywords">
+                    <IgnoredTitleKeywords />
+                </div>
+                <div data-field-name="baseBranches">
+                    <BaseBranches />
+                </div>
 
                 {repositoryId === "global" && (
-                    <FormProvider {...form}>
-                        <LanguageSelector />
-                    </FormProvider>
+                    <div data-field-name="language">
+                        <FormProvider {...form}>
+                            <LanguageSelector />
+                        </FormProvider>
+                    </div>
+                )}
+
+                {isGlobalGeneralView && (
+                    <CentralizedConfigModal
+                        open={isCentralizedModalOpen}
+                        onOpenChange={setIsCentralizedModalOpen}
+                        teamId={teamId}
+                        centralizedConfig={
+                            centralizedConfig.data?.configValue ?? {
+                                enabled: false,
+                                repository: {
+                                    id: "",
+                                    name: "",
+                                },
+                            }
+                        }
+                        onSaved={async () => {
+                            await centralizedConfig.refetch();
+                        }}
+                    />
                 )}
             </Page.Content>
         </Page.Root>

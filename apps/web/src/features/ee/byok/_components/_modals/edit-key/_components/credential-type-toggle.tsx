@@ -28,9 +28,7 @@ export const CredentialTypeToggle = () => {
             <Button
                 type="button"
                 size="sm"
-                variant={
-                    credentialType === "api_key" ? "primary" : "cancel"
-                }
+                variant={credentialType === "api_key" ? "primary" : "cancel"}
                 className="flex-1"
                 onClick={() => handleSelect("api_key")}>
                 API Key

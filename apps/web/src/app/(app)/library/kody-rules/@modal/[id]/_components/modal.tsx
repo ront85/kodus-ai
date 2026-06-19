@@ -26,9 +26,11 @@ import { useKodyRulesLimits } from "@services/kodyRules/hooks";
 import {
     KodyRulesOrigin,
     KodyRulesStatus,
+    resolveKodyRuleDisplaySeverity,
     type KodyRule,
     type LibraryRule,
 } from "@services/kodyRules/types";
+import { isCentralizedPrResponse } from "@services/parameters/types";
 import { usePermission } from "@services/permissions/hooks";
 import { Action, ResourceType } from "@services/permissions/types";
 import {
@@ -39,11 +41,13 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, ThumbsDown, ThumbsUp } from "lucide-react";
 import type { CodeReviewRepositoryConfig } from "src/app/(app)/settings/code-review/_types";
+import { getCentralizedPrToastPayload } from "src/app/(app)/settings/code-review/_utils/centralized-pr-feedback";
 import { useAuth } from "src/core/providers/auth.provider";
 import { usePermissions } from "src/core/providers/permissions.provider";
+import { useSelectedTeamId } from "src/core/providers/selected-team-context";
 import type { LiteralUnion } from "src/core/types";
 import { cn } from "src/core/utils/components";
-import { hasPermission } from "src/core/utils/permissions";
+import { hasPermission } from "src/core/utils/permission-map";
 import { revalidateServerSidePath } from "src/core/utils/revalidate-server-side";
 import { addSearchParamsToUrl } from "src/core/utils/url";
 
@@ -62,6 +66,7 @@ export const KodyRuleLibraryItemModal = ({
     repositories: Array<CodeReviewRepositoryConfig>;
 }) => {
     const router = useRouter();
+    const { teamId } = useSelectedTeamId();
     const { organizationId } = useAuth();
     const queryClient = useQueryClient();
     const [positiveCount, setPositiveCount] = useState(rule.positiveCount ?? 0);
@@ -106,7 +111,9 @@ export const KodyRuleLibraryItemModal = ({
             const newRule: KodyRule = {
                 title: rule.title,
                 rule: rule.rule,
-                severity: rule.severity.toLowerCase() as KodyRule["severity"],
+                severity: resolveKodyRuleDisplaySeverity(
+                    rule,
+                ) as KodyRule["severity"],
                 path: "",
                 examples: rule.examples,
                 origin: KodyRulesOrigin.LIBRARY,
@@ -121,14 +128,26 @@ export const KodyRuleLibraryItemModal = ({
                 const directory = repository?.directories?.find(
                     (d) => d.id === directoryId,
                 );
-                newRule.path = `${directory?.path.slice(1)}/**`;
+                newRule.path = `${(directory?.folders?.[0]?.path ?? '').slice(1)}/**`;
             }
 
             const addedKodyRules = await addKodyRuleToRepositories({
                 rule: newRule,
                 repositoriesIds: selectedRepositoriesIds,
                 directoriesIds: selectedDirectoriesIds,
+                teamId,
             });
+
+            if (isCentralizedPrResponse(addedKodyRules)) {
+                toast(
+                    getCentralizedPrToastPayload(
+                        addedKodyRules,
+                        `Rule "${rule.title}" change proposed through centralized pull request.`,
+                    ),
+                );
+
+                return;
+            }
 
             await queryClient.resetQueries({
                 predicate: (query) =>
@@ -150,8 +169,8 @@ export const KodyRuleLibraryItemModal = ({
                                 (d) => d.id === rule.directoryId,
                             );
 
-                            const directoryFullPath = directory?.path
-                                ? `${repository?.name}${directory.path}`
+                            const directoryFullPath = directory?.folders?.[0]?.path
+                                ? `${repository?.name}${directory.folders[0].path}`
                                 : undefined;
 
                             return (
@@ -244,11 +263,7 @@ export const KodyRuleLibraryItemModal = ({
                         {rule.title}
 
                         <IssueSeverityLevelBadge
-                            severity={
-                                rule.severity.toLowerCase() as Lowercase<
-                                    typeof rule.severity
-                                >
-                            }
+                            severity={resolveKodyRuleDisplaySeverity(rule)}
                         />
                     </DialogTitle>
 

@@ -4,21 +4,33 @@ import { JwtService } from '@nestjs/jwt';
 import {
     ForbiddenException,
     HttpException,
+    NotFoundException,
     UnauthorizedException,
 } from '@nestjs/common';
 
-import { CliReviewController } from '@/core/infrastructure/http/controllers/cli-review.controller';
+import { CliReviewController } from '@/core/infrastructure/http/controllers/cli/cli-review.controller';
 import { ExecuteCliReviewUseCase } from '@libs/cli-review/application/use-cases/execute-cli-review.use-case';
+import { EnqueueCliReviewUseCase } from '@libs/cli-review/application/use-cases/enqueue-cli-review.use-case';
+import { GetCliReviewJobStatusUseCase } from '@libs/cli-review/application/use-cases/get-cli-review-job-status.use-case';
+import { WaitForCliReviewJobUseCase } from '@libs/cli-review/application/use-cases/wait-for-cli-review-job.use-case';
+import { JobStatus } from '@libs/core/workflow/domain/enums/job-status.enum';
 import { SubmitCliSessionCaptureUseCase } from '@libs/cli-review/application/use-cases/submit-cli-session-capture.use-case';
-import { AuthenticatedRateLimiterService } from '@libs/cli-review/infrastructure/services/authenticated-rate-limiter.service';
-import { TrialRateLimiterService } from '@libs/cli-review/infrastructure/services/trial-rate-limiter.service';
+import { AUTHENTICATED_RATE_LIMITER_SERVICE_TOKEN } from '@libs/cli-review/domain/contracts/authenticated-rate-limiter.service.contract';
+import { TRIAL_RATE_LIMITER_SERVICE_TOKEN } from '@libs/cli-review/domain/contracts/trial-rate-limiter.service.contract';
+import { GITHUB_PUBLIC_PR_SERVICE_TOKEN } from '@libs/cli-review/domain/contracts/github-public-pr.service.contract';
 import { TEAM_CLI_KEY_SERVICE_TOKEN } from '@libs/organization/domain/team-cli-key/contracts/team-cli-key.service.contract';
 import { TEAM_SERVICE_TOKEN } from '@libs/organization/domain/team/contracts/team.service.contract';
 import { AUTH_SERVICE_TOKEN } from '@libs/identity/domain/auth/contracts/auth.service.contracts';
 import { CLI_DEVICE_SERVICE_TOKEN } from '@libs/organization/domain/cli-device/contracts/cli-device.service.contract';
+import { TriggerBusinessValidationUseCase } from '@libs/platform/application/use-cases/codeManagement/trigger-business-validation.use-case';
 import { TeamEntity } from '@libs/organization/domain/team/entities/team.entity';
 import { STATUS } from '@libs/core/infrastructure/config/types/database/status.type';
 import { CliReviewRequestDto } from '@/core/infrastructure/http/dtos/cli-review.dto';
+import { IngestSessionEventUseCase } from '@libs/cli-review/application/use-cases/ingest-session-event.use-case';
+import { PublicPrReviewUseCase } from '@libs/cli-review/application/use-cases/public-pr-review.use-case';
+import { ListFeaturedPublicReviewsUseCase } from '@libs/cli-review/application/use-cases/list-featured-public-reviews.use-case';
+import { GetFeaturedPublicReviewUseCase } from '@libs/cli-review/application/use-cases/get-featured-public-review.use-case';
+import { ValidateCliKeyUseCase } from '@libs/cli-review/application/use-cases/validate-cli-key.use-case';
 
 jest.mock('@kodus/flow', () => ({
     createLogger: () => ({
@@ -132,12 +144,40 @@ const mockTrialRateLimiter = {
 const mockExecuteCliReview = {
     execute: jest.fn().mockResolvedValue({ suggestions: [] }),
 };
+const mockEnqueueCliReview = {
+    execute: jest
+        .fn()
+        .mockResolvedValue({ jobId: 'job-1', correlationId: 'corr-1' }),
+};
+// Job-status / wait-for-job logic was extracted out of the controller and
+// into dedicated use cases; tests mock those directly instead of poking
+// the underlying queue service.
+const mockGetCliReviewJobStatus = {
+    execute: jest.fn().mockResolvedValue({
+        jobId: 'job-1',
+        status: JobStatus.COMPLETED,
+        result: { suggestions: [] },
+        createdAt: new Date(),
+    }),
+};
+const mockWaitForCliReviewJob = {
+    execute: jest.fn().mockResolvedValue({ suggestions: [] }),
+};
 const mockSubmitCliSessionCapture = {
     execute: jest.fn().mockResolvedValue({ id: 'cap_abc123', accepted: true }),
+};
+const mockTriggerBusinessValidation = {
+    execute: jest.fn(),
+};
+const mockIngestSessionEvent = {
+    execute: jest.fn().mockResolvedValue({ accepted: true }),
 };
 const mockCliDeviceService = {
     validateOrRegisterDevice: jest.fn().mockResolvedValue({}),
 };
+const mockPublicPrReview = { execute: jest.fn() };
+const mockListFeaturedReviews = { execute: jest.fn() };
+const mockGetFeaturedReview = { execute: jest.fn() };
 
 // ============================================================================
 // SUITE
@@ -155,17 +195,61 @@ describe('CliReviewController', () => {
                     useValue: mockExecuteCliReview,
                 },
                 {
+                    provide: EnqueueCliReviewUseCase,
+                    useValue: mockEnqueueCliReview,
+                },
+                {
+                    provide: GetCliReviewJobStatusUseCase,
+                    useValue: mockGetCliReviewJobStatus,
+                },
+                {
+                    provide: WaitForCliReviewJobUseCase,
+                    useValue: mockWaitForCliReviewJob,
+                },
+                {
                     provide: SubmitCliSessionCaptureUseCase,
                     useValue: mockSubmitCliSessionCapture,
                 },
                 {
-                    provide: AuthenticatedRateLimiterService,
+                    provide: IngestSessionEventUseCase,
+                    useValue: mockIngestSessionEvent,
+                },
+                {
+                    provide: TriggerBusinessValidationUseCase,
+                    useValue: mockTriggerBusinessValidation,
+                },
+                {
+                    provide: AUTHENTICATED_RATE_LIMITER_SERVICE_TOKEN,
                     useValue: mockRateLimiter,
                 },
                 {
-                    provide: TrialRateLimiterService,
+                    provide: TRIAL_RATE_LIMITER_SERVICE_TOKEN,
                     useValue: mockTrialRateLimiter,
                 },
+                // Public-demo deps — only the trial endpoints touch
+                // these, but Nest needs every constructor arg resolved
+                // even when the test never calls those routes.
+                {
+                    provide: GITHUB_PUBLIC_PR_SERVICE_TOKEN,
+                    useValue: { fetch: jest.fn() },
+                },
+                {
+                    provide: PublicPrReviewUseCase,
+                    useValue: mockPublicPrReview,
+                },
+                {
+                    provide: ListFeaturedPublicReviewsUseCase,
+                    useValue: mockListFeaturedReviews,
+                },
+                {
+                    provide: GetFeaturedPublicReviewUseCase,
+                    useValue: mockGetFeaturedReview,
+                },
+                // Real use case wired against the existing mocked tokens
+                // (teamCliKey, team, auth, cliDevice, jwt, config) so
+                // the controller test scenarios keep exercising the
+                // validation logic end-to-end.
+                ValidateCliKeyUseCase,
                 {
                     provide: TEAM_CLI_KEY_SERVICE_TOKEN,
                     useValue: mockTeamCliKeyService,
@@ -227,7 +311,7 @@ describe('CliReviewController', () => {
                 expect(
                     mockTeamService.findFirstCreatedTeam,
                 ).not.toHaveBeenCalled();
-                expect(mockExecuteCliReview.execute).toHaveBeenCalledWith(
+                expect(mockEnqueueCliReview.execute).toHaveBeenCalledWith(
                     expect.objectContaining({
                         organizationAndTeamData: {
                             organizationId: ORG_ID,
@@ -257,7 +341,7 @@ describe('CliReviewController', () => {
                 expect(
                     mockTeamService.findFirstCreatedTeam,
                 ).toHaveBeenCalledWith(ORG_ID);
-                expect(mockExecuteCliReview.execute).toHaveBeenCalledWith(
+                expect(mockEnqueueCliReview.execute).toHaveBeenCalledWith(
                     expect.objectContaining({
                         organizationAndTeamData: {
                             organizationId: ORG_ID,
@@ -283,7 +367,7 @@ describe('CliReviewController', () => {
                 expect(
                     mockTeamService.findFirstCreatedTeam,
                 ).toHaveBeenCalledWith(ORG_ID);
-                expect(mockExecuteCliReview.execute).toHaveBeenCalled();
+                expect(mockEnqueueCliReview.execute).toHaveBeenCalled();
             });
         });
 
@@ -411,7 +495,7 @@ describe('CliReviewController', () => {
                 TEAM_KEY,
             );
             expect(mockJwtService.verify).not.toHaveBeenCalled();
-            expect(mockExecuteCliReview.execute).toHaveBeenCalledWith(
+            expect(mockEnqueueCliReview.execute).toHaveBeenCalledWith(
                 expect.objectContaining({
                     organizationAndTeamData: {
                         organizationId: ORG_ID,
@@ -435,7 +519,7 @@ describe('CliReviewController', () => {
             expect(mockTeamCliKeyService.validateKey).toHaveBeenCalledWith(
                 TEAM_KEY,
             );
-            expect(mockExecuteCliReview.execute).toHaveBeenCalled();
+            expect(mockEnqueueCliReview.execute).toHaveBeenCalled();
         });
 
         it('throws 401 when team key is invalid/revoked', async () => {
@@ -483,12 +567,7 @@ describe('CliReviewController', () => {
             });
 
             await expect(
-                controller.review(
-                    MINIMAL_BODY,
-                    undefined,
-                    BEARER_JWT,
-                    TEAM_ID,
-                ),
+                controller.review(MINIMAL_BODY, undefined, BEARER_JWT, TEAM_ID),
             ).rejects.toThrow(HttpException);
 
             try {
@@ -612,15 +691,31 @@ describe('CliReviewController', () => {
     // =========================================================================
 
     describe('validateKeyInternal', () => {
+        // Helper kept after the validateKeyInternal helper was extracted
+        // into ValidateCliKeyUseCase. Behaviorally identical — same
+        // mocks back the same wires (teamCliKey, team, auth, jwt).
+        const runValidate = (
+            teamKey?: string,
+            authHeader?: string,
+            queryTeamId?: string,
+        ) =>
+            (controller as any).validateCliKeyUseCase.execute({
+                teamKey,
+                authHeader,
+                queryTeamId,
+            });
+
         describe('Team key route', () => {
             it('returns valid=true with team key via x-team-key', async () => {
                 mockTeamCliKeyService.validateKey.mockResolvedValue(
                     TEAM_KEY_DATA,
                 );
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(TEAM_KEY, undefined, undefined);
+                const result = await runValidate(
+                    TEAM_KEY,
+                    undefined,
+                    undefined,
+                );
 
                 expect(result.valid).toBe(true);
                 expect(result.teamId).toBe(TEAM_ID);
@@ -634,9 +729,11 @@ describe('CliReviewController', () => {
                     TEAM_KEY_DATA,
                 );
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_TEAM_KEY, undefined);
+                const result = await runValidate(
+                    undefined,
+                    BEARER_TEAM_KEY,
+                    undefined,
+                );
 
                 expect(result.valid).toBe(true);
                 expect(mockTeamCliKeyService.validateKey).toHaveBeenCalledWith(
@@ -647,9 +744,11 @@ describe('CliReviewController', () => {
             it('returns valid=false when team key is invalid', async () => {
                 mockTeamCliKeyService.validateKey.mockResolvedValue(null);
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal('kodus_invalid', undefined, undefined);
+                const result = await runValidate(
+                    'kodus_invalid',
+                    undefined,
+                    undefined,
+                );
 
                 expect(result.valid).toBe(false);
                 expect(result.error).toBeDefined();
@@ -661,9 +760,11 @@ describe('CliReviewController', () => {
                     organization: { uuid: ORG_ID },
                 });
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(TEAM_KEY, undefined, undefined);
+                const result = await runValidate(
+                    TEAM_KEY,
+                    undefined,
+                    undefined,
+                );
 
                 expect(result.valid).toBe(false);
             });
@@ -673,9 +774,11 @@ describe('CliReviewController', () => {
             it('returns valid=true with correct teamId resolved via findById', async () => {
                 mockTeamService.findById.mockResolvedValue(makeTeamEntity());
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, TEAM_ID);
+                const result = await runValidate(
+                    undefined,
+                    BEARER_JWT,
+                    TEAM_ID,
+                );
 
                 expect(result.valid).toBe(true);
                 expect(result.teamId).toBe(TEAM_ID);
@@ -688,9 +791,11 @@ describe('CliReviewController', () => {
                     makeTeamEntity(),
                 );
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, ORG_ID);
+                const result = await runValidate(
+                    undefined,
+                    BEARER_JWT,
+                    ORG_ID,
+                );
 
                 expect(result.valid).toBe(true);
                 expect(result.teamId).toBe(TEAM_ID);
@@ -699,21 +804,27 @@ describe('CliReviewController', () => {
             it('returns valid=false when explicit teamId is not found and differs from orgId', async () => {
                 mockTeamService.findById.mockResolvedValue(null);
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, 'stale-team-uuid');
+                const result = await runValidate(
+                    undefined,
+                    BEARER_JWT,
+                    'stale-team-uuid',
+                );
 
                 expect(result.valid).toBe(false);
                 expect(result.error).toContain('Team not found');
-                expect(mockTeamService.findFirstCreatedTeam).not.toHaveBeenCalled();
+                expect(
+                    mockTeamService.findFirstCreatedTeam,
+                ).not.toHaveBeenCalled();
             });
 
             it('returns valid=false when no teamId provided and no team exists for org', async () => {
                 mockTeamService.findFirstCreatedTeam.mockResolvedValue(null);
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, undefined);
+                const result = await runValidate(
+                    undefined,
+                    BEARER_JWT,
+                    undefined,
+                );
 
                 expect(result.valid).toBe(false);
             });
@@ -723,9 +834,11 @@ describe('CliReviewController', () => {
                     throw new Error('jwt expired');
                 });
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, TEAM_ID);
+                const result = await runValidate(
+                    undefined,
+                    BEARER_JWT,
+                    TEAM_ID,
+                );
 
                 expect(result.valid).toBe(false);
                 expect(result.error).toMatch(/invalid|expired/i);
@@ -736,9 +849,11 @@ describe('CliReviewController', () => {
                     makeTeamEntity({ orgUuid: 'other-org-uuid' }),
                 );
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, TEAM_ID);
+                const result = await runValidate(
+                    undefined,
+                    BEARER_JWT,
+                    TEAM_ID,
+                );
 
                 expect(result.valid).toBe(false);
             });
@@ -750,9 +865,11 @@ describe('CliReviewController', () => {
                     status: STATUS.REMOVED,
                 });
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, TEAM_ID);
+                const result = await runValidate(
+                    undefined,
+                    BEARER_JWT,
+                    TEAM_ID,
+                );
 
                 expect(result.valid).toBe(false);
             });
@@ -760,9 +877,11 @@ describe('CliReviewController', () => {
             it('includes user email in response', async () => {
                 mockTeamService.findById.mockResolvedValue(makeTeamEntity());
 
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, BEARER_JWT, TEAM_ID);
+                const result = await runValidate(
+                    undefined,
+                    BEARER_JWT,
+                    TEAM_ID,
+                );
 
                 expect(result.email).toBe(USER_EMAIL);
                 expect(result.user.email).toBe(USER_EMAIL);
@@ -771,9 +890,11 @@ describe('CliReviewController', () => {
 
         describe('No auth', () => {
             it('returns valid=false when no auth is provided', async () => {
-                const result = await (
-                    controller as any
-                ).validateKeyInternal(undefined, undefined, undefined);
+                const result = await runValidate(
+                    undefined,
+                    undefined,
+                    undefined,
+                );
 
                 expect(result.valid).toBe(false);
                 expect(result.error).toMatch(/authentication required/i);
@@ -1103,6 +1224,7 @@ describe('CliReviewController', () => {
                 DEVICE_ID,
                 undefined,
                 'Kodus-CLI/1.0',
+                undefined, // asyncHeader
                 res,
             );
 
@@ -1135,6 +1257,7 @@ describe('CliReviewController', () => {
                 DEVICE_ID,
                 DEVICE_TOKEN,
                 'Kodus-CLI/1.0',
+                undefined, // asyncHeader
                 res,
             );
 
@@ -1156,6 +1279,7 @@ describe('CliReviewController', () => {
                 DEVICE_ID,
                 'wrong-token',
                 'Kodus-CLI/1.0',
+                undefined, // asyncHeader
                 res,
             );
 
@@ -1229,6 +1353,7 @@ describe('CliReviewController', () => {
                 DEVICE_ID,
                 undefined,
                 'Kodus-CLI/1.0',
+                undefined, // asyncHeader
                 res,
             );
 
@@ -1273,7 +1398,7 @@ describe('CliReviewController', () => {
 
             const result = await controller.review(body, TEAM_KEY);
 
-            expect(mockExecuteCliReview.execute).toHaveBeenCalled();
+            expect(mockEnqueueCliReview.execute).toHaveBeenCalled();
             expect(result).toEqual({ suggestions: [] });
         });
 
@@ -1291,9 +1416,9 @@ describe('CliReviewController', () => {
                 userEmail: 'hacker@evil.com',
             };
 
-            await expect(
-                controller.review(body, TEAM_KEY),
-            ).rejects.toThrow(ForbiddenException);
+            await expect(controller.review(body, TEAM_KEY)).rejects.toThrow(
+                ForbiddenException,
+            );
         });
 
         it('allows any email when allowedDomains is empty', async () => {
@@ -1312,7 +1437,7 @@ describe('CliReviewController', () => {
 
             const result = await controller.review(body, TEAM_KEY);
 
-            expect(mockExecuteCliReview.execute).toHaveBeenCalled();
+            expect(mockEnqueueCliReview.execute).toHaveBeenCalled();
             expect(result).toEqual({ suggestions: [] });
         });
 
@@ -1327,7 +1452,7 @@ describe('CliReviewController', () => {
 
             const result = await controller.review(MINIMAL_BODY, TEAM_KEY);
 
-            expect(mockExecuteCliReview.execute).toHaveBeenCalled();
+            expect(mockEnqueueCliReview.execute).toHaveBeenCalled();
             expect(result).toEqual({ suggestions: [] });
         });
     });
@@ -1429,9 +1554,9 @@ describe('CliReviewController', () => {
                 resetAt: new Date('2026-01-01T00:00:00Z'),
             });
 
-            await expect(
-                controller.trialReview(TRIAL_BODY),
-            ).rejects.toThrow(HttpException);
+            await expect(controller.trialReview(TRIAL_BODY)).rejects.toThrow(
+                HttpException,
+            );
 
             try {
                 await controller.trialReview(TRIAL_BODY);
@@ -1512,9 +1637,9 @@ describe('CliReviewController', () => {
         });
 
         it('throws 400 when fingerprint is missing', async () => {
-            await expect(
-                controller.trialStatus(undefined),
-            ).rejects.toThrow(HttpException);
+            await expect(controller.trialStatus(undefined)).rejects.toThrow(
+                HttpException,
+            );
 
             try {
                 await controller.trialStatus(undefined);
@@ -1536,6 +1661,179 @@ describe('CliReviewController', () => {
             // Should be roughly 1 hour from now
             const resetDate = new Date(result.resetsAt);
             expect(resetDate.getTime()).toBeGreaterThan(Date.now());
+        });
+    });
+
+    // =========================================================================
+    // POST /cli/public/review-pr  (anonymous public-demo enqueue)
+    // =========================================================================
+
+    describe('POST /cli/public/review-pr', () => {
+        const PUBLIC_BODY = {
+            prUrl: 'https://github.com/trpc/trpc/pull/7280',
+            fingerprint: 'fp-public-1',
+        } as any;
+
+        it('returns 202 with the enqueue response on success', async () => {
+            const res = { status: jest.fn() };
+            mockPublicPrReview.execute.mockResolvedValue({
+                ok: true,
+                response: {
+                    jobId: 'job-pub-1',
+                    status: 'PENDING',
+                    statusUrl: '/cli/public/review/jobs/job-pub-1',
+                    pr: { owner: 'trpc', repo: 'trpc', prNumber: 7280 },
+                    diff: 'diff --git a/x b/x',
+                },
+            });
+
+            const result = await controller.publicPrReview(PUBLIC_BODY, res);
+
+            expect(mockPublicPrReview.execute).toHaveBeenCalledWith({
+                prUrl: PUBLIC_BODY.prUrl,
+                fingerprint: PUBLIC_BODY.fingerprint,
+            });
+            expect(res.status).toHaveBeenCalledWith(202);
+            expect(result).toHaveProperty('jobId', 'job-pub-1');
+            expect(result).toHaveProperty('diff');
+        });
+
+        it('throws 400 when fingerprint is missing', async () => {
+            await expect(
+                controller.publicPrReview({ prUrl: 'x' } as any),
+            ).rejects.toThrow(HttpException);
+            expect(mockPublicPrReview.execute).not.toHaveBeenCalled();
+        });
+
+        it('throws a typed 400 (e.g. too_large) carrying code + message', async () => {
+            mockPublicPrReview.execute.mockResolvedValue({
+                ok: false,
+                code: 'too_large',
+                message: 'PR exceeds the free-demo cap',
+                statusCode: 400,
+            });
+
+            try {
+                await controller.publicPrReview(PUBLIC_BODY, { status: jest.fn() });
+                throw new Error('expected publicPrReview to throw');
+            } catch (error) {
+                expect(error).toBeInstanceOf(HttpException);
+                expect(error.getStatus()).toBe(400);
+                const response = error.getResponse();
+                expect(response.code).toBe('too_large');
+                expect(response.message).toContain('cap');
+            }
+        });
+
+        it('throws 429 with remaining/resetAt/limit when rate-limited', async () => {
+            mockPublicPrReview.execute.mockResolvedValue({
+                ok: false,
+                code: 'rate_limited',
+                message: "You've used your free reviews",
+                statusCode: 429,
+                rateLimit: {
+                    remaining: 0,
+                    resetAt: '2026-01-01T00:00:00.000Z',
+                    limit: 2,
+                },
+            });
+
+            try {
+                await controller.publicPrReview(PUBLIC_BODY, { status: jest.fn() });
+                throw new Error('expected publicPrReview to throw');
+            } catch (error) {
+                expect(error).toBeInstanceOf(HttpException);
+                expect(error.getStatus()).toBe(429);
+                const response = error.getResponse();
+                expect(response.remaining).toBe(0);
+                expect(response.resetAt).toBe('2026-01-01T00:00:00.000Z');
+                expect(response.limit).toBe(2);
+            }
+        });
+    });
+
+    // =========================================================================
+    // GET /cli/public/review/jobs/:jobId  (anonymous poll, scoped to 'trial')
+    // =========================================================================
+
+    describe('GET /cli/public/review/jobs/:jobId', () => {
+        it("scopes the lookup to the 'trial' org and forwards omit=payload", async () => {
+            mockGetCliReviewJobStatus.execute.mockResolvedValue({
+                jobId: 'job-pub-1',
+                status: 'COMPLETED',
+            });
+
+            await controller.getPublicReviewJob('job-pub-1', 'payload');
+
+            expect(mockGetCliReviewJobStatus.execute).toHaveBeenCalledWith({
+                jobId: 'job-pub-1',
+                organizationId: 'trial',
+                omitPayload: true,
+            });
+        });
+
+        it('does not omit payload on the first poll', async () => {
+            mockGetCliReviewJobStatus.execute.mockResolvedValue({
+                jobId: 'job-pub-1',
+                status: 'PENDING',
+            });
+
+            await controller.getPublicReviewJob('job-pub-1', undefined);
+
+            expect(mockGetCliReviewJobStatus.execute).toHaveBeenCalledWith(
+                expect.objectContaining({ omitPayload: false }),
+            );
+        });
+    });
+
+    // =========================================================================
+    // GET /cli/public/featured-reviews  (cached marketing grid)
+    // =========================================================================
+
+    describe('GET /cli/public/featured-reviews', () => {
+        it('returns the { items } envelope from the use case', async () => {
+            const items = [
+                { slug: 'react-fizz-resume-abort', issuesCount: 3 },
+                { slug: 'trpc-error-handling-vm', issuesCount: 1 },
+            ];
+            mockListFeaturedReviews.execute.mockResolvedValue({ items });
+
+            const result = await controller.listFeaturedReviews();
+
+            expect(result).toEqual({ items });
+        });
+    });
+
+    // =========================================================================
+    // GET /cli/public/featured-reviews/:slug  (cached snapshot)
+    // =========================================================================
+
+    describe('GET /cli/public/featured-reviews/:slug', () => {
+        it('returns the snapshot for a known slug', async () => {
+            const review = {
+                slug: 'react-fizz-resume-abort',
+                pr: { prNumber: 36584 },
+                diff: 'diff --git a/x b/x',
+                result: { issues: [{ file: 'x', line: 1 }] },
+            };
+            mockGetFeaturedReview.execute.mockResolvedValue(review);
+
+            const result = await controller.getFeaturedReview(
+                'react-fizz-resume-abort',
+            );
+
+            expect(mockGetFeaturedReview.execute).toHaveBeenCalledWith({
+                slug: 'react-fizz-resume-abort',
+            });
+            expect(result).toBe(review);
+        });
+
+        it('throws 404 when the slug is unknown / unpublished', async () => {
+            mockGetFeaturedReview.execute.mockResolvedValue(null);
+
+            await expect(
+                controller.getFeaturedReview('does-not-exist'),
+            ).rejects.toThrow(NotFoundException);
         });
     });
 });

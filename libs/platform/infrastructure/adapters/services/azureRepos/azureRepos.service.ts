@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createTwoFilesPatch } from 'diff';
+import pLimit from 'p-limit';
 import { v4 } from 'uuid';
 
 import {
@@ -45,9 +46,26 @@ import {
     ReactionsInComments,
 } from '@libs/platform/domain/platformIntegrations/types/codeManagement/pullRequests.type';
 
-import { Repositories } from '@libs/platform/domain/platformIntegrations/types/codeManagement/repositories.type';
-import { AzureReposRequestHelper } from './azure-repos-request-helper';
+import { createLogger } from '@kodus/flow';
+import { hasKodyMarker } from '@libs/common/utils/codeManagement/codeCommentMarkers';
+import { getCodeReviewBadge } from '@libs/common/utils/codeManagement/codeReviewBadge';
+import { getLabelShield } from '@libs/common/utils/codeManagement/labels';
+import { getSeverityLevelShield } from '@libs/common/utils/codeManagement/severityLevel';
+import { decrypt, encrypt } from '@libs/common/utils/crypto';
+import { IntegrationServiceDecorator } from '@libs/common/utils/decorators/integration-service.decorator';
+import {
+    isFileMatchingGlob,
+    isFileMatchingGlobCaseInsensitive,
+} from '@libs/common/utils/glob-utils';
+import {
+    getTranslationsForLanguageByCategory,
+    TranslationsCategory,
+} from '@libs/common/utils/translations/translations';
+import { generateWebhookToken } from '@libs/common/utils/webhooks/webhookTokenCrypto';
+import { AzureReposAuthDetail } from '@libs/integrations/domain/authIntegrations/types/azure-repos-auth-detail';
 import { IntegrationConfigEntity } from '@libs/integrations/domain/integrationConfigs/entities/integration-config.entity';
+import { IntegrationEntity } from '@libs/integrations/domain/integrations/entities/integration.entity';
+import { MCPManagerService } from '@libs/mcp-server/services/mcp-manager.service';
 import {
     AzurePullRequestVote,
     AzureRepoCommit,
@@ -55,33 +73,24 @@ import {
     AzureRepoPRThread,
     EventConfig,
 } from '@libs/platform/domain/azure/entities/azureRepoExtras.type';
-import axios, { AxiosInstance } from 'axios';
-import { createLogger } from '@kodus/flow';
-import { IntegrationServiceDecorator } from '@libs/common/utils/decorators/integration-service.decorator';
-import { MCPManagerService } from '@libs/mcp-server/services/mcp-manager.service';
-import {
-    getTranslationsForLanguageByCategory,
-    TranslationsCategory,
-} from '@libs/common/utils/translations/translations';
-import { decrypt, encrypt } from '@libs/common/utils/crypto';
-import { hasKodyMarker } from '@libs/common/utils/codeManagement/codeCommentMarkers';
-import { AzureReposAuthDetail } from '@libs/integrations/domain/authIntegrations/types/azure-repos-auth-detail';
-import { AuthMode } from '@libs/platform/domain/platformIntegrations/enums/codeManagement/authMode.enum';
-import { IntegrationEntity } from '@libs/integrations/domain/integrations/entities/integration.entity';
 import {
     AzurePRStatus,
     AzureRepoPullRequest,
 } from '@libs/platform/domain/azure/entities/azureRepoPullRequest.type';
-import { generateWebhookToken } from '@libs/common/utils/webhooks/webhookTokenCrypto';
-import { CodeManagementConnectionStatus } from '@libs/platform/domain/platformIntegrations/interfaces/code-management.interface';
-import { getSeverityLevelShield } from '@libs/common/utils/codeManagement/severityLevel';
-import { getCodeReviewBadge } from '@libs/common/utils/codeManagement/codeReviewBadge';
-import { getLabelShield } from '@libs/common/utils/codeManagement/labels';
-import { RepositoryFile } from '@libs/platform/domain/platformIntegrations/types/codeManagement/repositoryFile.type';
+import { AuthMode } from '@libs/platform/domain/platformIntegrations/enums/codeManagement/authMode.enum';
 import {
-    isFileMatchingGlob,
-    isFileMatchingGlobCaseInsensitive,
-} from '@libs/common/utils/glob-utils';
+    CodeManagementConnectionStatus,
+    PullRequestFileChange,
+} from '@libs/platform/domain/platformIntegrations/interfaces/code-management.interface';
+import { Repositories } from '@libs/platform/domain/platformIntegrations/types/codeManagement/repositories.type';
+import { RepositoryFile } from '@libs/platform/domain/platformIntegrations/types/codeManagement/repositoryFile.type';
+import axios, { AxiosInstance } from 'axios';
+import {
+    buildDefaultSourceBranchName,
+    DEFAULT_COMMIT_MESSAGE,
+    DEFAULT_PR_TITLE,
+} from '../code-management-defaults.constants';
+import { AzureReposRequestHelper } from './azure-repos-request-helper';
 
 @IntegrationServiceDecorator(PlatformType.AZURE_REPOS, 'codeManagement')
 export class AzureReposService implements Omit<
@@ -99,6 +108,14 @@ export class AzureReposService implements Omit<
 > {
     private readonly logger = createLogger(AzureReposService.name);
 
+    /**
+     * Cap on concurrent `getFileContent` calls during PR file enrichment.
+     * Matches `PullRequestHandlerService.FILE_CONTENT_CONCURRENCY` so the
+     * full review pipeline applies the same back-pressure to Azure DevOps,
+     * regardless of which entry point fired the fetch.
+     */
+    private static readonly FILE_CONTENT_CONCURRENCY = 30;
+
     constructor(
         @Inject(INTEGRATION_SERVICE_TOKEN)
         private readonly integrationService: IIntegrationService,
@@ -111,6 +128,326 @@ export class AzureReposService implements Omit<
         private readonly configService: ConfigService,
         private readonly mcpManagerService?: MCPManagerService,
     ) {}
+
+    async findRepositoryByName(params: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        name: string;
+    }): Promise<Partial<Repository> | null> {
+        try {
+            const repositories = await this.getRepositories({
+                organizationAndTeamData: params.organizationAndTeamData,
+            });
+
+            const wanted = params.name.trim().toLowerCase();
+            const repository = repositories.find(
+                (repo) =>
+                    repo.name.toLowerCase() === wanted ||
+                    repo.full_name?.toLowerCase() === wanted ||
+                    `${repo.organizationName}/${repo.name}`.toLowerCase() ===
+                        wanted,
+            );
+
+            if (!repository) {
+                return null;
+            }
+
+            return {
+                id: repository.id,
+                name: repository.name,
+                fullName: `${repository.organizationName}/${repository.name}`,
+                defaultBranch: repository.default_branch,
+            };
+        } catch (error) {
+            this.logger.error({
+                message: 'Error finding repository by name in Azure Repos',
+                context: AzureReposService.name,
+                error,
+                metadata: { params },
+            });
+            throw new BadRequestException(error);
+        }
+    }
+
+    async createPullRequestWithFiles(params: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        repository: { id: string; name: string };
+        sourceBranch?: string;
+        targetBranch?: string;
+        baseBranch?: string;
+        title?: string;
+        description?: string;
+        commitMessage?: string;
+        author?: { name: string; email?: string };
+        files: PullRequestFileChange[];
+    }): Promise<Partial<PullRequest> | null> {
+        const {
+            organizationAndTeamData,
+            repository,
+            sourceBranch,
+            targetBranch,
+            baseBranch,
+            title,
+            description = '',
+            commitMessage,
+            author,
+            files,
+        } = params;
+
+        const resolvedSourceBranch =
+            sourceBranch || buildDefaultSourceBranchName();
+        const resolvedTitle = title?.trim() || DEFAULT_PR_TITLE;
+        const resolvedCommitMessage =
+            commitMessage?.trim() || DEFAULT_COMMIT_MESSAGE;
+
+        try {
+            const resolvedTargetBranch =
+                targetBranch ||
+                (await this.getDefaultBranch({
+                    organizationAndTeamData,
+                    repository,
+                }));
+            const resolvedBaseBranch = baseBranch || resolvedTargetBranch;
+
+            const { orgName, token } = await this.getAuthDetails(
+                organizationAndTeamData,
+            );
+
+            const projectId = await this.getProjectIdFromRepository(
+                organizationAndTeamData,
+                repository.id,
+            );
+
+            const uploadResult = await this.uploadFiles({
+                organizationAndTeamData,
+                repository,
+                branchName: resolvedSourceBranch,
+                baseBranch: resolvedBaseBranch,
+                files,
+                message: resolvedCommitMessage,
+                author,
+            });
+
+            if (!uploadResult) {
+                throw new BadRequestException(
+                    'Failed to upload files to Azure Repos',
+                );
+            }
+
+            const pr = await this.azureReposRequestHelper.createPullRequest({
+                orgName,
+                token,
+                projectId,
+                repositoryId: repository.id,
+                sourceBranch: resolvedSourceBranch,
+                targetBranch: resolvedTargetBranch,
+                title: resolvedTitle,
+                description,
+            });
+
+            return this.transformPullRequest(pr, organizationAndTeamData);
+        } catch (error) {
+            this.logger.error({
+                message:
+                    'Error creating pull request with files in Azure Repos',
+                context: AzureReposService.name,
+                error,
+                metadata: { params },
+            });
+            return null;
+        }
+    }
+
+    async uploadFiles(params: {
+        organizationAndTeamData: OrganizationAndTeamData;
+        repository: { id: string; name: string };
+        branchName?: string;
+        baseBranch?: string;
+        files: PullRequestFileChange[];
+        message?: string;
+        author?: { name: string; email?: string };
+    }): Promise<boolean> {
+        const {
+            organizationAndTeamData,
+            repository,
+            branchName,
+            baseBranch,
+            files,
+            message,
+            author,
+        } = params;
+
+        try {
+            const defaultBranch = await this.getDefaultBranch({
+                organizationAndTeamData,
+                repository,
+            });
+            const resolvedBaseBranch = baseBranch || defaultBranch;
+            const resolvedBranchName = branchName || resolvedBaseBranch;
+            const resolvedMessage = message?.trim() || DEFAULT_COMMIT_MESSAGE;
+
+            const authDetails = await this.getAuthDetails(
+                organizationAndTeamData,
+            );
+
+            const { orgName, token } = authDetails;
+
+            const tokenAuthorIdentity =
+                authDetails?.authMode === AuthMode.TOKEN && author?.name
+                    ? {
+                          name: author.name,
+                          email: author.email || 'kody@kodus.io',
+                      }
+                    : undefined;
+
+            const projectId = await this.getProjectIdFromRepository(
+                organizationAndTeamData,
+                repository.id,
+            );
+
+            const branchAlreadyExists =
+                resolvedBranchName === resolvedBaseBranch
+                    ? true
+                    : await this.azureReposRequestHelper.branchExists({
+                          orgName,
+                          token,
+                          projectId,
+                          repositoryId: repository.id,
+                          branchName: resolvedBranchName,
+                      });
+
+            const fileExistsReferenceBranch = branchAlreadyExists
+                ? resolvedBranchName
+                : resolvedBaseBranch;
+
+            const fileExistsEntries = await Promise.all(
+                files.map(async (file) => {
+                    const operation = file.operation || 'upsert';
+
+                    if (operation === 'upsert' || operation === 'delete') {
+                        const exists = await this.checkAzureFileExists({
+                            orgName,
+                            token,
+                            projectId,
+                            repositoryId: repository.id,
+                            branchName: fileExistsReferenceBranch,
+                            filePath: file.path,
+                        });
+
+                        return [file.path, exists] as const;
+                    }
+
+                    return [file.path, false] as const;
+                }),
+            );
+
+            const fileExistsByPath = new Map(fileExistsEntries);
+
+            const changes = files
+                .map((file) => {
+                    const operation = file.operation || 'upsert';
+                    const fileExists = fileExistsByPath.get(file.path) === true;
+
+                    if (operation === 'delete') {
+                        if (!fileExists) {
+                            return null;
+                        }
+
+                        return {
+                            changeType: 'delete' as const,
+                            filePath: file.path,
+                        };
+                    }
+
+                    if (typeof file.content !== 'string') {
+                        throw new Error(
+                            `File content is required for upsert operation: ${file.path}`,
+                        );
+                    }
+
+                    return {
+                        changeType: fileExists
+                            ? ('edit' as const)
+                            : ('add' as const),
+                        filePath: file.path,
+                        content: file.content,
+                    };
+                })
+                .filter((change): change is NonNullable<typeof change> =>
+                    Boolean(change),
+                );
+
+            if (changes.length === 0) {
+                return true;
+            }
+
+            await this.azureReposRequestHelper.uploadFilesToNewBranch({
+                orgName,
+                branchName: resolvedBranchName,
+                baseBranch: resolvedBaseBranch,
+                changes,
+                commitMessage: resolvedMessage,
+                author: tokenAuthorIdentity,
+                projectId,
+                repositoryId: repository.id,
+                token,
+            });
+
+            return true;
+        } catch (error) {
+            this.logger.error({
+                message: 'Error uploading files to Azure Repos',
+                context: AzureReposService.name,
+                error:
+                    error instanceof Error ? error : new Error(String(error)),
+                metadata: { params },
+            });
+
+            return false;
+        }
+    }
+
+    private async checkAzureFileExists(params: {
+        orgName: string;
+        token: string;
+        projectId: string;
+        repositoryId: string;
+        branchName: string;
+        filePath: string;
+    }): Promise<boolean> {
+        try {
+            await this.azureReposRequestHelper.getRepositoryContentFile({
+                orgName: params.orgName,
+                token: params.token,
+                projectId: params.projectId,
+                repositoryId: params.repositoryId,
+                filePath: params.filePath,
+                branch: params.branchName,
+            });
+
+            return true;
+        } catch (error) {
+            if (this.isAzureNotFoundError(error)) {
+                return false;
+            }
+
+            throw error;
+        }
+    }
+
+    private isAzureNotFoundError(error: unknown): boolean {
+        const candidate = error as
+            | {
+                  status?: number;
+                  code?: number;
+                  response?: { status?: number };
+              }
+            | undefined;
+
+        const status =
+            candidate?.status || candidate?.code || candidate?.response?.status;
+
+        return status === 404;
+    }
 
     async getPullRequestAuthors(params: {
         organizationAndTeamData: OrganizationAndTeamData;
@@ -1322,7 +1659,14 @@ export class AzureReposService implements Omit<
                 },
             );
 
-            return pr;
+            if (!pr) {
+                return null;
+            }
+
+            return {
+                ...pr,
+                body: pr.description ?? '',
+            };
         } catch (error) {
             this.logger.error({
                 message: 'Error to get pull request by number',
@@ -3086,30 +3430,73 @@ export class AzureReposService implements Omit<
                 },
             });
 
-            // 4. Process each change entry to generate the diff using our specific base and target commits
-            const fileDiffPromises = changeEntries
-                .filter((change) => change.item?.path || change?.originalPath) // Ensure item and path exist
-                .map((change) => {
-                    const filePath = change.item?.path || change?.originalPath;
-                    // Pass the globally determined base/target and the specific change type
-                    return this._generateFileDiffForAzure({
-                        orgName,
-                        token,
-                        projectId,
-                        repositoryId: repository.id,
-                        filePath,
-                        baseCommitId, // Base commit of the target branch
-                        targetCommitId, // Source commit of the PR
-                        changeType: change.changeType,
-                    });
-                });
-
-            const enrichedFilesResults = await Promise.all(fileDiffPromises);
-
-            // Filter out any null results where diff generation failed
-            const successfulFiles = enrichedFilesResults.filter(
-                (file): file is NonNullable<typeof file> => file !== null,
+            const validEntries = changeEntries.filter(
+                (change) => change.item?.path || change?.originalPath,
             );
+
+            const limit = pLimit(AzureReposService.FILE_CONTENT_CONCURRENCY);
+
+            const settled = await Promise.allSettled(
+                validEntries.map((change) =>
+                    limit(() =>
+                        this._generateFileDiffForAzure({
+                            orgName,
+                            token,
+                            projectId,
+                            repositoryId: repository.id,
+                            filePath: change.item?.path || change?.originalPath,
+                            baseCommitId,
+                            targetCommitId,
+                            changeType: change.changeType,
+                        }),
+                    ),
+                ),
+            );
+
+            const successfulFiles: Array<
+                NonNullable<
+                    Awaited<
+                        ReturnType<
+                            AzureReposService['_generateFileDiffForAzure']
+                        >
+                    >
+                >
+            > = [];
+            const failedFiles: Array<{ filePath: string; reason: string }> = [];
+
+            settled.forEach((result, idx) => {
+                const filePath =
+                    validEntries[idx].item?.path ||
+                    validEntries[idx]?.originalPath;
+                if (result.status === 'fulfilled') {
+                    if (result.value !== null) {
+                        successfulFiles.push(result.value);
+                    }
+                    // `value === null` means `_generateFileDiffForAzure`
+                    // swallowed its own error and already logged it — no
+                    // need to double-count here.
+                } else {
+                    failedFiles.push({
+                        filePath,
+                        reason: result.reason?.message ?? String(result.reason),
+                    });
+                }
+            });
+
+            if (failedFiles.length > 0) {
+                // Structured visibility instead of silent loss. Capped sample
+                // so a 200-file blast doesn't blow up the log payload.
+                this.logger.warn({
+                    message: `Diff fetch incomplete for PR #${prNumber}: ${failedFiles.length}/${validEntries.length} files failed`,
+                    context: this.getFilesByPullRequestId.name,
+                    metadata: {
+                        prNumber,
+                        failedCount: failedFiles.length,
+                        totalCount: validEntries.length,
+                        failedSample: failedFiles.slice(0, 10),
+                    },
+                });
+            }
 
             this.logger.log({
                 message: `Successfully generated diffs for ${successfulFiles.length} files for PR #${prNumber}`,
@@ -3309,7 +3696,11 @@ export class AzureReposService implements Omit<
                 message: `Error generating diff for file "${filePath}" between commits "${baseCommitId}" and "${targetCommitId}"`,
                 context: this._generateFileDiffForAzure.name,
                 error: error,
-                metadata: { filePath, baseCommitId, targetCommitId },
+                metadata: {
+                    filePath,
+                    baseCommitId,
+                    targetCommitId,
+                },
             });
             return null; // Return null to indicate failure for this specific file
         }
@@ -3643,6 +4034,21 @@ export class AzureReposService implements Omit<
         return `\`\`\`${language}\n${code}\n\`\`\``;
     }
 
+    private dedentCode(code: string): string {
+        const lines = code.split('\n');
+        const indents = lines
+            .filter((line) => line.trim().length > 0)
+            .map((line) => line.match(/^[ \t]*/)?.[0].length ?? 0);
+        if (indents.length === 0) return code;
+        const minIndent = Math.min(...indents);
+        if (minIndent === 0) return code;
+        return lines
+            .map((line) =>
+                line.length >= minIndent ? line.slice(minIndent) : line,
+            )
+            .join('\n');
+    }
+
     private formatSub(text: string) {
         return `<sub>${text}</sub>\n\n`;
     }
@@ -3695,7 +4101,7 @@ ${copyPrompt}
         const codeBlock = lineComment?.body?.improvedCode
             ? this.formatCodeBlock(
                   repository?.language?.toLowerCase(),
-                  lineComment?.body?.improvedCode,
+                  this.dedentCode(lineComment?.body?.improvedCode),
               )
             : '';
         const suggestionContent = lineComment?.body?.suggestionContent || '';
@@ -3836,82 +4242,98 @@ ${copyPrompt}
     async deleteWebhook(params: {
         organizationAndTeamData: OrganizationAndTeamData;
     }): Promise<void> {
-        const authDetails = await this.getAuthDetails(
-            params.organizationAndTeamData,
-        );
+        try {
+            const authDetails = await this.getAuthDetails(
+                params.organizationAndTeamData,
+            );
 
-        // Se for conexão via PAT, remove os webhooks
-        if (authDetails.authMode === AuthMode.TOKEN) {
-            const repositories =
-                await this.findOneByOrganizationAndTeamDataAndConfigKey(
-                    params.organizationAndTeamData,
-                    IntegrationConfigKey.REPOSITORIES,
-                );
+            // Se for conexão via PAT, remove os webhooks
+            if (authDetails.authMode === AuthMode.TOKEN) {
+                const repositories =
+                    await this.findOneByOrganizationAndTeamDataAndConfigKey(
+                        params.organizationAndTeamData,
+                        IntegrationConfigKey.REPOSITORIES,
+                    );
 
-            if (repositories) {
-                for (const repo of repositories) {
-                    try {
-                        const projectId = await this.getProjectIdFromRepository(
-                            params.organizationAndTeamData,
-                            repo.id,
-                        );
+                if (repositories) {
+                    for (const repo of repositories) {
+                        try {
+                            const projectId =
+                                await this.getProjectIdFromRepository(
+                                    params.organizationAndTeamData,
+                                    repo.id,
+                                );
 
-                        if (!projectId) {
-                            continue;
-                        }
+                            if (!projectId) {
+                                continue;
+                            }
 
-                        const subs =
-                            await this.azureReposRequestHelper.listSubscriptionsByProject(
-                                {
-                                    orgName: authDetails.orgName,
-                                    token: authDetails.token,
-                                    projectId,
+                            const subs =
+                                await this.azureReposRequestHelper.listSubscriptionsByProject(
+                                    {
+                                        orgName: authDetails.orgName,
+                                        token: authDetails.token,
+                                        projectId,
+                                    },
+                                );
+
+                            const webhookUrl = this.configService.get<string>(
+                                'GLOBAL_AZURE_REPOS_CODE_MANAGEMENT_WEBHOOK'!,
+                            );
+                            const allMatching = subs.filter(
+                                (s) =>
+                                    s.publisherInputs?.repository === repo.id &&
+                                    s.consumerInputs?.url?.includes(webhookUrl),
+                            );
+
+                            const deletionPromises = allMatching.map(
+                                async (existing) => {
+                                    await this.azureReposRequestHelper.deleteWebhookById(
+                                        {
+                                            orgName: authDetails.orgName,
+                                            token: authDetails.token,
+                                            subscriptionId: existing.id,
+                                        },
+                                    );
+
+                                    this.logger.log({
+                                        message: `Webhook removed for repository ${repo.name} (id=${existing.id})`,
+                                        context: this.deleteWebhook.name,
+                                        metadata: {
+                                            organizationAndTeamData:
+                                                params.organizationAndTeamData,
+                                            repository: repo.name,
+                                            subscriptionId: existing.id,
+                                        },
+                                    });
                                 },
                             );
 
-                        const webhookUrl = this.configService.get<string>(
-                            'GLOBAL_AZURE_REPOS_CODE_MANAGEMENT_WEBHOOK'!,
-                        );
-                        const allMatching = subs.filter(
-                            (s) =>
-                                s.publisherInputs?.repository === repo.id &&
-                                s.consumerInputs?.url?.includes(webhookUrl),
-                        );
-
-                        for (const existing of allMatching) {
-                            await this.azureReposRequestHelper.deleteWebhookById(
-                                {
-                                    orgName: authDetails.orgName,
-                                    token: authDetails.token,
-                                    subscriptionId: existing.id,
-                                },
-                            );
-
-                            this.logger.log({
-                                message: `Webhook removed for repository ${repo.name} (id=${existing.id})`,
+                            await Promise.all(deletionPromises);
+                        } catch (error) {
+                            this.logger.error({
+                                message: `Error deleting webhook for repository ${repo.name}`,
                                 context: this.deleteWebhook.name,
+                                error: error,
                                 metadata: {
                                     organizationAndTeamData:
                                         params.organizationAndTeamData,
                                     repository: repo.name,
-                                    subscriptionId: existing.id,
                                 },
                             });
                         }
-                    } catch (error) {
-                        this.logger.error({
-                            message: `Error deleting webhook for repository ${repo.name}`,
-                            context: this.deleteWebhook.name,
-                            error: error,
-                            metadata: {
-                                organizationAndTeamData:
-                                    params.organizationAndTeamData,
-                                repository: repo.name,
-                            },
-                        });
                     }
                 }
             }
+        } catch (error) {
+            this.logger.error({
+                message: 'Error authenticating for webhook deletion',
+                context: 'AzureReposService',
+                error: error,
+                metadata: {
+                    organizationAndTeamData: params.organizationAndTeamData,
+                },
+            });
         }
     }
 
@@ -4065,7 +4487,7 @@ ${copyPrompt}
     async getRepositoryTree(params: {
         organizationAndTeamData: OrganizationAndTeamData;
         repositoryId: string;
-    }): Promise<any[]> {
+    }): Promise<TreeItem[]> {
         try {
             const { organizationAndTeamData, repositoryId } = params;
 
@@ -4118,10 +4540,14 @@ ${copyPrompt}
                 path: item.path?.startsWith('/')
                     ? item.path.substring(1)
                     : item.path, // Remove '/' inicial se existir
-                type: item.gitObjectType === 'tree' ? 'directory' : 'file',
+                type:
+                    item.gitObjectType === 'tree'
+                        ? ('directory' as const)
+                        : ('file' as const),
                 sha: item.objectId,
                 size: undefined,
                 url: item.url,
+                hasChildren: item.gitObjectType === 'tree', // Marcar diretórios para possível navegação futura
             }));
 
             this.logger.debug({
@@ -4612,7 +5038,7 @@ ${copyPrompt}
             },
             message: pr?.description ?? '',
             state: this._prStateMap.get(pr?.status) ?? PullRequestState.ALL,
-            prURL: pr?.url ?? '',
+            prURL: this.transformPullRequestUrl(pr) ?? pr?.url ?? '',
             organizationId: organizationAndTeamData?.organizationId ?? '',
             body: pr?.description ?? '',
             title: pr?.title ?? '',
@@ -4664,6 +5090,12 @@ ${copyPrompt}
             },
             isDraft: pr?.isDraft ?? false,
         };
+    }
+
+    private transformPullRequestUrl(pr: AzureRepoPullRequest): string {
+        const repositoryUrl = pr?.repository?.webUrl ?? '';
+        const prId = pr?.pullRequestId ?? '';
+        return `${repositoryUrl}/pullrequest/${prId}`;
     }
 
     private transformRepositoryFile(file: AzureRepoFileItem): RepositoryFile {
@@ -4733,5 +5165,19 @@ ${copyPrompt}
             });
             return null;
         }
+    }
+
+    async getRepositoryContentBatch(
+        _params: any,
+    ): Promise<Map<string, any> | null> {
+        // Not implemented for Azure Repos — callers fall back to
+        // per-file `getRepositoryContentFile`.
+        return null;
+    }
+
+    async getUsersByUsername(_params: any): Promise<Map<string, any> | null> {
+        // Not implemented for Azure Repos — callers fall back to
+        // per-user `getUserByUsername`.
+        return null;
     }
 }

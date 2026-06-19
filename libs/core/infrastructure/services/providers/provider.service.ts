@@ -25,7 +25,8 @@ export class ProviderService {
             requiresBaseUrl: false,
             supportsSubscriptionToken: true,
             subscriptionTokenSetupUrl: 'https://github.com/openai/codex',
-            subscriptionTokenInstructions: '1. Install Codex CLI: npm install -g @openai/codex\n2. Run: codex login\n3. Open: ~/.codex/auth.json\n4. Paste the entire file contents into the field below — Kodus will extract the token automatically.\n\nRequires ChatGPT Plus or Pro subscription.',
+            subscriptionTokenInstructions:
+                '1. Install Codex CLI: npm install -g @openai/codex\n2. Run: codex login\n3. Open: ~/.codex/auth.json\n4. Paste the entire file contents into the field below — Kodus will extract the token automatically.\n\nRequires ChatGPT Plus or Pro subscription.',
         },
         [BYOKProvider.ANTHROPIC]: {
             id: BYOKProvider.ANTHROPIC,
@@ -35,8 +36,10 @@ export class ProviderService {
             requiresApiKey: true,
             requiresBaseUrl: false,
             supportsSubscriptionToken: true,
-            subscriptionTokenSetupUrl: 'https://docs.anthropic.com/en/docs/claude-code/setup-token',
-            subscriptionTokenInstructions: '1. Open your terminal\n2. Run: claude setup-token\n\nOn Linux, copy ~/.claude/.credentials.json and paste the entire JSON below — Kodus will extract both the access token and refresh token automatically.\n\nOn macOS, run:\nsecurity find-generic-password -s "Claude Code-credentials" -w\nand paste the output JSON below.\n\nAlternatively, paste just the sk-ant-oat01-... token (but without a refresh token, it expires after ~8 hours).\n\nRequires Claude Code CLI with a Pro, Max, or Team subscription.',
+            subscriptionTokenSetupUrl:
+                'https://docs.anthropic.com/en/docs/claude-code/setup-token',
+            subscriptionTokenInstructions:
+                '1. Open your terminal\n2. Run: claude setup-token\n\nOn Linux, copy ~/.claude/.credentials.json and paste the entire JSON below — Kodus will extract both the access token and refresh token automatically.\n\nOn macOS, run:\nsecurity find-generic-password -s "Claude Code-credentials" -w\nand paste the output JSON below.\n\nAlternatively, paste just the sk-ant-oat01-... token (but without a refresh token, it expires after ~8 hours).\n\nRequires Claude Code CLI with a Pro, Max, or Team subscription.',
         },
         [BYOKProvider.GOOGLE_GEMINI]: {
             id: BYOKProvider.GOOGLE_GEMINI,
@@ -47,15 +50,26 @@ export class ProviderService {
             requiresBaseUrl: false,
             supportsSubscriptionToken: false,
         },
-        // [BYOKProvider.GOOGLE_VERTEX]: {
-        //     id: BYOKProvider.GOOGLE_VERTEX,
-        //     name: 'Google Vertex',
-        //     description: 'Vertex AI models from Google Cloud',
-        //     supported: true,
-        //     requiresApiKey: true,
-        //     requiresBaseUrl: false,
-        //     supportsSubscriptionToken: false,
-        // },
+        [BYOKProvider.GOOGLE_VERTEX]: {
+            id: BYOKProvider.GOOGLE_VERTEX,
+            name: 'Google Vertex AI',
+            description:
+                'Vertex AI models via service account (needs SA JSON + region)',
+            supported: true,
+            requiresApiKey: true,
+            requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
+        },
+        [BYOKProvider.AMAZON_BEDROCK]: {
+            id: BYOKProvider.AMAZON_BEDROCK,
+            name: 'Amazon Bedrock',
+            description:
+                'AWS-hosted foundation models (needs AWS access key, secret, and region)',
+            supported: true,
+            requiresApiKey: false,
+            requiresBaseUrl: false,
+            supportsSubscriptionToken: false,
+        },
         [BYOKProvider.OPEN_ROUTER]: {
             id: BYOKProvider.OPEN_ROUTER,
             name: 'OpenRouter',
@@ -78,6 +92,16 @@ export class ProviderService {
             id: BYOKProvider.OPENAI_COMPATIBLE,
             name: 'OpenAI Compatible',
             description: 'Any OpenAI-compatible API endpoint',
+            supported: true,
+            requiresApiKey: true,
+            requiresBaseUrl: true,
+            supportsSubscriptionToken: false,
+        },
+        [BYOKProvider.ANTHROPIC_COMPATIBLE]: {
+            id: BYOKProvider.ANTHROPIC_COMPATIBLE,
+            name: 'Anthropic Compatible',
+            description:
+                'Any Anthropic-compatible API endpoint (Kimi Code, Z.ai, DeepSeek, etc.)',
             supported: true,
             requiresApiKey: true,
             requiresBaseUrl: true,

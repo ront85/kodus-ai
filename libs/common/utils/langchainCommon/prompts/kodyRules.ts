@@ -1,6 +1,33 @@
 import z from 'zod';
 import { getDefaultKodusConfigFile } from '../../validateCodeReviewConfigFile';
-import { getTextOrDefault } from './prompt.helpers';
+import { getTextOrDefault, sanitizePromptText } from './prompt.helpers';
+
+function formatMemoriesSection(
+    memories?: Array<{ title?: string; rule?: string }>,
+): string {
+    if (!Array.isArray(memories) || !memories.length) {
+        return '';
+    }
+
+    const formattedMemories = memories
+        .map((memory) => {
+            const title = getTextOrDefault(memory?.title, '').trim();
+            const rule = getTextOrDefault(memory?.rule, '').trim();
+
+            if (!title || !rule) {
+                return null;
+            }
+
+            return `- Title: ${sanitizePromptText(title)}\n  Rule: ${sanitizePromptText(rule)}`;
+        })
+        .filter((entry): entry is string => Boolean(entry));
+
+    if (!formattedMemories.length) {
+        return '';
+    }
+
+    return `## Memories\n\nAdditional context from past learnings in Kody Rules format.\n\n${formattedMemories.join('\n\n')}`;
+}
 
 //#region classifier
 export const kodyRulesClassifierSchema = z.object({
@@ -34,12 +61,42 @@ export const kodyRulesGeneratorSchema = z.object({
     ),
 });
 
+/**
+ * How the LLM decided on `path`. Drives backend confidence checks and
+ * whether post-LLM scoping should kick in.
+ *
+ *   declared           → glob came verbatim from the source MDC frontmatter
+ *                        or an explicit "Path:" line. Backend should not
+ *                        rewrite it.
+ *   content-inferred   → no declared glob; LLM inferred from the rule body
+ *                        (mentions of TS/Python/API/etc).
+ *   location-inferred  → no declared glob; LLM inferred from where the
+ *                        source MDC lives in the repo.
+ *   default-repo-wide  → LLM had no signal and fell back to "**\/*". Most
+ *                        likely target for backend scoping.
+ */
+export type KodyRulesIDEGeneratorPathSource =
+    | 'declared'
+    | 'content-inferred'
+    | 'location-inferred'
+    | 'default-repo-wide';
+
 export const kodyRulesIDEGeneratorSchema = z.object({
     rules: z.array(
         z.object({
             title: z.string(),
             rule: z.string(),
             path: z.string(),
+            // Optional for backward compatibility with prompt versions
+            // that did not request it. New prompt always asks for it.
+            pathSource: z
+                .enum([
+                    'declared',
+                    'content-inferred',
+                    'location-inferred',
+                    'default-repo-wide',
+                ])
+                .optional(),
             sourcePath: z.string(),
             severity: z.enum(['low', 'medium', 'high', 'critical']),
             scope: z.enum(['file', 'pull-request']).optional(),
@@ -387,6 +444,8 @@ export const prompt_kodyrules_suggestiongeneration_user = (payload: any) => {
         patchWithLinesStr,
         filteredKodyRules,
         updatedSuggestions,
+        documentationContext,
+        memories,
         externalReferencesMap,
         mcpResultsMap,
     } = payload;
@@ -398,6 +457,8 @@ export const prompt_kodyrules_suggestiongeneration_user = (payload: any) => {
         overrides?.generation?.main,
         defaults?.generation?.main,
     );
+
+    const memoriesBlock = formatMemoriesSection(memories);
 
     let externalReferencesSection = '';
     if (externalReferencesMap && externalReferencesMap.size > 0) {
@@ -441,6 +502,15 @@ export const prompt_kodyrules_suggestiongeneration_user = (payload: any) => {
         mcpResultsSection += '\n</mcpResults>\n';
     }
 
+    const documentationContextSection = Array.isArray(documentationContext)
+        ? documentationContext
+              .map(
+                  (doc: any, index: number) =>
+                      `${index + 1}. ${sanitizePromptText(doc?.title || 'Documentation')}\n   URL: ${sanitizePromptText(doc?.url || 'unknown')}\n   Query: ${sanitizePromptText(doc?.query || '')}\n   Snippet: ${sanitizePromptText(doc?.snippet || '')}`,
+              )
+              .join('\n\n')
+        : '';
+
     return `
 Task: Review the code changes in the pull request (PR) for compliance with the established code rules (kodyRules).
 
@@ -482,6 +552,12 @@ ${patchWithLinesStr}
 kodyRules:
 
 ${JSON.stringify(filteredKodyRules)}
+
+Documentation Context (official docs gathered for this file):
+
+${documentationContextSection || 'No documentation context provided'}
+
+${memoriesBlock}
 ${externalReferencesSection}
 ${mcpResultsSection}
 

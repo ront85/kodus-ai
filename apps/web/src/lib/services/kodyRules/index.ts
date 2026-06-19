@@ -27,6 +27,11 @@ export const KODY_RULES_PATHS = {
     CHANGE_STATUS_KODY_RULES: pathToApiUrl(
         "/kody-rules/change-status-kody-rules",
     ),
+    APPLY_PENDING_KODY_RULES: pathToApiUrl("/kody-rules/pending/apply"),
+    DISCARD_PENDING_KODY_RULES: pathToApiUrl("/kody-rules/pending/discard"),
+    CONVERT_PENDING_UPDATES_TO_MEMORIES: pathToApiUrl(
+        "/kody-rules/pending/convert-updates-to-memories",
+    ),
     GENERATE_KODY_RULES: pathToApiUrl("/kody-rules/generate-kody-rules"),
     SYNC_IDE_RULES: pathToApiUrl("/kody-rules/sync-ide-rules"),
     CHECK_SYNC_STATUS: pathToApiUrl("/kody-rules/check-sync-status"),
@@ -36,4 +41,7 @@ export const KODY_RULES_PATHS = {
     FIND_RECOMMENDED_KODY_RULES: pathToApiUrl(
         "/kody-rules/find-recommended-kody-rules",
     ),
+    MANAGE_IMPORTED_KODY_RULES: pathToApiUrl("/kody-rules/imported/manage"),
+    COUNT_IMPORTED_KODY_RULES: pathToApiUrl("/kody-rules/imported/count"),
+    COUNTS_BY_REPOSITORY: pathToApiUrl("/kody-rules/counts-by-repository"),
 } as const;

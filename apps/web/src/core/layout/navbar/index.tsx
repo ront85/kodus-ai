@@ -1,7 +1,6 @@
 "use client";
 
 import { Suspense, useMemo } from "react";
-import dynamic from "next/dynamic";
 import NextLink from "next/link";
 import { usePathname } from "next/navigation";
 import { SvgKodus } from "@components/ui/icons/SvgKodus";
@@ -14,60 +13,41 @@ import {
 import { Spinner } from "@components/ui/spinner";
 import { usePermission } from "@services/permissions/hooks";
 import { Action, ResourceType } from "@services/permissions/types";
+import { useQueryClient } from "@tanstack/react-query";
 import {
     GaugeIcon,
     GitPullRequestIcon,
     InfoIcon,
     LibraryBig,
     SlidersHorizontalIcon,
+    TerminalIcon,
 } from "lucide-react";
 import { ErrorBoundary } from "react-error-boundary";
+import { UserNav } from "src/core/layout/navbar/_components/user-nav";
 import { cn } from "src/core/utils/components";
+import { isCockpitTierAllowed } from "src/features/ee/cockpit/_helpers/tier-policy";
 import { SubscriptionBadge } from "src/features/ee/subscription/_components/subscription-badge";
 import { useSubscriptionContext } from "src/features/ee/subscription/_providers/subscription-context";
 
-
-
-const UserNav = dynamic(
-    () =>
-        import("src/core/layout/navbar/_components/user-nav").then(
-            (f) => f.UserNav,
-        ),
-    {
-        ssr: false,
-    },
-);
-
-const NoSSRIssuesCount = dynamic(
-    () => import("./_components/issues-count").then((f) => f.IssuesCount),
-    {
-        ssr: false,
-        loading: () => (
-            <div className="flex size-full items-center justify-center">
-                <Spinner className="size-4" />
-            </div>
-        ),
-    },
-);
-
-const NoSSRGithubStars = dynamic(
-    () => import("./_components/github-stars").then((f) => f.GithubStars),
-    { ssr: false },
-);
-
-const NoSSRPendingRulesNotification = dynamic(
-    () => import("./_components/pending-rules-notification").then((f) => f.PendingRulesNotification),
-    { ssr: false }
-);
+import { GithubStars } from "./_components/github-stars";
+import { IssuesCount } from "./_components/issues-count";
+import { NotificationBell } from "./_components/notification-bell";
+import { VERSION_QUERY } from "./_components/version-info";
 
 export const NavMenu = () => {
     const pathname = usePathname();
     const subscription = useSubscriptionContext();
+    const queryClient = useQueryClient();
+    queryClient.prefetchQuery(VERSION_QUERY);
 
     const canReadIssues = usePermission(Action.Read, ResourceType.Issues);
     const canReadPullRequests = usePermission(
         Action.Read,
         ResourceType.PullRequests,
+    );
+    const canReadCliReviews = usePermission(
+        Action.Read,
+        ResourceType.CliReview,
     );
     const canReadCodeReviewSettings = usePermission(
         Action.Read,
@@ -95,9 +75,10 @@ export const NavMenu = () => {
             {
                 label: "Cockpit",
                 href: "/cockpit",
-                visible:
-                    subscription.license.valid &&
-                    subscription.license.subscriptionStatus !== "self-hosted",
+                // Mirrors the /cockpit route guard (apps/web/.../cockpit/layout.tsx)
+                // and the backend tier-policy. Self-hosted on Enterprise gets the
+                // icon; unlicensed self-hosted / free_byok stays hidden.
+                visible: isCockpitTierAllowed(subscription.license),
                 icon: <GaugeIcon className="size-6" />,
             },
 
@@ -128,7 +109,14 @@ export const NavMenu = () => {
                 icon: <InfoIcon className="size-5" />,
                 badge: (
                     <div className="h-5 min-h-auto min-w-8">
-                        <NoSSRIssuesCount />
+                        <Suspense
+                            fallback={
+                                <div className="flex size-full items-center justify-center">
+                                    <Spinner className="size-4" />
+                                </div>
+                            }>
+                            <IssuesCount />
+                        </Suspense>
                     </div>
                 ),
             });
@@ -143,16 +131,29 @@ export const NavMenu = () => {
             });
         }
 
+        if (canReadCliReviews) {
+            items.push({
+                label: "CLI Reviews",
+                href: "/cli-reviews",
+                visible: canReadCliReviews,
+                icon: <TerminalIcon className="size-5" />,
+            });
+        }
+
         return items;
     }, [
         subscription.license.valid,
         subscription.license.subscriptionStatus,
+        "planType" in subscription.license
+            ? subscription.license.planType
+            : undefined,
         canReadCodeReviewSettings,
         canReadGitSettings,
         canReadBilling,
         canReadPlugins,
         canReadIssues,
         canReadPullRequests,
+        canReadCliReviews,
     ]);
 
     const isActive = (
@@ -210,17 +211,15 @@ export const NavMenu = () => {
 
             <div className="flex items-center gap-4">
                 <ErrorBoundary fallback={null}>
-                    <NoSSRGithubStars />
+                    <GithubStars />
                 </ErrorBoundary>
 
                 <div className="flex items-center gap-2">
                     <SubscriptionBadge />
-                    <NoSSRPendingRulesNotification />
+                    <NotificationBell />
                 </div>
 
-                <Suspense>
-                    <UserNav />
-                </Suspense>
+                <UserNav />
             </div>
         </div>
     );

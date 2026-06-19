@@ -7,6 +7,8 @@ import {
     IsEnum,
     MaxLength,
     ArrayMaxSize,
+    IsInt,
+    Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PlatformType } from '@libs/core/domain/enums/platform-type.enum';
@@ -107,7 +109,7 @@ class CliConfigDto {
 
 export class CliReviewRequestDto {
     @IsString()
-    @MaxLength(5000000, { message: 'Diff too large (max 5MB)' })
+    @MaxLength(20000000, { message: 'Diff too large (max 20MB)' })
     @ApiProperty({
         example: 'diff --git a/src/app.ts b/src/app.ts\n+const x = 1;',
     })
@@ -144,6 +146,26 @@ export class CliReviewRequestDto {
     commitSha?: string; // git rev-parse HEAD
 
     @IsOptional()
+    @IsString()
+    @MaxLength(40, { message: 'Merge-base SHA too long' })
+    @ApiPropertyOptional({
+        description:
+            "Merge-base between HEAD and the upstream default branch (git merge-base HEAD origin/main). The sandbox checks out this commit (guaranteed to be on the remote) and applies the diff on top, so reviews work for branches not yet pushed and uncommitted changes.",
+        example: 'a1b2c3d4e5f6g7h8i9j0',
+    })
+    mergeBaseSha?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(255, { message: 'GitHub PAT too long' })
+    @ApiPropertyOptional({
+        description:
+            "Optional GitHub Personal Access Token. Trial users (anonymous) need this to clone private repositories — for public repos it's not required. The token is held in memory for the pipeline run only and is never persisted.",
+        example: '<your-github-personal-access-token>',
+    })
+    githubPat?: string;
+
+    @IsOptional()
     @IsEnum(PlatformType)
     @ApiPropertyOptional({
         enum: PlatformType,
@@ -164,4 +186,76 @@ export class TrialCliReviewRequestDto extends CliReviewRequestDto {
     @MaxLength(256, { message: 'Fingerprint too long (max 256 characters)' })
     @ApiProperty({ example: 'device_fingerprint_123' })
     fingerprint: string; // Device fingerprint for rate limiting
+}
+
+export class PublicPrReviewRequestDto {
+    @IsString()
+    @MaxLength(1000, { message: 'PR URL too long (max 1000 characters)' })
+    @ApiProperty({
+        description: 'Public GitHub PR URL to review',
+        example: 'https://github.com/sgl-project/sglang/pull/12668',
+    })
+    prUrl: string;
+
+    @IsString()
+    @MaxLength(256, { message: 'Fingerprint too long (max 256 characters)' })
+    @ApiProperty({
+        description:
+            'Device fingerprint for rate limiting (generated client-side)',
+        example: 'device_fingerprint_123',
+    })
+    fingerprint: string;
+}
+
+export class CliBusinessValidationRequestDto {
+    @IsOptional()
+    @IsString()
+    @MaxLength(1000, { message: 'PR URL too long (max 1000 characters)' })
+    @ApiPropertyOptional({
+        example: 'https://github.com/kodus-ai/kodus-ai/pull/123',
+    })
+    prUrl?: string;
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsInt()
+    @Min(1)
+    @ApiPropertyOptional({ type: Number, example: 123 })
+    prNumber?: number;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(200, { message: 'Repository ID too long (max 200 characters)' })
+    @ApiPropertyOptional({ example: '123456789' })
+    repositoryId?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(255, {
+        message: 'Repository name too long (max 255 characters)',
+    })
+    @ApiPropertyOptional({ example: 'kodus-ai/kodus-ai' })
+    repository?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(1000, { message: 'Task URL too long (max 1000 characters)' })
+    @ApiPropertyOptional({
+        example: 'https://linear.app/kodus/issue/KD-1234/validar-regra',
+    })
+    taskUrl?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(200, { message: 'Task ID too long (max 200 characters)' })
+    @ApiPropertyOptional({ example: 'KD-1234' })
+    taskId?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(5000000, { message: 'Diff too large (max 5MB)' })
+    @ApiPropertyOptional({
+        example: 'diff --git a/src/app.ts b/src/app.ts\n+const x = 1;',
+    })
+    diff?: string;
 }

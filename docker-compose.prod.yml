@@ -53,6 +53,35 @@ services:
         environment:
             - API_CLOUD_MODE=false
             - COMPONENT_TYPE=worker
+            - WORKER_ROLE=code-review
+            - API_RABBITMQ_ENABLED=true
+            - API_RABBITMQ_URI=amqp://kodus:kodus@rabbitmq:5672/
+            - API_ENABLE_CODE_REVIEW_AST=true
+            - API_SERVICE_AST_URL=http://kodus-service-ast:3002
+        depends_on:
+            db_postgres:
+                condition: service_healthy
+            db_mongodb:
+                condition: service_healthy
+            rabbitmq:
+                condition: service_healthy
+        volumes:
+            - ./patches/responses.js:/usr/src/app/node_modules/@kodus/kodus-common/node_modules/@langchain/openai/dist/chat_models/responses.js:ro
+            - ./patches/responses.cjs:/usr/src/app/node_modules/@kodus/kodus-common/node_modules/@langchain/openai/dist/chat_models/responses.cjs:ro
+        networks:
+            - kodus-backend-services
+
+    worker-analytics:
+        image: ghcr.io/kodustech/kodus-ai-worker:${KODUS_VERSION:-latest}
+        container_name: kodus_analytics_worker_prod
+        restart: unless-stopped
+        command: node dist/apps/worker/main.js
+        env_file:
+            - ${ENV_FILE:-.env.prod}
+        environment:
+            - API_CLOUD_MODE=false
+            - COMPONENT_TYPE=worker
+            - WORKER_ROLE=analytics
             - API_RABBITMQ_ENABLED=true
             - API_RABBITMQ_URI=amqp://kodus:kodus@rabbitmq:5672/
             - API_ENABLE_CODE_REVIEW_AST=true

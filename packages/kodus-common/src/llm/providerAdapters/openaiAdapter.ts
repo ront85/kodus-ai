@@ -1,11 +1,12 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { resolveModelOptions } from './resolver';
 import { supportsJsonMode } from './capabilities';
-import { AdapterBuildParams, ProviderAdapter } from './types';
+import { AdapterBuildParams, ProviderAdapter, LLM_TIMEOUT_MS, LLM_MAX_RETRIES } from './types';
 
 export class OpenAIAdapter implements ProviderAdapter {
     build(params: AdapterBuildParams): ChatOpenAI {
-        const { model, apiKey, subscriptionToken, chatgptAccountId, baseURL, options } = params;
+        const { model, apiKey, subscriptionToken, chatgptAccountId, baseURL, options } =
+            params;
         const resolved = resolveModelOptions(model, {
             temperature: options?.temperature,
             maxTokens: options?.maxTokens,
@@ -22,6 +23,7 @@ export class OpenAIAdapter implements ProviderAdapter {
         // Check if reasoning should be explicitly disabled (e.g., for GLM models via OpenRouter)
         const disableReasoning = options?.disableReasoning === true;
 
+        // Codex (ChatGPT subscription) auth uses a bearer token instead of an API key.
         const isCodexSubscription = !!subscriptionToken;
 
         const payload: ConstructorParameters<typeof ChatOpenAI>[0] = {
@@ -45,8 +47,10 @@ export class OpenAIAdapter implements ProviderAdapter {
                         reasoningEffort,
                     }
                   : {}),
-            // Codex subscription always needs responses API; for regular keys only when model supports reasoning
-            ...(isCodexSubscription || (resolved.supportsReasoning && resolved.reasoningType === 'level')
+            // Codex subscription always needs the responses API; for regular
+            // keys only when the model supports level-based reasoning.
+            ...(isCodexSubscription ||
+            (resolved.supportsReasoning && resolved.reasoningType === 'level')
                 ? { useResponsesApi: true }
                 : {}),
             // Codex API requires store:false
@@ -57,16 +61,20 @@ export class OpenAIAdapter implements ProviderAdapter {
                   }
                 : {}),
             callbacks: options?.callbacks,
+            timeout: LLM_TIMEOUT_MS,
+            maxRetries: LLM_MAX_RETRIES,
             configuration: {
                 ...(subscriptionToken
                     ? {
-                          // LangChain ChatOpenAI appends /responses to baseURL when useResponsesApi=true
-                          // Setting baseURL to .../codex routes calls to /codex/responses
+                          // LangChain ChatOpenAI appends /responses to baseURL when useResponsesApi=true.
+                          // Setting baseURL to .../codex routes calls to /codex/responses.
                           baseURL: 'https://chatgpt.com/backend-api/codex',
                           defaultHeaders: {
                               Authorization: `Bearer ${subscriptionToken}`,
-                              ...(chatgptAccountId ? { 'ChatGPT-Account-ID': chatgptAccountId } : {}),
-                              'originator': 'codex_cli_rs',
+                              ...(chatgptAccountId
+                                  ? { 'ChatGPT-Account-ID': chatgptAccountId }
+                                  : {}),
+                              originator: 'codex_cli_rs',
                           },
                       }
                     : { ...(baseURL ? { baseURL } : {}) }),

@@ -1,26 +1,36 @@
 import { createLogger } from '@kodus/flow';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+    IOutboxMessageRepository,
+    OUTBOX_MESSAGE_REPOSITORY_TOKEN,
+} from '@libs/core/workflow/domain/contracts/outbox-message.repository.contract';
+import {
+    SANDBOX_INVALIDATE_ROUTING_KEY,
+    SandboxInvalidatePayload,
+} from '@libs/sandbox/domain/events/sandbox-invalidate.event';
 
+import { EnqueueAstGraphUpdateOnMergedUseCase } from '@libs/code-review/application/use-cases/enqueue-ast-graph-update-on-merged.use-case';
+import { EnqueueImplementationCheckUseCase } from '@libs/code-review/application/use-cases/enqueue-implementation-check.use-case';
+import {
+    hasReviewMarker,
+    isForceReviewCommand,
+    isKodyMentionNonReview,
+    isReviewCommand,
+} from '@libs/common/utils/codeManagement/codeCommentMarkers';
+import { getMappedPlatform } from '@libs/common/utils/webhooks';
 import { PlatformType } from '@libs/core/domain/enums/platform-type.enum';
+import { PullRequestClosedEvent } from '@libs/core/domain/events/pull-request-closed.event';
+import { EnqueueCodeReviewJobUseCase } from '@libs/core/workflow/application/use-cases/enqueue-code-review-job.use-case';
 import { GenerateIssuesFromPrClosedUseCase } from '@libs/issues/application/use-cases/generate-issues-from-pr-closed.use-case';
+import { WebhookContextService } from '@libs/platform/application/services/webhook-context.service';
 import { ChatWithKodyFromGitUseCase } from '@libs/platform/application/use-cases/codeManagement/chatWithKodyFromGit.use-case';
 import {
     IWebhookEventHandler,
     IWebhookEventParams,
 } from '@libs/platform/domain/platformIntegrations/interfaces/webhook-event-handler.interface';
-import { CodeManagementService } from '../../adapters/services/codeManagement.service';
-import { getMappedPlatform } from '@libs/common/utils/webhooks';
-import {
-    hasReviewMarker,
-    isKodyMentionNonReview,
-    isReviewCommand,
-} from '@libs/common/utils/codeManagement/codeCommentMarkers';
 import { SavePullRequestUseCase } from '@libs/platformData/application/use-cases/pullRequests/save.use-case';
-import { PullRequestClosedEvent } from '@libs/core/domain/events/pull-request-closed.event';
-import { EnqueueCodeReviewJobUseCase } from '@libs/core/workflow/application/use-cases/enqueue-code-review-job.use-case';
-import { EnqueueImplementationCheckUseCase } from '@libs/code-review/application/use-cases/enqueue-implementation-check.use-case';
-import { WebhookContextService } from '@libs/platform/application/services/webhook-context.service';
+import { CodeManagementService } from '../../adapters/services/codeManagement.service';
 
 /**
  * Handler for GitLab webhook events.
@@ -38,6 +48,10 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
         private readonly codeManagement: CodeManagementService,
         private readonly enqueueCodeReviewJobUseCase: EnqueueCodeReviewJobUseCase,
         private readonly enqueueImplementationCheckUseCase: EnqueueImplementationCheckUseCase,
+        @Inject(OUTBOX_MESSAGE_REPOSITORY_TOKEN)
+        private readonly outboxRepository: IOutboxMessageRepository,
+        @Optional()
+        private readonly enqueueAstGraphUpdateOnMergedUseCase?: EnqueueAstGraphUpdateOnMergedUseCase,
     ) {}
 
     /**
@@ -109,15 +123,17 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
         const context = await this.webhookContextService.getContext(
             PlatformType.GITLAB,
             String(payload?.project?.id),
+            { host: extractGitlabHost(payload) },
         );
 
         // If no active automation found, complete the webhook processing immediately
         if (!context?.organizationAndTeamData) {
-            this.logger.log({
-                message: `No active automation found for repository, completing webhook processing`,
+            this.logger.warn({
+                message: `No active automation found for repository, completing webhook processing. Issue generation and all downstream processing will be skipped.`,
                 context: GitLabMergeRequestHandler.name,
                 metadata: {
                     mrNumber,
+                    mrAction: payload?.object_attributes?.action,
                     repositoryId: repository.id,
                     repositoryName: repository.name,
                 },
@@ -216,7 +232,29 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
                 }
 
                 if (payload?.object_attributes?.action === 'merge') {
-                    this.generateIssuesFromPrClosedUseCase.execute(params);
+                    try {
+                        await this.generateIssuesFromPrClosedUseCase.execute(
+                            params,
+                        );
+                    } catch (error) {
+                        this.logger.error({
+                            message: 'Failed to generate issues from merged MR',
+                            context: GitLabMergeRequestHandler.name,
+                            error,
+                            metadata: {
+                                mrNumber,
+                                repositoryId: repository.id,
+                            },
+                        });
+                    }
+
+                    let changedFiles:
+                        | Array<{
+                              filename: string;
+                              previous_filename?: string;
+                              status: string;
+                          }>
+                        | undefined;
 
                     try {
                         if (context.organizationAndTeamData) {
@@ -232,30 +270,45 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
                                     },
                                 });
                             if (baseRef !== defaultBranch) {
-                                return;
-                            }
-                            const changedFiles =
-                                await this.codeManagement.getFilesByPullRequestId(
-                                    {
+                                changedFiles = undefined;
+                            } else {
+                                changedFiles =
+                                    await this.codeManagement.getFilesByPullRequestId(
+                                        {
+                                            organizationAndTeamData:
+                                                context.organizationAndTeamData,
+                                            repository: {
+                                                id: repository.id,
+                                                name: repository.name,
+                                            },
+                                            prNumber:
+                                                payload?.object_attributes?.iid,
+                                        },
+                                    );
+
+                                this.enqueueAstGraphUpdateOnMergedUseCase
+                                    ?.execute({
+                                        prNumber: payload?.object_attributes?.iid,
+                                        repoExternalId: repository.id,
+                                        repoName: repository.name,
+                                        platform: PlatformType.GITLAB,
+                                        baseBranch: baseRef,
+                                        newSha:
+                                            payload?.object_attributes
+                                                ?.merge_commit_sha ??
+                                            payload?.object_attributes
+                                                ?.last_commit?.id,
                                         organizationAndTeamData:
                                             context.organizationAndTeamData,
-                                        repository: {
-                                            id: repository.id,
-                                            name: repository.name,
-                                        },
-                                        prNumber:
-                                            payload?.object_attributes?.iid,
-                                    },
-                                );
-                            this.eventEmitter.emit(
-                                'pull-request.closed',
-                                new PullRequestClosedEvent(
-                                    context.organizationAndTeamData,
-                                    repository,
-                                    payload?.object_attributes?.iid,
-                                    changedFiles || [],
-                                ),
-                            );
+                                    })
+                                    .catch((e) => {
+                                        this.logger.warn({
+                                            message: `[AST-GRAPH] Failed to enqueue graph update after MR#${mrNumber} merge`,
+                                            context: GitLabMergeRequestHandler.name,
+                                            error: e,
+                                        });
+                                    });
+                            }
                         }
                     } catch (e) {
                         this.logger.error({
@@ -263,6 +316,77 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
                             context: GitLabMergeRequestHandler.name,
                             error: e,
                         });
+                    }
+
+                    if (context.organizationAndTeamData) {
+                        // Durable sandbox invalidation via outbox (SBX-05).
+                        const prKey = `${context.organizationAndTeamData.organizationId}:${repository.id}:${payload?.object_attributes?.iid}`;
+                        await this.outboxRepository.create({
+                            jobId: undefined,
+                            exchange: 'sandbox.events',
+                            routingKey: SANDBOX_INVALIDATE_ROUTING_KEY,
+                            payload: {
+                                prKey,
+                                reason: 'pr_closed',
+                            } satisfies SandboxInvalidatePayload,
+                        }).catch((err) => {
+                            this.logger.warn({
+                                message: '[SBX-05] Failed to write sandbox invalidation outbox message',
+                                context: GitLabMergeRequestHandler.name,
+                                error: err instanceof Error ? err : undefined,
+                                metadata: { prKey },
+                            });
+                        });
+
+                        // TODO(SBX-05): GitLab force-push events arrive as 'update' with
+                        // oldrev !== last_commit.id — not distinguishable from regular push
+                        // in this handler without inspecting forced_push field (not always present).
+                        // Add force-push outbox write when GitLab exposes a reliable forced_push flag.
+
+                        this.eventEmitter.emit(
+                            'pull-request.closed',
+                            new PullRequestClosedEvent(
+                                context.organizationAndTeamData,
+                                repository,
+                                payload?.object_attributes?.iid,
+                                changedFiles || [],
+                                true,
+                            ),
+                        );
+                    }
+                }
+
+                if (payload?.object_attributes?.action === 'close') {
+                    if (context.organizationAndTeamData) {
+                        // Durable sandbox invalidation via outbox (SBX-05).
+                        const prKey = `${context.organizationAndTeamData.organizationId}:${repository.id}:${payload?.object_attributes?.iid}`;
+                        await this.outboxRepository.create({
+                            jobId: undefined,
+                            exchange: 'sandbox.events',
+                            routingKey: SANDBOX_INVALIDATE_ROUTING_KEY,
+                            payload: {
+                                prKey,
+                                reason: 'pr_closed',
+                            } satisfies SandboxInvalidatePayload,
+                        }).catch((err) => {
+                            this.logger.warn({
+                                message: '[SBX-05] Failed to write sandbox invalidation outbox message',
+                                context: GitLabMergeRequestHandler.name,
+                                error: err instanceof Error ? err : undefined,
+                                metadata: { prKey },
+                            });
+                        });
+
+                        this.eventEmitter.emit(
+                            'pull-request.closed',
+                            new PullRequestClosedEvent(
+                                context.organizationAndTeamData,
+                                repository,
+                                payload?.object_attributes?.iid,
+                                [],
+                                false,
+                            ),
+                        );
                     }
                 }
 
@@ -330,11 +454,19 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
         const context = await this.webhookContextService.getContext(
             PlatformType.GITLAB,
             String(payload?.project?.id),
+            { host: extractGitlabHost(payload) },
         );
 
         try {
-            // Verify if the action is create
-            if (payload?.object_attributes?.action === 'create') {
+            // Note Hook fires only on new comments. GitLab 13.x omits
+            // the action field, so treat missing action as 'create'.
+            // Gate on noteable_type to ignore issue/snippet/commit notes.
+            if (
+                payload?.object_attributes?.noteable_type ===
+                    'MergeRequest' &&
+                (!payload?.object_attributes?.action ||
+                    payload?.object_attributes?.action === 'create')
+            ) {
                 const comment = mappedPlatform.mapComment({ payload });
                 if (!comment || !comment.body) {
                     this.logger.debug({
@@ -347,6 +479,7 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
                 }
 
                 const isStartCommand = isReviewCommand(comment.body);
+                const isForceCommand = isForceReviewCommand(comment.body);
                 const hasMarker = hasReviewMarker(comment.body);
 
                 if (isStartCommand && !hasMarker) {
@@ -363,7 +496,7 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
                         payload: {
                             ...payload,
                             action: 'synchronize',
-                            origin: 'command',
+                            origin: isForceCommand ? 'command-force' : 'command',
                             triggerCommentId: comment?.id,
                         },
                     };
@@ -467,4 +600,28 @@ export class GitLabMergeRequestHandler implements IWebhookEventHandler {
 
         return !!(lastCommitId && oldRev && lastCommitId !== oldRev);
     }
+}
+
+/**
+ * Returns the lowercased host of the GitLab instance that emitted the webhook.
+ * Used to disambiguate `IntegrationConfig`s when two self-hosted GitLab
+ * instances share the same numeric `project.id`.
+ */
+export function extractGitlabHost(payload: any): string | undefined {
+    const sources = [
+        payload?.project?.git_http_url,
+        payload?.project?.web_url,
+        payload?.project?.url,
+        payload?.repository?.url,
+        payload?.repository?.homepage,
+    ];
+    for (const source of sources) {
+        if (typeof source !== 'string' || !source) continue;
+        try {
+            return new URL(source).hostname.toLowerCase();
+        } catch {
+            continue;
+        }
+    }
+    return undefined;
 }

@@ -1,6 +1,5 @@
 import { createLogger, createThreadId } from '@kodus/flow';
 import { BusinessRulesValidationAgentProvider } from '@libs/agents/infrastructure/services/kodus-flow/business-rules-validation/businessRulesValidationAgent';
-import posthog, { FEATURE_FLAGS } from '@libs/common/utils/posthog';
 import { LabelType } from '@libs/common/utils/codeManagement/labels';
 import { SeverityLevel } from '@libs/common/utils/enums/severityLevel.enum';
 import { BasePipelineStage } from '@libs/core/infrastructure/pipeline/abstracts/base-stage.abstract';
@@ -15,16 +14,12 @@ import {
     CROSS_FILE_ANALYSIS_SERVICE_TOKEN,
     CrossFileAnalysisService,
 } from '@libs/code-review/infrastructure/adapters/services/crossFileAnalysis.service';
-import {
-    CodeSuggestion,
-    ReviewModeResponse,
-} from '@libs/core/infrastructure/config/types/general/codeReview.type';
+import { CodeSuggestion } from '@libs/core/infrastructure/config/types/general/codeReview.type';
 import { ISuggestionByPR } from '@libs/platformData/domain/pullRequests/interfaces/pullRequests.interface';
 import {
     KODY_RULES_PR_LEVEL_ANALYSIS_SERVICE_TOKEN,
     KodyRulesPrLevelAnalysisService,
 } from '@libs/ee/codeBase/kodyRulesPrLevelAnalysis.service';
-import { KodyRulesScope } from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
 import { CodeReviewPipelineContext } from '../context/code-review-pipeline.context';
 
 @Injectable()
@@ -104,8 +99,9 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                 },
             });
 
-            const businessLogicSettled =
-                await Promise.allSettled([businessLogicPromise]);
+            const businessLogicSettled = await Promise.allSettled([
+                businessLogicPromise,
+            ]);
             const businessLogicContext =
                 businessLogicSettled[0].status === 'fulfilled'
                     ? businessLogicSettled[0].value
@@ -132,9 +128,12 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
                 return businessLogicContext ?? context;
             }
 
-            return this.updateContext(businessLogicContext ?? context, (draft) => {
-                draft.errors.push(businessLogicError);
-            });
+            return this.updateContext(
+                businessLogicContext ?? context,
+                (draft) => {
+                    draft.errors.push(businessLogicError);
+                },
+            );
         }
 
         const [kodyRulesSettled, crossFileSettled, businessLogicSettled] =
@@ -147,12 +146,26 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
         const kodyRulesResult =
             kodyRulesSettled.status === 'fulfilled'
                 ? kodyRulesSettled.value
-                : { suggestions: [], error: this.settledError(kodyRulesSettled, 'KodyRulesAnalysis', context) };
+                : {
+                      suggestions: [],
+                      error: this.settledError(
+                          kodyRulesSettled,
+                          'KodyRulesAnalysis',
+                          context,
+                      ),
+                  };
 
         const crossFileResult =
             crossFileSettled.status === 'fulfilled'
                 ? crossFileSettled.value
-                : { suggestions: [], error: this.settledError(crossFileSettled, 'CrossFileAnalysis', context) };
+                : {
+                      suggestions: [],
+                      error: this.settledError(
+                          crossFileSettled,
+                          'CrossFileAnalysis',
+                          context,
+                      ),
+                  };
 
         const businessLogicContext =
             businessLogicSettled.status === 'fulfilled'
@@ -175,135 +188,61 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
             });
         }
 
-        return this.updateContext(
-            businessLogicContext ?? context,
-            (draft) => {
-                // Kody Rules Results
-                if (kodyRulesResult?.suggestions?.length > 0) {
-                    if (!draft.validSuggestionsByPR) {
-                        draft.validSuggestionsByPR = [];
-                    }
-                    draft.validSuggestionsByPR.push(...kodyRulesResult.suggestions);
+        return this.updateContext(businessLogicContext ?? context, (draft) => {
+            // Kody Rules Results
+            if (kodyRulesResult?.suggestions?.length > 0) {
+                if (!draft.validSuggestionsByPR) {
+                    draft.validSuggestionsByPR = [];
                 }
+                draft.validSuggestionsByPR.push(...kodyRulesResult.suggestions);
+            }
 
-                // Cross File Results
-                if (crossFileResult?.suggestions?.length > 0) {
-                    if (!draft.prAnalysisResults) {
-                        draft.prAnalysisResults = {};
-                    }
-                    if (!draft.prAnalysisResults.validCrossFileSuggestions) {
-                        draft.prAnalysisResults.validCrossFileSuggestions = [];
-                    }
-                    draft.prAnalysisResults.validCrossFileSuggestions.push(
-                        ...crossFileResult.suggestions,
-                    );
+            // Cross File Results
+            if (crossFileResult?.suggestions?.length > 0) {
+                if (!draft.prAnalysisResults) {
+                    draft.prAnalysisResults = {};
                 }
+                if (!draft.prAnalysisResults.validCrossFileSuggestions) {
+                    draft.prAnalysisResults.validCrossFileSuggestions = [];
+                }
+                draft.prAnalysisResults.validCrossFileSuggestions.push(
+                    ...crossFileResult.suggestions,
+                );
+            }
 
-                // Aggregate Errors
-                if (kodyRulesResult?.error) {
-                    draft.errors.push(kodyRulesResult.error);
-                }
+            // Aggregate Errors
+            if (kodyRulesResult?.error) {
+                draft.errors.push(kodyRulesResult.error);
+            }
 
-                if (crossFileResult?.error) {
-                    draft.errors.push(crossFileResult.error);
-                }
+            if (crossFileResult?.error) {
+                draft.errors.push(crossFileResult.error);
+            }
 
-                if (businessLogicError) {
-                    draft.errors.push(businessLogicError);
-                }
-            },
-        );
+            if (businessLogicError) {
+                draft.errors.push(businessLogicError);
+            }
+        });
     }
 
     private async runKodyRulesAnalysis(
-        context: CodeReviewPipelineContext,
+        _context: CodeReviewPipelineContext,
     ): Promise<{ suggestions: ISuggestionByPR[]; error?: PipelineError }> {
-        try {
-            const prLevelRules = context?.codeReviewConfig?.kodyRules?.filter(
-                (rule) => rule.scope === KodyRulesScope.PULL_REQUEST,
-            );
-
-            if (prLevelRules?.length > 0) {
-                this.logger.log({
-                    message: `Starting PR-level Kody Rules analysis for PR#${context.pullRequest.number}`,
-                    context: this.stageName,
-                    metadata: {
-                        organizationAndTeamData:
-                            context.organizationAndTeamData,
-                        prNumber: context.pullRequest.number,
-                    },
-                });
-
-                const kodyRulesPrLevelAnalysis =
-                    await this.kodyRulesPrLevelAnalysisService.analyzeCodeWithAI(
-                        context.organizationAndTeamData,
-                        context.pullRequest.number,
-                        context.changedFiles,
-                        ReviewModeResponse.HEAVY_MODE,
-                        context,
-                    );
-
-                if (kodyRulesPrLevelAnalysis?.codeSuggestions?.length > 0) {
-                    this.logger.log({
-                        message: `PR-level analysis completed for PR#${context.pullRequest.number}`,
-                        context: this.stageName,
-                        metadata: {
-                            suggestionsCount:
-                                kodyRulesPrLevelAnalysis?.codeSuggestions
-                                    ?.length,
-                            organizationAndTeamData:
-                                context.organizationAndTeamData,
-                            prNumber: context.pullRequest.number,
-                        },
-                    });
-
-                    return {
-                        suggestions: kodyRulesPrLevelAnalysis.codeSuggestions,
-                    };
-                } else {
-                    this.logger.warn({
-                        message: `Analysis returned null for PR#${context.pullRequest.number}`,
-                        context: this.stageName,
-                        metadata: {
-                            organizationAndTeamData:
-                                context.organizationAndTeamData,
-                        },
-                    });
-                }
-            }
-
-            return { suggestions: [] };
-        } catch (error) {
-            this.logger.error({
-                message: `Error during PR-level Kody Rules analysis for PR#${context.pullRequest.number}`,
-                context: this.stageName,
-                error,
-                metadata: {
-                    organizationAndTeamData: context.organizationAndTeamData,
-                    prNumber: context.pullRequest.number,
-                },
-            });
-
-            return {
-                suggestions: [],
-                error: {
-                    stage: this.stageName,
-                    substage: 'KodyRulesAnalysis',
-                    error:
-                        error instanceof Error
-                            ? error
-                            : new Error(String(error)),
-                    metadata: {
-                        prNumber: context.pullRequest.number,
-                    },
-                },
-            };
-        }
+        // Kody Rules (file + PR level) are handled by the KodyRulesAgent
+        // in the AgentReviewStage. No longer needed here.
+        return { suggestions: [] };
     }
 
     private async runCrossFileAnalysis(
         context: CodeReviewPipelineContext,
     ): Promise<{ suggestions: CodeSuggestion[]; error?: PipelineError }> {
+        // Agents handle cross-file investigation via tools (grep, readFile)
+        this.logger.log({
+            message: `Skipping cross-file analysis for PR#${context.pullRequest.number}: agents investigate cross-file via tools`,
+            context: this.stageName,
+        });
+        return { suggestions: [] };
+
         try {
             const preparedFilesData = context.changedFiles.map((file) => ({
                 filename: file.filename,
@@ -395,30 +334,23 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
         }
 
         const prBody = context.pullRequest.body ?? '';
+        const signalSources = this.buildSignalSources(context);
         const prBodyHash = this.computePrBodyHash(prBody);
-        const signals = this.detectSignals(prBody);
-
-        this.logger.log({
-            message: `Starting BusinessLogicValidation for PR#${context.pullRequest.number}`,
-            context: this.stageName,
-            metadata: {
-                organizationId: context.organizationAndTeamData?.organizationId,
-                prNumber: context.pullRequest.number,
-                signals,
-                status: 'triggered',
-            },
-        });
+        const signals = this.detectSignals(signalSources, prBody);
 
         try {
             const prepareContext = {
                 userQuestion: '@kody -v business-logic',
-                pullRequestNumber: context.pullRequest.number,
+                pullRequest: {
+                    pullRequestNumber: context.pullRequest.number,
+                    headRef: context.pullRequest?.head?.ref,
+                    baseRef: context.pullRequest?.base?.ref,
+                },
                 repository: context.repository,
                 pullRequestDescription: prBody,
                 platformType: context.platformType,
-                headRef: context.pullRequest?.head?.ref,
-                baseRef: context.pullRequest?.base?.ref,
                 defaultBranch: context.pullRequest?.base?.ref,
+                businessSignals: signals,
             };
             const thread = this.createBusinessLogicThread(context);
 
@@ -495,32 +427,19 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
     private async shouldRunBusinessLogicValidation(
         context: CodeReviewPipelineContext,
     ): Promise<boolean> {
-        const featureIdentifier =
-            context.organizationAndTeamData?.organizationId ||
-            context.organizationAndTeamData?.teamId ||
-            'unknown';
-        const isBusinessLogicFeatureEnabled = await posthog.isFeatureEnabled(
-            FEATURE_FLAGS.businessLogic,
-            featureIdentifier,
-            context.organizationAndTeamData,
-        );
-
-        if (!isBusinessLogicFeatureEnabled) {
-            return false;
-        }
-
         if (!context.codeReviewConfig?.reviewOptions?.business_logic) {
             return false;
         }
 
         const prBody = context.pullRequest?.body ?? '';
-        if (!this.hasBusinessSignals(prBody)) {
+        const signalSources = this.buildSignalSources(context);
+        if (!this.hasBusinessSignals(signalSources)) {
             return false;
         }
 
         const currentHash = this.computePrBodyHash(prBody);
-        const lastHash =
-            (context.pipelineMetadata?.lastExecution as any)?.businessLogicHash;
+        const lastHash = (context.pipelineMetadata?.lastExecution as any)
+            ?.businessLogicHash;
         if (lastHash && lastHash === currentHash) {
             return false;
         }
@@ -528,25 +447,45 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
         return true;
     }
 
+    /**
+     * Build the combined text surface (body + title + branch name) used for
+     * ticket-key and task-link detection — mirrors the v4 stage so this
+     * legacy path stays in sync.
+     */
+    private buildSignalSources(context: CodeReviewPipelineContext): string {
+        const body = context.pullRequest?.body ?? '';
+        const title = context.pullRequest?.title ?? '';
+        const branch = context.pullRequest?.head?.ref ?? '';
+        return [body, title, branch].filter(Boolean).join(' ');
+    }
+
     private hasBusinessSignals(body: string): boolean {
         return (
             this.detectTicketKeys(body).length > 0 ||
-            this.detectTaskLinks(body).length > 0 ||
-            this.detectRequirementKeywords(body).length > 0
+            this.detectTaskLinks(body).length > 0
         );
     }
 
-    private detectSignals(body: string): Record<string, string[]> {
+    /**
+     * Ticket keys and task URLs may legitimately come from the PR title or
+     * branch name. Requirement keywords (`when`, `then`, ...) stay scoped to
+     * the body — they double as common English words that would false-positive
+     * on titles like "Fix crash when user clicks save".
+     */
+    private detectSignals(
+        combined: string,
+        body: string,
+    ): Record<string, string[]> {
         return {
-            ticketKeys: this.detectTicketKeys(body),
-            taskLinks: this.detectTaskLinks(body),
+            ticketKeys: this.detectTicketKeys(combined),
+            taskLinks: this.detectTaskLinks(combined),
             requirementKeywords: this.detectRequirementKeywords(body),
         };
     }
 
     private detectTicketKeys(body: string): string[] {
-        const matches = body.match(/[A-Z]{2,}-\d+/g);
-        return matches ?? [];
+        const matches = body.match(/[A-Za-z]{2,}-\d+/g) ?? [];
+        return Array.from(new Set(matches.map((m) => m.toUpperCase())));
     }
 
     private detectTaskLinks(body: string): string[] {
@@ -556,8 +495,8 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
 
     private detectRequirementKeywords(body: string): string[] {
         const lower = body.toLowerCase();
-        return ProcessFilesPrLevelReviewStage.REQUIREMENT_KEYWORDS.filter((kw) =>
-            lower.includes(kw),
+        return ProcessFilesPrLevelReviewStage.REQUIREMENT_KEYWORDS.filter(
+            (kw) => lower.includes(kw),
         );
     }
 
@@ -571,6 +510,29 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
         }
 
         const lower = result.toLowerCase();
+        const limitationIndicators = [
+            'need task information',
+            'need pull request diff',
+            'insufficient task context',
+            'limited task context',
+            'could not validate',
+            'without the actual code changes, i can',
+            'preciso do diff da pull request',
+            'preciso de informacoes da task',
+            'contexto insuficiente da task',
+            'contexto limitado da task',
+            'nao consegui validar',
+            'sem as alteracoes de codigo',
+            'mcp connection failed',
+            'mcp integration required',
+            'no compatible mcp integration',
+        ];
+        if (
+            limitationIndicators.some((indicator) => lower.includes(indicator))
+        ) {
+            return false;
+        }
+
         const noGapIndicators = [
             'no gaps',
             'no issues',
@@ -581,6 +543,8 @@ export class ProcessFilesPrLevelReviewStage extends BasePipelineStage<CodeReview
             'no violations',
             '✅ compliant',
             'status: ✅',
+            'sem bloqueios identificados',
+            'requirements covered',
             '"needsmoreinfo": false',
         ];
         return !noGapIndicators.some((indicator) => lower.includes(indicator));

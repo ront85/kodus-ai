@@ -38,7 +38,6 @@ import {
 import { EnrichedPullRequestsQueryDto } from '@libs/code-review/dtos/dashboard/enriched-pull-requests-query.dto';
 import { EnrichedPullRequestResponse } from '@libs/code-review/dtos/dashboard/enriched-pull-request-response.dto';
 import { Repositories } from '@libs/platform/domain/platformIntegrations/types/codeManagement/repositories.type';
-import { StageVisibility } from '@libs/core/infrastructure/pipeline/enums/stage-visibility.enum';
 import {
     IOrganizationParametersService,
     ORGANIZATION_PARAMETERS_SERVICE_TOKEN,
@@ -168,11 +167,10 @@ export class GetEnrichedPullRequestsUseCase implements IUseCase {
             let accumulatedExecutions = 0;
             let totalExecutions = 0;
             let hasMoreExecutions = true;
-            const authorPolicyConfig =
-                await this.getCompiledAuthorPolicyConfig(
-                    authorPolicy,
-                    organizationAndTeamData,
-                );
+            const authorPolicyConfig = await this.getCompiledAuthorPolicyConfig(
+                authorPolicy,
+                organizationAndTeamData,
+            );
 
             // If filtering by title, fetch PR numbers from MongoDB first
             let prFilters:
@@ -246,24 +244,30 @@ export class GetEnrichedPullRequestsUseCase implements IUseCase {
 
                 // PERF: Fetch PR basics first so author-policy filtering can reduce
                 // downstream heavy queries (suggestion aggregation + code review logs).
-                const pullRequestsList = await this.pullRequestsService
-                    .findManyByNumbersAndRepositoryIds(prCriteria, organizationId)
-                    .catch((error) => {
-                        this.logger.error({
-                            message: 'Error bulk fetching pull requests',
-                            context: GetEnrichedPullRequestsUseCase.name,
-                            error,
-                            metadata: {
-                                organizationId,
-                            },
-                        });
-                        return [];
-                    });
+                const pullRequestsList =
+                    (await this.pullRequestsService
+                        .findManyByNumbersAndRepositoryIds(
+                            prCriteria,
+                            organizationId,
+                        )
+                        .catch((error) => {
+                            this.logger.error({
+                                message: 'Error bulk fetching pull requests',
+                                context: GetEnrichedPullRequestsUseCase.name,
+                                error,
+                                metadata: {
+                                    organizationId,
+                                },
+                            });
+                            return [];
+                        })) ?? [];
 
                 const allFetchedPrKeys = new Set<string>();
                 pullRequestsList.forEach((pr) => {
                     if (pr.repository?.id && pr.number) {
-                        allFetchedPrKeys.add(`${pr.repository.id}_${pr.number}`);
+                        allFetchedPrKeys.add(
+                            `${pr.repository.id}_${pr.number}`,
+                        );
                     }
                 });
 
@@ -293,7 +297,10 @@ export class GetEnrichedPullRequestsUseCase implements IUseCase {
                 ) {
                     accumulatedExecutions += executionsBatch.length;
 
-                    if (initialSkip + accumulatedExecutions >= totalExecutions) {
+                    if (
+                        initialSkip + accumulatedExecutions >=
+                        totalExecutions
+                    ) {
                         hasMoreExecutions = false;
                     }
 
@@ -322,42 +329,47 @@ export class GetEnrichedPullRequestsUseCase implements IUseCase {
                     : executionsBatch.map((execution) => execution.uuid);
 
                 // PERF: Fetch counts and timeline only for PRs that passed author policy.
-                const [suggestionCountsMap, codeReviewsList] = await Promise.all([
-                    this.pullRequestsService
-                        .findSuggestionCountsByNumbersAndRepositoryIds(
-                            filteredPrCriteria,
-                            organizationId,
-                        )
-                        .catch((error) => {
-                            this.logger.error({
-                                message: 'Error fetching suggestion counts',
-                                context: GetEnrichedPullRequestsUseCase.name,
-                                error,
-                                metadata: {
-                                    organizationId,
-                                },
-                            });
-                            return new Map<
-                                string,
-                                { sent: number; filtered: number }
-                            >();
-                        }),
-                    this.codeReviewExecutionService
-                        .findManyByAutomationExecutionIds(filteredExecutionUuids, {
-                            visibility: StageVisibility.PRIMARY,
-                        })
-                        .catch((error) => {
-                            this.logger.error({
-                                message: 'Error bulk fetching code reviews',
-                                context: GetEnrichedPullRequestsUseCase.name,
-                                error,
-                                metadata: {
-                                    organizationId,
-                                },
-                            });
-                            return [];
-                        }),
-                ]);
+                const [suggestionCountsMap, codeReviewsList] =
+                    await Promise.all([
+                        this.pullRequestsService
+                            .findSuggestionCountsByNumbersAndRepositoryIds(
+                                filteredPrCriteria,
+                                organizationId,
+                            )
+                            .catch((error) => {
+                                this.logger.error({
+                                    message: 'Error fetching suggestion counts',
+                                    context:
+                                        GetEnrichedPullRequestsUseCase.name,
+                                    error,
+                                    metadata: {
+                                        organizationId,
+                                    },
+                                });
+                                return new Map<
+                                    string,
+                                    { sent: number; filtered: number }
+                                >();
+                            }),
+                        this.codeReviewExecutionService
+                            .findManyByAutomationExecutionIds(
+                                filteredExecutionUuids,
+                                // No visibility filter — return all entries (primary + secondary).
+                                // Frontend handles visibility filtering client-side via "Show Debug" toggle.
+                            )
+                            .catch((error) => {
+                                this.logger.error({
+                                    message: 'Error bulk fetching code reviews',
+                                    context:
+                                        GetEnrichedPullRequestsUseCase.name,
+                                    error,
+                                    metadata: {
+                                        organizationId,
+                                    },
+                                });
+                                return [];
+                            }),
+                    ]);
 
                 // Map results for O(1) access
                 const prMap = new Map<string, IPullRequests>();
@@ -492,6 +504,13 @@ export class GetEnrichedPullRequestsUseCase implements IUseCase {
                             codeReviewTimeline,
                             enrichedData,
                             suggestionsCount,
+                            // Adaptive-fit fidelity warnings (small
+                            // context window forced a degraded path).
+                            // Persisted by automationCodeReview's
+                            // _buildExecutionData; undefined for
+                            // full-fidelity runs.
+                            reviewWarnings:
+                                execution.dataExecution?.reviewWarnings,
                         };
 
                         enrichedPullRequests.push(enrichedPR);

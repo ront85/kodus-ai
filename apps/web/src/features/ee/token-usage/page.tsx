@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { Page } from "@components/ui/page";
 import {
     getDailyTokenUsage,
+    getSummaryTokenUsage,
     getTokenPricing,
     getTokenUsageByDeveloper,
     getTokenUsageByPR,
@@ -11,20 +12,40 @@ import {
     BaseUsageContract,
     ModelPricingInfo,
     UsageByPrResultContract,
+    UsageSummaryContract,
 } from "@services/usage/types";
-import { FEATURE_FLAGS } from "src/core/config/feature-flags";
 import { CookieName } from "src/core/utils/cookie";
 import { getGlobalSelectedTeamId } from "src/core/utils/get-global-selected-team-id";
-import { isFeatureEnabled } from "src/core/utils/posthog-server-side";
 import { isBYOKSubscriptionPlan } from "src/features/ee/byok/_utils";
 import { getSelectedDateRange } from "src/features/ee/cockpit/_helpers/get-selected-date-range";
-import { fetchModelPricingFromModelsDev } from "src/features/ee/subscription/choose-plan/_services/models";
 import { validateOrganizationLicense } from "src/features/ee/subscription/_services/billing/fetch";
+import { fetchModelPricingFromModelsDev } from "src/features/ee/subscription/choose-plan/_services/models";
 
 import { TokenUsagePageClient } from "./_components/page.client";
 
+function buildFallbackPricing(
+    model: string,
+    prompt: number,
+    completion: number,
+): ModelPricingInfo {
+    return {
+        id: model,
+        pricing: {
+            input: { default: prompt },
+            output: { default: completion },
+            cacheRead: { default: 0 },
+            cacheWrite: { default: 0 },
+            prompt,
+            completion,
+            // Reasoning is already counted inside outputTokens for every
+            // provider we ship; the scalar stays for backward compat only.
+            internal_reasoning: completion,
+        },
+    };
+}
+
 async function getModelPricing(model: string): Promise<ModelPricingInfo> {
-    // First try internal API
+    // First try internal API (LiteLLM catalog, wrapped by TokenPricingUseCase)
     try {
         const internalPricing = await getTokenPricing(model);
         if (
@@ -37,28 +58,18 @@ async function getModelPricing(model: string): Promise<ModelPricingInfo> {
         // Fall through to models.dev
     }
 
-    // Try models.dev as fallback
+    // Try models.dev as fallback (no cache rates — those fields default to 0)
     const modelsDevPricing = await fetchModelPricingFromModelsDev(model);
     if (modelsDevPricing) {
-        return {
-            id: model,
-            pricing: {
-                prompt: modelsDevPricing.prompt,
-                completion: modelsDevPricing.completion,
-                internal_reasoning: modelsDevPricing.completion, // Same as completion
-            },
-        };
+        return buildFallbackPricing(
+            model,
+            modelsDevPricing.prompt,
+            modelsDevPricing.completion,
+        );
     }
 
     // Return zero pricing as last resort
-    return {
-        id: model,
-        pricing: {
-            prompt: 0,
-            completion: 0,
-            internal_reasoning: 0,
-        },
-    };
+    return buildFallbackPricing(model, 0, 0);
 }
 
 export default async function TokenUsagePage({
@@ -66,14 +77,6 @@ export default async function TokenUsagePage({
 }: {
     searchParams: { [key: string]: string | string[] | undefined };
 }) {
-    const tokenUsagePageFeatureFlag = await isFeatureEnabled({
-        feature: FEATURE_FLAGS.tokenUsagePage,
-    });
-
-    if (!tokenUsagePageFeatureFlag) {
-        notFound();
-    }
-
     const params = await searchParams;
     const teamId = await getGlobalSelectedTeamId();
     const subscription = await validateOrganizationLicense({ teamId }).catch(
@@ -96,22 +99,48 @@ export default async function TokenUsagePage({
     };
 
     let data: BaseUsageContract[] = [];
+    let summary: UsageSummaryContract | null = null;
+    let activeDayCount = 0;
+    let uniquePrCount = 0;
     const filterType = params.filter ?? "daily";
 
     try {
-        switch (filterType) {
-            case "daily":
-                data = await getDailyTokenUsage(filters);
-                break;
-            case "by-pr":
-                data = await getTokenUsageByPR(filters);
-                break;
-            case "by-developer":
-                data = await getTokenUsageByDeveloper(filters);
-                break;
-            default:
-                data = await getDailyTokenUsage(filters);
-        }
+        const chartFetch =
+            filterType === "by-pr"
+                ? getTokenUsageByPR(filters)
+                : filterType === "by-developer"
+                  ? getTokenUsageByDeveloper(filters)
+                  : getDailyTokenUsage(filters);
+
+        // Daily + by-pr requests run unconditionally because the cost cards
+        // need both "active days" and "unique PRs" counts regardless of which
+        // dimension the chart is rendering.
+        const [chartData, summaryData, dailyData, prData] = await Promise.all([
+            chartFetch,
+            getSummaryTokenUsage(filters),
+            filterType === "daily"
+                ? Promise.resolve(null)
+                : getDailyTokenUsage(filters),
+            filterType === "by-pr"
+                ? Promise.resolve(null)
+                : getTokenUsageByPR(filters),
+        ]);
+
+        data = chartData;
+        summary = summaryData;
+
+        const dailyRows = (filterType === "daily" ? chartData : dailyData) ?? [];
+        const prRows = (filterType === "by-pr" ? chartData : prData) ?? [];
+        activeDayCount = new Set(
+            (dailyRows as Array<{ date?: string }>)
+                .map((r) => r.date)
+                .filter(Boolean),
+        ).size;
+        uniquePrCount = new Set(
+            (prRows as Array<{ prNumber?: number }>)
+                .map((r) => r.prNumber)
+                .filter((n): n is number => typeof n === "number"),
+        ).size;
     } catch (error) {
         console.error("Failed to fetch token usage data:", error);
     }
@@ -166,14 +195,11 @@ export default async function TokenUsagePage({
 
     if (ENABLE_MOCK_DATA && filterType === "by-pr") {
         pricing = {
-            "claude-3-5-sonnet-20241022": {
-                id: "claude-3-5-sonnet-20241022",
-                pricing: {
-                    prompt: 3.0,
-                    completion: 15.0,
-                    internal_reasoning: 15.0,
-                },
-            },
+            "claude-3-5-sonnet-20241022": buildFallbackPricing(
+                "claude-3-5-sonnet-20241022",
+                3.0,
+                15.0,
+            ),
         };
     } else {
         try {
@@ -201,6 +227,9 @@ export default async function TokenUsagePage({
             <Page.Content>
                 <TokenUsagePageClient
                     data={data}
+                    summary={summary}
+                    activeDayCount={activeDayCount}
+                    uniquePrCount={uniquePrCount}
                     cookieValue={dateRangeCookieValue}
                     models={uniqueModels}
                     pricing={pricing}

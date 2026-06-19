@@ -1,17 +1,25 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { v4 as uuidv4 } from 'uuid';
 import { BasePipelineStage } from '@libs/core/infrastructure/pipeline/abstracts/base-stage.abstract';
-import { PipelineError } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-context.interface';
 import { StageVisibility } from '@libs/core/infrastructure/pipeline/enums/stage-visibility.enum';
+import { PipelineError } from '@libs/core/infrastructure/pipeline/interfaces/pipeline-context.interface';
+import { Inject, Injectable } from '@nestjs/common';
+import pLimit from 'p-limit';
+import { v4 as uuidv4 } from 'uuid';
 
+import { createLogger } from '@kodus/flow';
 import {
     ISuggestionService,
     SUGGESTION_SERVICE_TOKEN,
 } from '@libs/code-review/domain/contracts/SuggestionService.contract';
 import {
-    IPullRequestsService,
-    PULL_REQUESTS_SERVICE_TOKEN,
-} from '@libs/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
+    GraphContentFormatter,
+    GraphJson,
+} from '@libs/code-review/infrastructure/adapters/services/graphContentFormatter.service';
+import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
+import {
+    estimateFixedTokens,
+    splitFileContent,
+} from '@libs/code-review/infrastructure/adapters/services/utils/file-content-splitter';
+import { createOptimizedBatches } from '@libs/common/utils/batch.helper';
 import {
     FILE_REVIEW_CONTEXT_PREPARATION_TOKEN,
     IFileReviewContextPreparation,
@@ -21,11 +29,6 @@ import {
     KODY_FINE_TUNING_CONTEXT_PREPARATION_TOKEN,
 } from '@libs/core/domain/interfaces/kody-fine-tuning-context-preparation.interface';
 import {
-    IKodyASTAnalyzeContextPreparationService,
-    KODY_AST_ANALYZE_CONTEXT_PREPARATION_TOKEN,
-} from '@libs/core/domain/interfaces/kody-ast-analyze-context-preparation.interface';
-import { createLogger } from '@kodus/flow';
-import {
     AIAnalysisResult,
     AnalysisContext,
     CodeReviewConfig,
@@ -34,22 +37,17 @@ import {
     FileChange,
     IFinalAnalysisResult,
 } from '@libs/core/infrastructure/config/types/general/codeReview.type';
-import { createOptimizedBatches } from '@libs/common/utils/batch.helper';
-import pLimit from 'p-limit';
-import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
-import { TaskStatus } from '@libs/ee/kodyAST/interfaces/code-ast-analysis.interface';
 import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
-import { CrossFileContextSnippet } from '@libs/code-review/infrastructure/adapters/services/collectCrossFileContexts.service';
-import { ASTContentFormatterService } from '@libs/code-review/infrastructure/adapters/services/astContentFormatter.service';
 import { CodeAnalysisOrchestrator } from '@libs/ee/codeBase/codeAnalysisOrchestrator.service';
+import {
+    IPullRequestsService,
+    PULL_REQUESTS_SERVICE_TOKEN,
+} from '@libs/platformData/domain/pullRequests/contracts/pullRequests.service.contracts';
+import { PriorityStatus } from '@libs/platformData/domain/pullRequests/enums/priorityStatus.enum';
 import {
     CodeReviewPipelineContext,
     FileContextAgentResult,
 } from '../context/code-review-pipeline.context';
-import {
-    splitFileContent,
-    estimateFixedTokens,
-} from '@libs/code-review/infrastructure/adapters/services/utils/file-content-splitter';
 
 interface FileProcessingResult {
     filename: string;
@@ -58,6 +56,8 @@ interface FileProcessingResult {
     error?: PipelineError;
     reviewMode?: any;
     codeReviewModelUsed?: any;
+    durationMs?: number;
+    isTimeout?: boolean;
 }
 
 @Injectable()
@@ -83,12 +83,9 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         @Inject(KODY_FINE_TUNING_CONTEXT_PREPARATION_TOKEN)
         private readonly kodyFineTuningContextPreparation: IKodyFineTuningContextPreparationService,
 
-        @Inject(KODY_AST_ANALYZE_CONTEXT_PREPARATION_TOKEN)
-        private readonly kodyAstAnalyzeContextPreparation: IKodyASTAnalyzeContextPreparationService,
-
         private readonly codeAnalysisOrchestrator: CodeAnalysisOrchestrator,
 
-        private readonly astContentFormatter: ASTContentFormatterService,
+        private readonly graphContentFormatter: GraphContentFormatter,
     ) {
         super();
     }
@@ -129,7 +126,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 validSuggestions,
                 discardedSuggestions,
                 fileMetadata,
-                tasks,
                 errors,
             } = await this.analyzeChangedFilesInBatches(context);
 
@@ -137,13 +133,14 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 draft.validSuggestions = validSuggestions;
                 draft.discardedSuggestions = discardedSuggestions;
                 draft.fileMetadata = fileMetadata;
-                draft.tasks = tasks;
                 if (errors?.length > 0) {
                     draft.errors.push(...errors);
                 }
 
                 // Release data no longer needed by subsequent stages
                 draft.crossFileContexts = undefined;
+                draft.sandboxHandle = undefined;
+                draft.getFreshCloneParams = undefined;
 
                 for (const file of draft.changedFiles) {
                     delete file.patchWithLinesStr;
@@ -161,7 +158,9 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 },
             });
 
-            // Mesmo em caso de erro, retornamos o contexto para que o pipeline continue
+            // Mesmo em caso de erro, retornamos o contexto para que o pipeline continue.
+            // Sandbox cleanup é responsabilidade do observer.onPipelineFinish — não
+            // duplicamos aqui pra evitar "release called with unknown leaseId" warnings.
             return this.updateContext(context, (draft) => {
                 draft.validSuggestions = [];
                 draft.discardedSuggestions = [];
@@ -183,7 +182,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         discardedSuggestions: Partial<CodeSuggestion>[];
         fileMetadata: Map<string, any>;
         validCrossFileSuggestions: CodeSuggestion[];
-        tasks: AnalysisContext['tasks'];
         errors: PipelineError[];
     }> {
         const { organizationAndTeamData, pullRequest, changedFiles } = context;
@@ -203,11 +201,10 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
 
             const batches = this.createOptimizedBatches(changedFiles);
 
-            const {
-                results,
-                tasks,
-                errors: batchErrors,
-            } = await this.runBatches(batches, analysisContext);
+            const { results, errors: batchErrors } = await this.runBatches(
+                batches,
+                analysisContext,
+            );
 
             // Create collections
             const validSuggestions: Partial<CodeSuggestion>[] = [];
@@ -234,7 +231,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 metadata: {
                     validSuggestionsCount: validSuggestions.length,
                     discardedCount: discardedSuggestions.length,
-                    tasks: tasks,
                     organizationAndTeamData: organizationAndTeamData,
                 },
             });
@@ -245,7 +241,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 fileMetadata,
                 validCrossFileSuggestions:
                     analysisContext.validCrossFileSuggestions || [],
-                tasks,
                 errors,
             };
         } catch (error) {
@@ -259,7 +254,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 discardedSuggestions: [],
                 fileMetadata: new Map(),
                 validCrossFileSuggestions: [],
-                tasks: { ...context.tasks },
                 errors: [
                     this.buildPipelineError(
                         'AnalyzeChangedFilesInBatches',
@@ -304,24 +298,15 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         context: AnalysisContext,
     ): Promise<{
         results: FileProcessingResult[];
-        tasks: AnalysisContext['tasks'];
         errors: PipelineError[];
     }> {
-        const tasks: AnalysisContext['tasks'] = {
-            astAnalysis: {
-                ...context.tasks.astAnalysis,
-            },
-        };
-
         const { results, errors } = await this.processBatchesSequentially(
             batches,
             context,
-            tasks,
         );
 
         return {
             results,
-            tasks,
             errors,
         };
     }
@@ -336,7 +321,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
     private async processBatchesSequentially(
         batches: FileChange[][],
         context: AnalysisContext,
-        tasks: AnalysisContext['tasks'],
     ): Promise<{
         results: FileProcessingResult[];
         errors: PipelineError[];
@@ -356,7 +340,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                     batch,
                     context,
                     index,
-                    tasks,
                 );
 
                 allResults.push(...batchResults);
@@ -416,38 +399,33 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         batch: FileChange[],
         context: AnalysisContext,
         batchIndex: number,
-        tasks: AnalysisContext['tasks'],
     ): Promise<FileProcessingResult[]> {
         const { organizationAndTeamData, pullRequest } = context;
 
-        // Fetch AST formatted content for this batch
-        const astResults = await this.astContentFormatter.fetchFormattedContent(
+        // Use graph JSON from pipeline context if available
+        const graphJson = (context as any).callGraphJson as
+            | GraphJson
+            | undefined;
+        const astResults = await this.graphContentFormatter.formatContent(
             batch,
-            context,
+            graphJson,
         );
 
         // Create mutable copies with AST content attached (originals may be frozen by Immer)
-        const filesWithAst = astResults.size > 0
-            ? batch.map((file) => {
-                  const astResult = astResults.get(file.filename);
-                  return astResult
-                      ? { ...file, astFormattedContent: astResult.content }
-                      : file;
-              })
-            : batch;
+        const filesWithAst =
+            astResults.size > 0
+                ? batch.map((file) => {
+                      const astResult = astResults.get(file.filename);
+                      return astResult
+                          ? { ...file, astFormattedContent: astResult.content }
+                          : file;
+                  })
+                : batch;
 
-        const preparedFiles = await this.filterAndPrepareFiles(filesWithAst, context);
-
-        const astFailed = preparedFiles.find((file) => {
-            const task = file.fileContext.tasks?.astAnalysis;
-            return task && task.status !== TaskStatus.TASK_STATUS_COMPLETED;
-        });
-
-        if (astFailed) {
-            tasks.astAnalysis.status =
-                astFailed?.fileContext?.tasks?.astAnalysis?.status ||
-                TaskStatus.TASK_STATUS_FAILED;
-        }
+        const preparedFiles = await this.filterAndPrepareFiles(
+            filesWithAst,
+            context,
+        );
 
         const maxConcurrent =
             context?.codeReviewConfig?.byokConfig?.main?.maxConcurrentRequests;
@@ -516,6 +494,9 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             fileMetadata.set(fileProcessingResult.filename, {
                 reviewMode: fileProcessingResult.reviewMode,
                 codeReviewModelUsed: fileProcessingResult.codeReviewModelUsed,
+                durationMs: fileProcessingResult.durationMs,
+                isTimeout: fileProcessingResult.isTimeout,
+                hasError: !!fileProcessingResult.error,
             });
         }
     }
@@ -544,7 +525,11 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             }
 
             // Fallback: same text-based matching for both hop 1 and hop 2
-            return this.matchSnippetByTextHeuristics(snippet, diff, diffIdentifiers);
+            return this.matchSnippetByTextHeuristics(
+                snippet,
+                diff,
+                diffIdentifiers,
+            );
         });
     }
 
@@ -658,6 +643,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                     fileAugmentations:
                         context.augmentationsByFile?.[file.filename] ?? {},
                     crossFileSnippets: filteredSnippets,
+                    documentationContext:
+                        context.documentationByFile?.[file.filename] || [],
                 };
 
                 return this.fileReviewContextPreparation.prepareFileContext(
@@ -699,6 +686,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
         const { file, relevantContent, patchWithLinesStr, hasRelevantContent } =
             baseContext.fileChangeContext;
 
+        const startMs = Date.now();
+
         try {
             const context: AnalysisContext = {
                 ...baseContext,
@@ -713,8 +702,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
 
             const maxInputTokens =
                 context?.codeReviewConfig?.byokConfig?.main?.maxInputTokens;
-            const contentToSplit =
-                relevantContent || file?.fileContent || '';
+            const contentToSplit = relevantContent || file?.fileContent || '';
 
             // Check if we need to split the file content into chunks
             let needsChunking = false;
@@ -746,7 +734,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 // then merge all validated suggestions at the end
                 const allValidSuggestions: Partial<CodeSuggestion>[] = [];
                 const allDiscardedSuggestions: Partial<CodeSuggestion>[] = [];
-                let lastCodeReviewModelUsed: IFinalAnalysisResult['codeReviewModelUsed'] = {};
+                let lastCodeReviewModelUsed: IFinalAnalysisResult['codeReviewModelUsed'] =
+                    {};
                 let lastReviewMode: any;
 
                 for (const chunk of chunks) {
@@ -789,7 +778,8 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                         ...chunkResult.discardedSuggestionsBySafeGuard,
                     );
                     lastCodeReviewModelUsed =
-                        chunkResult.codeReviewModelUsed || lastCodeReviewModelUsed;
+                        chunkResult.codeReviewModelUsed ||
+                        lastCodeReviewModelUsed;
                     lastReviewMode = chunkResult.reviewMode || lastReviewMode;
                 }
 
@@ -799,6 +789,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                     reviewMode: lastReviewMode,
                     codeReviewModelUsed: lastCodeReviewModelUsed,
                     filename: file.filename,
+                    durationMs: Date.now() - startMs,
                 };
             }
 
@@ -822,7 +813,11 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 context,
             );
 
-            return { ...finalResult, filename: file.filename };
+            return {
+                ...finalResult,
+                filename: file.filename,
+                durationMs: Date.now() - startMs,
+            };
         } catch (error) {
             this.logger.error({
                 message: `Error analyzing file ${file.filename}`,
@@ -839,20 +834,29 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
 
             const errorMessage =
                 error instanceof Error ? error.message : String(error);
+            const isTimeout = /timeout|timed out|ETIMEDOUT|abort/i.test(
+                errorMessage,
+            );
+
             const enrichedError = new Error(
-                `File analysis failed: ${errorMessage} (Check model config)`,
+                isTimeout
+                    ? `File analysis timed out after ${Math.round((Date.now() - startMs) / 1000)}s`
+                    : `File analysis failed: ${errorMessage}`,
             );
 
             return {
                 validSuggestionsToAnalyze: [],
                 discardedSuggestionsBySafeGuard: [],
                 filename: file.filename,
+                durationMs: Date.now() - startMs,
+                isTimeout,
                 error: {
                     stage: this.stageName,
                     substage: file.filename,
                     error: enrichedError,
                     metadata: {
                         filename: file.filename,
+                        isTimeout,
                     },
                 },
             };
@@ -869,7 +873,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
 
         const validSuggestionsToAnalyze: Partial<CodeSuggestion>[] = [];
         const discardedSuggestionsBySafeGuard: Partial<CodeSuggestion>[] = [];
-        let safeguardLLMProvider = '';
 
         const crossFileAnalysisSuggestions =
             context?.validCrossFileSuggestions || [];
@@ -933,7 +936,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             context.crossFileSnippets,
         );
 
-        safeguardLLMProvider = safeGuardResult.safeguardLLMProvider;
+        const safeguardLLMProvider = safeGuardResult.safeguardLLMProvider;
 
         discardedSuggestionsBySafeGuard.push(
             ...safeGuardResult.allDiscardedSuggestions,
@@ -1026,21 +1029,7 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             mergedSuggestions.push(...suggestionsWithSeverity);
         }
 
-        const kodyASTSuggestions =
-            await this.kodyAstAnalyzeContextPreparation.prepareKodyASTAnalyzeContext(
-                context,
-            );
-
-        // Garantir que as sugestões do AST tenham IDs
-        const kodyASTSuggestionsWithId = await this.addSuggestionsId(
-            kodyASTSuggestions?.codeSuggestions || [],
-        );
-
-        mergedSuggestions = [
-            ...mergedSuggestions,
-            ...kodyASTSuggestionsWithId,
-            ...filteredCrossFileFinal,
-        ];
+        mergedSuggestions = [...mergedSuggestions, ...filteredCrossFileFinal];
 
         const VALID_ACTIONS = [
             'synchronize',
@@ -1180,11 +1169,10 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             getDataPipelineKodyFineTunning?.discardedSuggestions;
 
         const discardedSuggestionsByKodyFineTuning = discardedSuggestions.map(
-            (suggestion) => {
-                suggestion.priorityStatus =
-                    PriorityStatus.DISCARDED_BY_KODY_FINE_TUNING;
-                return suggestion;
-            },
+            (suggestion) => ({
+                ...suggestion,
+                priorityStatus: PriorityStatus.DISCARDED_BY_KODY_FINE_TUNING,
+            }),
         );
 
         return {
@@ -1243,6 +1231,12 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 reviewModeResponse,
                 context?.codeReviewConfig?.byokConfig,
                 crossFileSnippets,
+                context?.remoteCommands,
+                context?.codeReviewConfig?.kodyMemoryRules,
+                context?.externalPromptContext?.generation?.main?.references,
+                context?.externalPromptContext?.generation?.main?.error,
+                context?.getFreshCloneParams,
+                context?.documentationContext,
             );
 
         const safeguardLLMProvider =
@@ -1296,7 +1290,6 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
             clusterizedSuggestions: context.clusterizedSuggestions,
             validCrossFileSuggestions:
                 context.prAnalysisResults?.validCrossFileSuggestions || [],
-            tasks: context.tasks,
             externalPromptContext: context.externalPromptContext,
             externalPromptLayers: context.externalPromptLayers,
             correlationId: context.correlationId,
@@ -1306,6 +1299,10 @@ export class ProcessFilesReview extends BasePipelineStage<CodeReviewPipelineCont
                 context.fileContextMap,
             ),
             crossFileSnippets: context.crossFileContexts?.contexts,
+            documentationByFile: context.documentationByFile,
+            remoteCommands: context.sandboxHandle?.remoteCommands,
+            getFreshCloneParams: context.getFreshCloneParams,
+            callGraphJson: context.callGraphJson,
         };
     }
 

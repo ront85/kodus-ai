@@ -11,7 +11,6 @@ KEYS=(
 
     "/prod/kodus-orchestrator/API_JWT_EXPIRES_IN"
     "/prod/kodus-orchestrator/API_JWT_SECRET"
-    "/prod/kodus-orchestrator/API_JWT_REFRESHSECRET"
     "/prod/kodus-orchestrator/API_JWT_REFRESH_EXPIRES_IN"
 
     "/prod/kodus-orchestrator/API_PG_DB_HOST"
@@ -64,14 +63,13 @@ KEYS=(
     "/prod/kodus-orchestrator/API_SLACK_URL_HEALTH"
     "/prod/kodus-orchestrator/API_SLACK_BOT_DIAGNOSIS_URL"
 
-    "/prod/kodus-orchestrator/LANGCHAIN_TRACING_V2"
-    "/prod/kodus-orchestrator/LANGCHAIN_ENDPOINT"
-    "/prod/kodus-orchestrator/LANGCHAIN_HUB_API_URL"
-    "/prod/kodus-orchestrator/LANGCHAIN_API_KEY"
-    "/prod/kodus-orchestrator/LANGCHAIN_PROJECT"
-    "/prod/kodus-orchestrator/LANGCHAIN_CALLBACKS_BACKGROUND"
+    "/prod/kodus-orchestrator/LANGFUSE_TRACING"
+    "/prod/kodus-orchestrator/LANGFUSE_PUBLIC_KEY"
+    "/prod/kodus-orchestrator/LANGFUSE_SECRET_KEY"
+    "/prod/kodus-orchestrator/LANGFUSE_BASE_URL"
+    "/prod/kodus-orchestrator/LANGFUSE_ENVIRONMENT"
 
-    "/prod/kodus-orchestrator/API_SENTRY_DNS"
+    "/prod/kodus-orchestrator/API_BETTERSTACK_DSN"
 
     "/prod/kodus-orchestrator/API_CRON_AUTOMATION_INTERACTION_MONITOR"
     "/prod/kodus-orchestrator/API_CRON_AUTOMATION_TEAM_PROGRESS_TRACKER"
@@ -90,6 +88,7 @@ KEYS=(
     "/prod/kodus-orchestrator/API_CRON_SYNC_CODE_REVIEW_REACTIONS"
     "/prod/kodus-orchestrator/API_CRON_KODY_LEARNING"
     "/prod/kodus-orchestrator/API_CRON_CHECK_IF_PR_SHOULD_BE_APPROVED"
+    "/prod/kodus-orchestrator/API_CRON_SSO_TEST_SESSION_CLEANUP"
 
     "/prod/kodus-orchestrator/KODUS_SERVICE_TEAMS"
     "/prod/kodus-orchestrator/GLOBAL_KODUS_SERVICE_SLACK"
@@ -98,10 +97,10 @@ KEYS=(
     "/prod/kodus-orchestrator/GLOBAL_KODUS_SERVICE_DISCORD"
     "/prod/kodus-orchestrator/KODUS_SERVICE_AZURE_REPOS"
     "/prod/kodus-orchestrator/API_CRON_AUTOMATION_DAILY_CHECKIN"
+    "/prod/kodus-orchestrator/API_CRON_WEEKLY_RECAP"
 
-    "/prod/kodus-orchestrator/API_CUSTOMERIO_APP_API_TOKEN"
-    "/prod/kodus-orchestrator/API_CUSTOMERIO_TRANSACTIONAL_FORGOT_PASSWORD_ID"
-    "/prod/kodus-orchestrator/API_CUSTOMERIO_TRANSACTIONAL_CONFIRM_EMAIL_ID"
+    "/prod/kodus-orchestrator/RESEND_API_KEY"
+    "/prod/kodus-orchestrator/RESEND_WEBHOOK_SECRET"
     "/prod/kodus-orchestrator/API_USER_INVITE_BASE_URL"
 
     "/prod/kodus-orchestrator/API_AWS_REGION"
@@ -114,6 +113,7 @@ KEYS=(
     "/prod/kodus-orchestrator/COHERE_API_KEY"
     "/prod/kodus-orchestrator/API_FIREWORKS_API_KEY"
 
+    "/prod/kodus-orchestrator/N8N_WEBHOOK_URL"
     "/prod/kodus-orchestrator/API_SIGNUP_NOTIFICATION_WEBHOOK"
     "/prod/kodus-orchestrator/API_CRYPTO_KEY"
 
@@ -121,12 +121,13 @@ KEYS=(
     "/prod/kodus-orchestrator/API_SEGMENT_KEY"
 
     "/prod/kodus-orchestrator/API_VERTEX_AI_API_KEY"
+    "/prod/kodus-orchestrator/API_VERTEX_AI_LOCATION"
+    "/prod/kodus-orchestrator/API_GOOGLE_AI_PROVIDER"
     "/prod/kodus-orchestrator/TOGETHER_AI_API_KEY"
     "/prod/kodus-orchestrator/API_NOVITA_AI_API_KEY"
 
     "/prod/kodus-orchestrator/GLOBAL_BITBUCKET_CODE_MANAGEMENT_WEBHOOK"
-
-    "/prod/kodus-orchestrator/API_ENABLE_CODE_REVIEW_AST"
+    "/prod/kodus-orchestrator/BITBUCKET_RATE_GATE_MIN_INTERVAL_MS"
 
     "/prod/kodus-orchestrator/CODE_MANAGEMENT_SECRET"
     "/prod/kodus-orchestrator/CODE_MANAGEMENT_WEBHOOK_TOKEN"
@@ -136,13 +137,12 @@ KEYS=(
 
     "/prod/kodus-orchestrator/API_POSTHOG_KEY"
 
-    "/prod/kodus-orchestrator/API_SERVICE_AST_URL"
-
     "/prod/kodus-orchestrator/API_MCP_SERVER_ENABLED"
     "/prod/kodus-orchestrator/API_KODUS_SERVICE_MCP_MANAGER"
     "/prod/kodus-orchestrator/API_KODUS_MCP_SERVER_URL"
 
     "/prod/kodus-orchestrator/API_OPENROUTER_KEY"
+    "/prod/kodus-orchestrator/API_LLM_TEMPERATURE_OVERRIDE"
 
     "/prod/kodus-orchestrator/API_URL"
     "/prod/kodus-orchestrator/API_FRONTEND_URL"
@@ -168,6 +168,14 @@ KEYS=(
     "/prod/kodus-orchestrator/API_BETTERSTACK_HEARTBEAT_REVIEW_MONITOR_URL"
     "/prod/kodus-orchestrator/API_BETTERSTACK_HEARTBEAT_OUTBOX_URL"
     "/prod/kodus-orchestrator/API_BETTERSTACK_HEARTBEAT_WEBHOOK_URL"
+
+    "/prod/kodus-orchestrator/API_EXA_KEY"
+
+    "/prod/kodus-orchestrator/WEB_HOSTNAME_HELPDESK"
+    "/prod/kodus-orchestrator/WEB_PORT_HELPDESK"
+    "/prod/kodus-orchestrator/API_JWT_PRIVATE_KEY"
+
+    "/prod/kodus-orchestrator/API_BILLING_WEBHOOK_SECRET"
 )
 
 # Lista de todas as chaves que você precisa
@@ -190,3 +198,17 @@ for KEY in "${KEYS[@]}"; do
     echo "${KEY##*/}=$VALUE" >> "$ENV_FILE"
   fi
 done
+
+# API_JWT_REFRESH_SECRET: o código lê o nome com underscore
+# (jwt.config.loader.ts), mas o parâmetro no SSM pode ainda usar o typo
+# legado API_JWT_REFRESHSECRET. Tenta o nome canônico, cai pro legado,
+# e sempre escreve a chave canônica — o .env precisa bater com o código.
+REFRESH_SECRET=$(aws ssm get-parameter --name "/prod/kodus-orchestrator/API_JWT_REFRESH_SECRET" --with-decryption --query "Parameter.Value" --output text 2>/dev/null)
+if [ -z "$REFRESH_SECRET" ] || [[ "$REFRESH_SECRET" == "ParameterNotFound" ]]; then
+  REFRESH_SECRET=$(aws ssm get-parameter --name "/prod/kodus-orchestrator/API_JWT_REFRESHSECRET" --with-decryption --query "Parameter.Value" --output text 2>/dev/null)
+fi
+if [ -n "$REFRESH_SECRET" ] && [[ "$REFRESH_SECRET" != "ParameterNotFound" ]]; then
+  echo "API_JWT_REFRESH_SECRET=$REFRESH_SECRET" >> "$ENV_FILE"
+else
+  echo "WARNING: API_JWT_REFRESH_SECRET não encontrado (nem o legado API_JWT_REFRESHSECRET)." >&2
+fi

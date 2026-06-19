@@ -1,4 +1,8 @@
-import { BYOKConfig, BYOKCredentialType, BYOKProvider } from '@kodus/kodus-common/llm';
+import {
+    BYOKConfig,
+    BYOKCredentialType,
+    BYOKProvider,
+} from '@kodus/kodus-common/llm';
 import { Injectable, Inject } from '@nestjs/common';
 
 import { OrganizationParametersKey } from '@libs/core/domain/enums';
@@ -15,6 +19,7 @@ import {
 } from '@libs/organization/domain/organizationParameters/contracts/organizationParameters.service.contract';
 import { createLogger } from '@kodus/flow';
 import { refreshAnthropicAccessToken } from '@libs/core/infrastructure/services/tokenTracking/anthropicTokenRefresh.service';
+import { refreshOpenAIAccessToken } from '@libs/core/infrastructure/services/tokenTracking/openaiTokenRefresh.service';
 
 export enum PlanType {
     FREE = 'free',
@@ -47,6 +52,10 @@ export interface ValidationResult {
     byokConfig?: BYOKConfig | null;
     errorType?: ValidationErrorType;
     metadata?: Record<string, any>;
+    // Subscription status of the org (e.g. 'trial', 'active'). Exposed so
+    // downstream consumers (the review pipeline) can pick a trial-specific
+    // model without re-validating the license.
+    subscriptionStatus?: string;
 }
 
 @Injectable()
@@ -102,6 +111,13 @@ export class PermissionValidationService {
     }
 
     /**
+     * Verifies if the plan requires per-user license validation
+     */
+    private requiresUserLicense(planType: PlanType | null): boolean {
+        return planType === PlanType.BYOK || planType === PlanType.MANAGED;
+    }
+
+    /**
      * Unified permission validation for operations that need license + BYOK
      */
     async validateExecutionPermissions(
@@ -110,9 +126,18 @@ export class PermissionValidationService {
         contextName?: string,
     ): Promise<ValidationResult> {
         try {
-            // Self-hosted always allows execution
-            if (!this.isCloud || this.isDevelopment) {
+            // Development mode always allows
+            if (this.isDevelopment) {
                 return { allowed: true };
+            }
+
+            // Self-hosted: check if there's a license to enforce seats
+            if (!this.isCloud) {
+                return this.validateSelfHostedPermissions(
+                    organizationAndTeamData,
+                    userGitId,
+                    contextName,
+                );
             }
 
             this.logger.log({
@@ -151,7 +176,10 @@ export class PermissionValidationService {
 
             // 2. Trial always allows (no BYOK required and no user validation)
             if (validation.subscriptionStatus === 'trial') {
-                return { allowed: true };
+                return {
+                    allowed: true,
+                    subscriptionStatus: validation.subscriptionStatus,
+                };
             }
 
             // 3. Identify plan type
@@ -193,9 +221,9 @@ export class PermissionValidationService {
                 }
             }
 
-            if (identifiedPlanType === PlanType.MANAGED && !userGitId) {
+            if (this.requiresUserLicense(identifiedPlanType) && !userGitId) {
                 this.logger.warn({
-                    message: 'Managed plan requires licensed user, NOT_ERROR',
+                    message: 'Plan requires licensed user, NOT_ERROR',
                     context: contextName || PermissionValidationService.name,
                     metadata: { organizationAndTeamData },
                 });
@@ -209,8 +237,8 @@ export class PermissionValidationService {
                 };
             }
 
-            // 6. Validate specific user (ALWAYS validates if userGitId provided, except trial)
-            if (!this.requiresBYOK(identifiedPlanType) && userGitId) {
+            // 6. Validate specific user (ALWAYS validates if userGitId provided, except trial and free)
+            if (this.requiresUserLicense(identifiedPlanType) && userGitId) {
                 const users = await this.licenseService.getAllUsersWithLicense(
                     organizationAndTeamData,
                 );
@@ -240,6 +268,7 @@ export class PermissionValidationService {
             return {
                 allowed: true,
                 byokConfig,
+                subscriptionStatus: validation.subscriptionStatus,
                 metadata: { planType: validation.planType, identifiedPlanType },
             };
         } catch (error) {
@@ -269,6 +298,57 @@ export class PermissionValidationService {
     }
 
     /**
+     * Self-hosted permission validation:
+     * - No license (Community Edition): allow everything
+     * - With license: enforce seat limits and allow auto-assign
+     */
+    private async validateSelfHostedPermissions(
+        organizationAndTeamData: OrganizationAndTeamData,
+        userGitId?: string,
+        contextName?: string,
+    ): Promise<ValidationResult> {
+        const validation =
+            await this.licenseService.validateOrganizationLicense(
+                organizationAndTeamData,
+            );
+
+        // No license or invalid → Community Edition, allow everything
+        if (!validation?.valid) {
+            return { allowed: true };
+        }
+
+        // Licensed self-hosted: enforce seat validation
+        if (!userGitId) {
+            return { allowed: true };
+        }
+
+        const users = await this.licenseService.getAllUsersWithLicense(
+            organizationAndTeamData,
+        );
+
+        const user = users?.find((u) => u?.git_id === userGitId);
+
+        if (!user) {
+            this.logger.warn({
+                message: 'Self-hosted: user not licensed',
+                context: contextName || PermissionValidationService.name,
+                metadata: { organizationAndTeamData, userGitId },
+            });
+
+            return {
+                allowed: false,
+                errorType: ValidationErrorType.USER_NOT_LICENSED,
+                metadata: {
+                    userGitId,
+                    availableUsers: users?.length || 0,
+                },
+            };
+        }
+
+        return { allowed: true };
+    }
+
+    /**
      * Validação simplificada para operações que só precisam verificar licença
      */
     async validateBasicLicense(
@@ -276,8 +356,24 @@ export class PermissionValidationService {
         contextName?: string,
     ): Promise<ValidationResult> {
         try {
-            if (!this.isCloud || this.isDevelopment) {
+            if (this.isDevelopment) {
                 return { allowed: true };
+            }
+
+            // Self-hosted without license: allow; with license: validate it
+            if (!this.isCloud) {
+                const validation =
+                    await this.licenseService.validateOrganizationLicense(
+                        organizationAndTeamData,
+                    );
+                // CE mode (no license): allow
+                if (!validation?.valid) {
+                    return { allowed: true };
+                }
+                return {
+                    allowed: true,
+                    metadata: { planType: validation.planType },
+                };
             }
 
             this.logger.log({
@@ -434,13 +530,8 @@ export class PermissionValidationService {
         contextName?: string,
     ): Promise<boolean> {
         try {
-            // Development mode não limita recursos
+            // Development mode doesn't limit resources
             if (this.isDevelopment) {
-                return false;
-            }
-
-            // Self-hosted não limita recursos
-            if (!this.isCloud) {
                 return false;
             }
 
@@ -473,6 +564,19 @@ export class PermissionValidationService {
                 return true;
             }
 
+            // Self-hosted with valid license: don't limit
+            if (
+                !this.isCloud &&
+                validation.subscriptionStatus === 'licensed-self-hosted'
+            ) {
+                return false;
+            }
+
+            // Self-hosted without license (CE mode): limit resources
+            if (!this.isCloud) {
+                return true;
+            }
+
             const planType = validation?.planType;
             const limitResources = planType?.includes('free');
 
@@ -487,18 +591,28 @@ export class PermissionValidationService {
                 context: contextName || PermissionValidationService.name,
                 error: error,
             });
-            // Em caso de erro, limitar recursos por segurança
+            // In case of error, limit resources for safety
             return true;
         }
     }
 
     /**
      * Retorna a configuração BYOK da organização (se existir).
-     * Auto-refreshes Anthropic OAuth tokens when they are expired and a refresh token is available.
+     *
+     * CLI trial requests carry organizationId='trial' (not a UUID) so the
+     * organization_parameters lookup would fail with Postgres' UUID syntax
+     * check. Treat non-UUID org identifiers as "no BYOK config" instead of
+     * letting the query error propagate.
      */
     async getBYOKConfig(
         organizationAndTeamData: OrganizationAndTeamData,
     ): Promise<BYOKConfig | null> {
+        const UUID_RE =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!UUID_RE.test(organizationAndTeamData?.organizationId || '')) {
+            return null;
+        }
+
         const byokParam = await this.organizationParametersService.findByKey(
             OrganizationParametersKey.BYOK_CONFIG,
             organizationAndTeamData,
@@ -509,16 +623,20 @@ export class PermissionValidationService {
 
         let configUpdated = false;
 
-        // Check main slot
+        // Check main slot (Anthropic + OpenAI/Codex subscription tokens)
         if (byokConfig.main) {
-            const refreshed = await this.refreshAnthropicSlotIfExpired(byokConfig.main, 'main');
-            if (refreshed) configUpdated = true;
+            if (await this.refreshAnthropicSlotIfExpired(byokConfig.main, 'main'))
+                configUpdated = true;
+            if (await this.refreshOpenAISlotIfExpired(byokConfig.main, 'main'))
+                configUpdated = true;
         }
 
         // Check fallback slot
         if (byokConfig.fallback) {
-            const refreshed = await this.refreshAnthropicSlotIfExpired(byokConfig.fallback, 'fallback');
-            if (refreshed) configUpdated = true;
+            if (await this.refreshAnthropicSlotIfExpired(byokConfig.fallback, 'fallback'))
+                configUpdated = true;
+            if (await this.refreshOpenAISlotIfExpired(byokConfig.fallback, 'fallback'))
+                configUpdated = true;
         }
 
         // Persist refreshed tokens back to DB
@@ -531,7 +649,7 @@ export class PermissionValidationService {
                 );
             } catch (persistError) {
                 this.logger.error({
-                    message: 'Failed to persist refreshed Anthropic token to DB',
+                    message: 'Failed to persist refreshed subscription token to DB',
                     error: persistError,
                     context: PermissionValidationService.name,
                     metadata: { organizationAndTeamData },
@@ -543,7 +661,10 @@ export class PermissionValidationService {
     }
 
     /**
-     * Refreshes an Anthropic OAuth token in-place if it is expired and has a refresh token.
+     * Refreshes an Anthropic OAuth token in-place if it is near expiry and has
+     * a refresh token. Persists the ROTATED refresh token back onto the slot
+     * (Anthropic invalidates the old one each refresh). Refreshes proactively
+     * (within 5 min of expiry) so a review never starts with a dead token.
      * Returns true if the slot was updated.
      */
     private async refreshAnthropicSlotIfExpired(
@@ -555,7 +676,7 @@ export class PermissionValidationService {
             slot.provider !== BYOKProvider.ANTHROPIC ||
             !slot.refreshToken ||
             !slot.tokenExpiresAt ||
-            Date.now() < slot.tokenExpiresAt - 60_000
+            Date.now() < slot.tokenExpiresAt - 5 * 60_000
         ) {
             return false;
         }
@@ -564,6 +685,7 @@ export class PermissionValidationService {
             const refreshed = await refreshAnthropicAccessToken(slot.refreshToken);
 
             slot.subscriptionToken = refreshed.encryptedAccessToken;
+            slot.refreshToken = refreshed.encryptedRefreshToken;
             slot.tokenExpiresAt = refreshed.tokenExpiresAt;
 
             this.logger.log({
@@ -575,6 +697,50 @@ export class PermissionValidationService {
         } catch (error) {
             this.logger.error({
                 message: `Failed to auto-refresh Anthropic OAuth token for ${slotName} slot`,
+                error,
+                context: PermissionValidationService.name,
+            });
+            return false;
+        }
+    }
+
+    /**
+     * Refreshes an OpenAI/Codex (ChatGPT subscription) OAuth token in-place if
+     * it is near expiry and has a refresh token. Persists the ROTATED refresh
+     * token back onto the slot (OpenAI invalidates the old one each refresh).
+     * Refreshes proactively (within 5 min of expiry) so a review never starts
+     * with a dead token. Returns true if the slot was updated.
+     */
+    private async refreshOpenAISlotIfExpired(
+        slot: NonNullable<BYOKConfig['main']>,
+        slotName: string,
+    ): Promise<boolean> {
+        if (
+            slot.credentialType !== BYOKCredentialType.SUBSCRIPTION_TOKEN ||
+            slot.provider !== BYOKProvider.OPENAI ||
+            !slot.refreshToken ||
+            !slot.tokenExpiresAt ||
+            Date.now() < slot.tokenExpiresAt - 5 * 60_000
+        ) {
+            return false;
+        }
+
+        try {
+            const refreshed = await refreshOpenAIAccessToken(slot.refreshToken);
+
+            slot.subscriptionToken = refreshed.encryptedAccessToken;
+            slot.refreshToken = refreshed.encryptedRefreshToken;
+            slot.tokenExpiresAt = refreshed.tokenExpiresAt;
+
+            this.logger.log({
+                message: `OpenAI/Codex OAuth token auto-refreshed for ${slotName} slot`,
+                context: PermissionValidationService.name,
+            });
+
+            return true;
+        } catch (error) {
+            this.logger.error({
+                message: `Failed to auto-refresh OpenAI/Codex OAuth token for ${slotName} slot`,
                 error,
                 context: PermissionValidationService.name,
             });

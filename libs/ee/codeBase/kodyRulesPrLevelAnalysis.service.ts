@@ -1,44 +1,20 @@
 import type { ContextDependency } from '@kodus/flow';
 import { createLogger } from '@kodus/flow';
 import {
-    LLMModelProvider,
-    PromptRunnerService,
-    PromptRole,
-    ParserType,
     BYOKConfig,
+    LLMModelProvider,
+    ParserType,
+    PromptRole,
+    PromptRunnerService,
     TokenUsage,
 } from '@kodus/kodus-common/llm';
 import { Inject, Injectable } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 
-import { IKodyRulesAnalysisService } from '@libs/code-review/domain/contracts/KodyRulesAnalysisService.contract';
-import { DeliveryStatus } from '@libs/platformData/domain/pullRequests/enums/deliveryStatus.enum';
-import { ISuggestionByPR } from '@libs/platformData/domain/pullRequests/interfaces/pullRequests.interface';
-import { ContextAugmentationsMap } from '@libs/ai-engine/infrastructure/adapters/services/context/interfaces/code-review-context-pack.interface';
 import { FileContextAugmentationService } from '@libs/ai-engine/infrastructure/adapters/services/context/file-context-augmentation.service';
-import {
-    FileChangeContext,
-    ReviewModeResponse,
-    AnalysisContext,
-    AIAnalysisResult,
-    FileChange,
-    AIAnalysisResultPrLevel,
-} from '@libs/core/infrastructure/config/types/general/codeReview.type';
-import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
-import { TokenChunkingService } from '@libs/core/infrastructure/services/tokenChunking/tokenChunking.service';
-import { BYOKPromptRunnerService } from '@libs/core/infrastructure/services/tokenTracking/byokPromptRunner.service';
-import {
-    IKodyRule,
-    KodyRulesScope,
-} from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
-import {
-    IKodyRulesService,
-    KODY_RULES_SERVICE_TOKEN,
-} from '@libs/kodyRules/domain/contracts/kodyRules.service.contract';
-import { ObservabilityService } from '@libs/core/log/observability.service';
-import { ExternalReferenceLoaderService } from '@libs/kodyRules/infrastructure/adapters/services/externalReferenceLoader.service';
-import { KodyRuleDependencyService } from '@libs/kodyRules/infrastructure/adapters/services/kodyRulesDependency.service';
-import { tryParseJSONObject } from '@libs/common/utils/transforms/json';
+import { ContextAugmentationsMap } from '@libs/ai-engine/infrastructure/adapters/services/context/interfaces/code-review-context-pack.interface';
+import { IKodyRulesAnalysisService } from '@libs/code-review/domain/contracts/KodyRulesAnalysisService.contract';
+import { buildKodyRuleLink } from '@libs/code-review/utils/build-kody-rule-link';
 import { LabelType } from '@libs/common/utils/codeManagement/labels';
 import { SeverityLevel } from '@libs/common/utils/enums/severityLevel.enum';
 import {
@@ -46,6 +22,31 @@ import {
     prompt_kodyrules_prlevel_analyzer,
     prompt_kodyrules_prlevel_group_rules,
 } from '@libs/common/utils/langchainCommon/prompts/kodyRulesPrLevel';
+import { tryParseJSONObject } from '@libs/common/utils/transforms/json';
+import {
+    AIAnalysisResult,
+    AIAnalysisResultPrLevel,
+    AnalysisContext,
+    FileChange,
+    FileChangeContext,
+    ReviewModeResponse,
+} from '@libs/core/infrastructure/config/types/general/codeReview.type';
+import { OrganizationAndTeamData } from '@libs/core/infrastructure/config/types/general/organizationAndTeamData';
+import { TokenChunkingService } from '@libs/core/infrastructure/services/tokenChunking/tokenChunking.service';
+import { BYOKPromptRunnerService } from '@libs/core/infrastructure/services/tokenTracking/byokPromptRunner.service';
+import { ObservabilityService } from '@libs/core/log/observability.service';
+import {
+    IKodyRulesService,
+    KODY_RULES_SERVICE_TOKEN,
+} from '@libs/kodyRules/domain/contracts/kodyRules.service.contract';
+import {
+    IKodyRule,
+    KodyRulesScope,
+} from '@libs/kodyRules/domain/interfaces/kodyRules.interface';
+import { ExternalReferenceLoaderService } from '@libs/kodyRules/infrastructure/adapters/services/externalReferenceLoader.service';
+import { KodyRuleDependencyService } from '@libs/kodyRules/infrastructure/adapters/services/kodyRulesDependency.service';
+import { DeliveryStatus } from '@libs/platformData/domain/pullRequests/enums/deliveryStatus.enum';
+import { ISuggestionByPR } from '@libs/platformData/domain/pullRequests/interfaces/pullRequests.interface';
 
 //#region Interfaces
 // Interface for analyzer response
@@ -188,7 +189,7 @@ export class KodyRulesPrLevelAnalysisService implements IKodyRulesAnalysisServic
             return { codeSuggestions: [] };
         }
 
-        let filteredKodyRules: Array<Partial<IKodyRule>> = [];
+        let filteredKodyRules: Array<Partial<IKodyRule>>;
 
         // Safe check for suggestionControl
         const suggestionControl = context.codeReviewConfig?.suggestionControl;
@@ -550,16 +551,15 @@ export class KodyRulesPrLevelAnalysisService implements IKodyRulesAnalysisServic
                 }
 
                 const baseUrl = process.env.API_USER_INVITE_BASE_URL || '';
-                let ruleLink: string;
-
-                if (rule.repositoryId === 'global') {
-                    ruleLink = `${baseUrl}/settings/code-review/global/kody-rules/${ruleId}`;
-                } else {
-                    ruleLink = `${baseUrl}/settings/code-review/${rule.repositoryId}/kody-rules/${ruleId}`;
-                }
+                const ruleLink = buildKodyRuleLink(
+                    baseUrl,
+                    ruleId,
+                    rule,
+                    organizationAndTeamData,
+                );
 
                 const escapeMarkdownSyntax = (text: string): string =>
-                    text.replace(/([[]\\]\\`*_{}()#+-.!])/g, '\\$1');
+                    text.replace(/([\[\]\\`*_{}()#+\-.!])/g, '\\$1');
                 const markdownLink = `[${escapeMarkdownSyntax(rule.title)}](${ruleLink})`;
 
                 // Verificar se o ID está entre crases simples `id`
@@ -1149,6 +1149,7 @@ export class KodyRulesPrLevelAnalysisService implements IKodyRulesAnalysisServic
             language,
             externalReferencesMap,
             mcpResultsMap,
+            memories: context?.codeReviewConfig?.kodyMemoryRules || [],
         };
 
         const fallbackProvider = LLMModelProvider.NOVITA_DEEPSEEK_V3;
@@ -1179,12 +1180,15 @@ export class KodyRulesPrLevelAnalysisService implements IKodyRulesAnalysisServic
                 context?.codeReviewConfig?.byokConfig?.fallback?.model,
         };
 
+        const byokConfigRef = context?.codeReviewConfig?.byokConfig;
+
         try {
             const { result: analysis } =
                 await this.observabilityService.runLLMInSpan({
                     spanName,
                     runName,
                     attrs: spanAttrs,
+                    byokConfig: byokConfigRef,
                     exec: async (callbacks) => {
                         return await promptRunner
                             .builder()
@@ -1546,6 +1550,7 @@ export class KodyRulesPrLevelAnalysisService implements IKodyRulesAnalysisServic
                     spanName,
                     runName,
                     attrs: spanAttrs,
+                    byokConfig,
                     exec: async (callbacks) => {
                         return await promptRunner
                             .builder()

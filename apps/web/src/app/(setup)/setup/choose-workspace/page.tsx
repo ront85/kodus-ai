@@ -14,6 +14,7 @@ import { Spinner } from "@components/ui/spinner";
 import { joinOrganization } from "@services/users/fetch";
 import { ArrowRight } from "lucide-react";
 import { useAuth } from "src/core/providers/auth.provider";
+import { useConfig } from "@providers/ConfigProvider";
 import type { AwaitedReturnType } from "src/core/types";
 import { getOrganizationsByDomain } from "src/lib/auth/fetchers";
 
@@ -21,6 +22,7 @@ import { StepIndicators } from "../_components/step-indicators";
 import { useGoToStep } from "../_hooks/use-goto-step";
 
 export default function ChooseWorkspacePage() {
+    const cfg = useConfig();
     useGoToStep();
 
     const router = useRouter();
@@ -80,7 +82,7 @@ export default function ChooseWorkspacePage() {
 
             await refreshAccessTokens();
 
-            router.push("/");
+            window.location.href = "/";
         } catch (error) {
             console.error("Failed to update user:", error);
         } finally {
@@ -128,9 +130,7 @@ export default function ChooseWorkspacePage() {
                                 <Checkbox
                                     id={org.uuid}
                                     className="flex-shrink-0 self-center"
-                                    checked={
-                                        selectedOrganization === org.uuid
-                                    }
+                                    checked={selectedOrganization === org.uuid}
                                     onCheckedChange={() =>
                                         handleSelectOrganization(org.uuid)
                                     }
@@ -167,7 +167,7 @@ export default function ChooseWorkspacePage() {
                     If you don't see your organization,{" "}
                     <Link
                         target="_blank"
-                        href={process.env.WEB_SUPPORT_DISCORD_INVITE_URL ?? ""}>
+                        href={cfg.supportDiscordInviteUrl || ""}>
                         contact support
                     </Link>
                     .
@@ -179,7 +179,6 @@ export default function ChooseWorkspacePage() {
     return (
         <Page.Root className="mx-auto flex max-h-screen flex-row overflow-hidden p-6">
             <div className="bg-card-lv1 flex flex-10 flex-col justify-center gap-10 rounded-3xl p-12">
-
                 <div className="flex-1 overflow-hidden rounded-3xl">
                     <video
                         loop

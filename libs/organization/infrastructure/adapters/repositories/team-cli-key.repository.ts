@@ -33,7 +33,7 @@ export class TeamCliKeyDatabaseRepository implements ITeamCliKeyRepository {
 
             return mapSimpleModelsToEntities(keys, TeamCliKeyEntity);
         } catch (error) {
-            throw new Error('Error finding team CLI keys');
+            throw new Error('Erro   r finding team CLI keys', { cause: error });
         }
     }
 
@@ -56,7 +56,9 @@ export class TeamCliKeyDatabaseRepository implements ITeamCliKeyRepository {
                 ? mapSimpleModelToEntity(key, TeamCliKeyEntity)
                 : undefined;
         } catch (error) {
-            throw new Error('Error finding team CLI key');
+            throw new Error('Error finding team CLI key by filter', {
+                cause: error,
+            });
         }
     }
 
@@ -77,6 +79,7 @@ export class TeamCliKeyDatabaseRepository implements ITeamCliKeyRepository {
                 keyHash: data.keyHash,
                 keyPrefix: data.keyPrefix,
                 active: data.active ?? true,
+                config: data.config ?? {},
                 team: data.team ? ({ uuid: data.team.uuid } as any) : undefined,
                 createdBy: data.createdBy
                     ? ({ uuid: data.createdBy.uuid } as any)
@@ -87,7 +90,7 @@ export class TeamCliKeyDatabaseRepository implements ITeamCliKeyRepository {
 
             return mapSimpleModelToEntity(savedKey, TeamCliKeyEntity);
         } catch (error) {
-            throw new Error('Error creating team CLI key');
+            throw new Error('Error creating team CLI key', { cause: error });
         }
     }
 
@@ -109,7 +112,7 @@ export class TeamCliKeyDatabaseRepository implements ITeamCliKeyRepository {
 
             return mapSimpleModelToEntity(updatedKey, TeamCliKeyEntity);
         } catch (error) {
-            throw new Error('Error updating team CLI key');
+            throw new Error('Error updating team CLI key', { cause: error });
         }
     }
 
@@ -117,7 +120,7 @@ export class TeamCliKeyDatabaseRepository implements ITeamCliKeyRepository {
         try {
             await this.teamCliKeyRepository.delete({ uuid });
         } catch (error) {
-            throw new Error('Error deleting team CLI key');
+            throw new Error('Error deleting team CLI key', { cause: error });
         }
     }
 }
