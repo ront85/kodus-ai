@@ -30,6 +30,40 @@ import { decrypt } from '@libs/common/utils/crypto';
  * We derive it from the first developer/system input message so the model still
  * receives the intended system prompt, falling back to a minimal placeholder.
  */
+/**
+ * Reconstruct the non-streaming Responses-API JSON body from a Codex SSE
+ * stream. The stream ends with a `response.completed` event whose `data`
+ * payload is `{ type, response: {...} }`; the SDK's non-streaming
+ * `doGenerate` handler expects that inner `response` object as the JSON body.
+ * Returns the serialized response object, or null if it can't be found.
+ */
+function reconstructResponseFromSse(sse: string): string | null {
+    try {
+        const lines = sse.split('\n');
+        let lastResponse: any = null;
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const json = trimmed.slice('data:'.length).trim();
+            if (!json || json === '[DONE]') continue;
+            let evt: any;
+            try {
+                evt = JSON.parse(json);
+            } catch {
+                continue;
+            }
+            // Prefer the completed event; fall back to the latest response seen.
+            if (evt?.response) {
+                lastResponse = evt.response;
+                if (evt.type === 'response.completed') break;
+            }
+        }
+        return lastResponse ? JSON.stringify(lastResponse) : null;
+    } catch {
+        return null;
+    }
+}
+
 const codexInstructionsFetch: typeof fetch = async (input, init) => {
     try {
         if (init?.body && typeof init.body === 'string') {
@@ -74,8 +108,38 @@ const codexInstructionsFetch: typeof fetch = async (input, init) => {
                 mutated = true;
             }
 
+            // 3) Codex requires stream:true. The SDK's non-streaming
+            // generateText path sends stream:false; force it true and read
+            // the SSE stream back into a single non-streaming response below.
+            const forcedStream = payload.stream !== true;
+            if (forcedStream) {
+                payload.stream = true;
+                mutated = true;
+            }
+
             if (mutated) {
                 init = { ...init, body: JSON.stringify(payload) };
+            }
+
+            // If we forced streaming on a request the SDK expected to be
+            // non-streaming, consume the SSE stream and reconstruct the final
+            // JSON response object the SDK's non-streaming handler expects.
+            if (forcedStream) {
+                const upstream = await fetch(input, init);
+                if (!upstream.ok || !upstream.body) return upstream;
+                const text = await upstream.text();
+                const finalJson = reconstructResponseFromSse(text);
+                if (finalJson) {
+                    return new Response(finalJson, {
+                        status: 200,
+                        headers: { 'content-type': 'application/json' },
+                    });
+                }
+                // Couldn't reconstruct — return the raw stream text as-is.
+                return new Response(text, {
+                    status: upstream.status,
+                    headers: { 'content-type': 'application/json' },
+                });
             }
         }
     } catch {
