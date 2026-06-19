@@ -146,12 +146,16 @@ export class GetModelsByProviderUseCase {
                         } catch { /* ignore */ }
                     }
 
-                    // Test with a minimal Codex API call using correct Codex CLI headers
-                    // Codex API requires stream:true and store:false
+                    // Test with a minimal Codex API call using correct Codex CLI headers.
+                    // Codex API requires stream:true and store:false. The model
+                    // MUST be one the ChatGPT-account Codex backend allows — the
+                    // legacy `*-codex` slugs (gpt-5.1-codex etc.) are rejected
+                    // with 400 "model is not supported when using Codex with a
+                    // ChatGPT account". gpt-5.5 is the current default.
                     const response = await axios.post(
                         'https://chatgpt.com/backend-api/codex/responses',
                         {
-                            model: 'gpt-5.1-codex',
+                            model: 'gpt-5.5',
                             instructions: 'Say ok',
                             input: [{ role: 'user', content: 'test' }],
                             store: false,
@@ -427,14 +431,17 @@ export class GetModelsByProviderUseCase {
     }
 
     private getOpenAICodexStaticModels(): ModelResponse {
+        // Models the ChatGPT-account Codex backend actually accepts. The
+        // legacy `*-codex` slugs (gpt-5.1-codex, gpt-5-codex, …) are NOT
+        // valid for subscription-token (ChatGPT-account) access — the API
+        // rejects them with 400 "model is not supported when using Codex
+        // with a ChatGPT account". These slugs come from the codex CLI's
+        // own models cache (visibility=list).
         const codexModels = [
-            { id: 'gpt-5.5-codex', name: 'GPT-5.5 Codex' },
-            { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex' },
-            { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex' },
-            { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex' },
-            { id: 'gpt-5.1-codex-max', name: 'GPT-5.1 Codex Max' },
-            { id: 'gpt-5-codex', name: 'GPT-5 Codex' },
-            { id: 'gpt-5-codex-mini', name: 'GPT-5 Codex Mini' },
+            { id: 'gpt-5.5', name: 'GPT-5.5' },
+            { id: 'gpt-5.4', name: 'GPT-5.4' },
+            { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' },
+            { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark' },
         ];
 
         return {
