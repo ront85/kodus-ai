@@ -790,7 +790,10 @@ export class PermissionValidationService {
     }
 
     /**
-     * Refreshes an Anthropic OAuth token in-place if it is expired and has a refresh token.
+     * Refreshes an Anthropic OAuth token in-place if it is near expiry and has
+     * a refresh token. Persists the ROTATED refresh token back onto the slot
+     * (Anthropic invalidates the old one each refresh). Refreshes proactively
+     * (within 5 min of expiry) so a review never starts with a dead token.
      * Returns true if the slot was updated.
      */
     private async refreshAnthropicSlotIfExpired(
@@ -802,7 +805,7 @@ export class PermissionValidationService {
             slot.provider !== BYOKProvider.ANTHROPIC ||
             !slot.refreshToken ||
             !slot.tokenExpiresAt ||
-            Date.now() < slot.tokenExpiresAt - 60_000
+            Date.now() < slot.tokenExpiresAt - 5 * 60_000
         ) {
             return false;
         }
@@ -811,6 +814,7 @@ export class PermissionValidationService {
             const refreshed = await refreshAnthropicAccessToken(slot.refreshToken);
 
             slot.subscriptionToken = refreshed.encryptedAccessToken;
+            slot.refreshToken = refreshed.encryptedRefreshToken;
             slot.tokenExpiresAt = refreshed.tokenExpiresAt;
 
             this.logger.log({
