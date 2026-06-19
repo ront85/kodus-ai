@@ -21,6 +21,57 @@ import {
 import { decrypt } from '@libs/common/utils/crypto';
 
 /**
+ * Fetch middleware for the ChatGPT-account Codex `/responses` endpoint.
+ *
+ * That endpoint rejects requests without a non-empty top-level `instructions`
+ * field (HTTP 400 `{"detail":"Instructions are required"}`). The Vercel AI SDK
+ * encodes the system prompt as a `role:"developer"` input message and does not
+ * set top-level `instructions`, so we inject one here when it's absent/empty.
+ * We derive it from the first developer/system input message so the model still
+ * receives the intended system prompt, falling back to a minimal placeholder.
+ */
+const codexInstructionsFetch: typeof fetch = async (input, init) => {
+    try {
+        if (init?.body && typeof init.body === 'string') {
+            const payload = JSON.parse(init.body);
+            const hasInstructions =
+                typeof payload.instructions === 'string' &&
+                payload.instructions.trim().length > 0;
+            if (!hasInstructions) {
+                let derived = '';
+                if (Array.isArray(payload.input)) {
+                    const sys = payload.input.find(
+                        (m: any) =>
+                            m?.role === 'developer' || m?.role === 'system',
+                    );
+                    if (sys) {
+                        derived =
+                            typeof sys.content === 'string'
+                                ? sys.content
+                                : Array.isArray(sys.content)
+                                  ? sys.content
+                                        .map((c: any) =>
+                                            typeof c === 'string'
+                                                ? c
+                                                : (c?.text ?? ''),
+                                        )
+                                        .join('\n')
+                                  : '';
+                    }
+                }
+                payload.instructions =
+                    derived.trim() ||
+                    'You are a helpful code review assistant.';
+                init = { ...init, body: JSON.stringify(payload) };
+            }
+        }
+    } catch {
+        // If the body isn't JSON we can parse, send it unchanged.
+    }
+    return fetch(input, init);
+};
+
+/**
  * Build a Vercel AI SDK model from a base64-encoded Google Service Account
  * JSON. Mirrors `packages/kodus-common/src/llm/providerAdapters/vertexAdapter.ts`
  * so self-hosted deployments using the same `API_VERTEX_AI_API_KEY` env var
@@ -408,6 +459,13 @@ export function byokToVercelModel(
                 // Codex backend + the responses API. Mirrors the kodus-common
                 // openaiAdapter Codex path so the V3 agent pipeline honors the
                 // same subscription token used elsewhere.
+                //
+                // The ChatGPT-account Codex `/responses` endpoint REQUIRES a
+                // non-empty top-level `instructions` field (returns 400
+                // {"detail":"Instructions are required"} otherwise). The Vercel
+                // AI SDK puts the system prompt in a `role:"developer"` input
+                // message and omits top-level `instructions`, so we inject it
+                // via a fetch middleware when missing.
                 return createOpenAI({
                     apiKey: 'chatgpt-oauth',
                     baseURL: 'https://chatgpt.com/backend-api/codex',
@@ -418,6 +476,7 @@ export function byokToVercelModel(
                             : {}),
                         originator: 'codex_cli_rs',
                     },
+                    fetch: codexInstructionsFetch,
                 }).responses(model);
             }
             return createOpenAI({
