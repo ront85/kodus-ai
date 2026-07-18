@@ -77,21 +77,25 @@ export class ValidateConfigStage extends BasePipelineStage<CodeReviewPipelineCon
                 });
             }
 
-            //TODO: revisar logica
-            const byokConfig =
-                await this.organizationParametersService.findByKey(
-                    OrganizationParametersKey.BYOK_CONFIG,
-                    context.organizationAndTeamData,
-                );
+            // Use BYOK config already set by validate-prerequisites (includes token refresh).
+            // Only fall back to raw DB read if not already present on context.
+            if (!context.codeReviewConfig.byokConfig) {
+                const byokConfig =
+                    await this.organizationParametersService.findByKey(
+                        OrganizationParametersKey.BYOK_CONFIG,
+                        context.organizationAndTeamData,
+                    );
 
+                context = this.updateContext(context, (draft) => {
+                    draft.codeReviewConfig.byokConfig =
+                        byokConfig?.configValue;
+                });
+            }
+
+            // The merged code review config can override which BYOK *main*
+            // model runs the review without replacing refreshed credentials.
             context = this.updateContext(context, (draft) => {
-                const resolved = byokConfig?.configValue;
-                draft.codeReviewConfig.byokConfig = resolved;
-
-                // The merged code review config can override which BYOK *main*
-                // model runs the review (directory -> repository -> BYOK
-                // settings). An empty/absent value means "inherit", so the
-                // BYOK-settings main model is left in place.
+                const resolved = draft.codeReviewConfig.byokConfig;
                 const overrideModel = draft.codeReviewConfig.byokModel?.trim();
                 if (resolved?.main && overrideModel) {
                     draft.codeReviewConfig.byokConfig = {

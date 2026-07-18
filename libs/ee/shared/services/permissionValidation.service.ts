@@ -134,16 +134,25 @@ export class PermissionValidationService {
         try {
             // Development mode always allows
             if (this.isDevelopment) {
-                return { allowed: true };
+                const byokConfig = await this.getBYOKConfig(
+                    organizationAndTeamData,
+                );
+                return { allowed: true, byokConfig };
             }
 
             // Self-hosted: check if there's a license to enforce seats
             if (!this.isCloud) {
-                return this.validateSelfHostedPermissions(
+                const result = await this.validateSelfHostedPermissions(
                     organizationAndTeamData,
                     userGitId,
                     contextName,
                 );
+                if (result.allowed) {
+                    result.byokConfig = await this.getBYOKConfig(
+                        organizationAndTeamData,
+                    );
+                }
+                return result;
             }
 
             this.logger.log({
@@ -486,7 +495,10 @@ export class PermissionValidationService {
     ): Promise<ValidationResult> {
         try {
             if (this.isDevelopment) {
-                return { allowed: true };
+                const byokConfig = await this.getBYOKConfig(
+                    organizationAndTeamData,
+                );
+                return { allowed: true, byokConfig };
             }
 
             // Self-hosted without license: allow; with license: validate it
@@ -497,10 +509,18 @@ export class PermissionValidationService {
                     );
                 // CE mode (no license): allow
                 if (!validation?.valid) {
-                    return { allowed: true };
+                    return {
+                        allowed: true,
+                        byokConfig: await this.getBYOKConfig(
+                            organizationAndTeamData,
+                        ),
+                    };
                 }
                 return {
                     allowed: true,
+                    byokConfig: await this.getBYOKConfig(
+                        organizationAndTeamData,
+                    ),
                     metadata: { planType: validation.planType },
                 };
             }
@@ -571,9 +591,9 @@ export class PermissionValidationService {
         contextName?: string,
     ): Promise<BYOKConfig | null> {
         try {
-            // Self-hosted sempre usa config das env vars (não usa BYOK)
+            // Self-hosted: still load BYOK config (with token refresh) if configured
             if (!this.isCloud) {
-                return null;
+                return this.getBYOKConfig(organizationAndTeamData);
             }
 
             if (!validation) {
