@@ -63,6 +63,7 @@ export function CuratedConnectPanel({
     onBack: () => void;
     onSave: (_: BYOKConfig) => Promise<void>;
 }) {
+    const hasStoredCredential = Boolean(existingConfig || existingKey);
     const [testState, setTestState] = useState<
         | { status: "idle" }
         | { status: "testing" }
@@ -73,7 +74,7 @@ export function CuratedConnectPanel({
     const [variant, setVariant] = useState<ModelVariant | undefined>(() =>
         resolveInitialVariant(model, existingConfig?.baseURL),
     );
-    const hasStoredCredential = Boolean(existingConfig || existingKey);
+    const [isReplacingCredential, setIsReplacingCredential] = useState(false);
 
     const initialBaseURL =
         existingConfig?.baseURL ??
@@ -160,6 +161,11 @@ export function CuratedConnectPanel({
         (credentialType === "subscription_token"
             ? !!subscriptionToken?.trim()
             : !!apiKey?.trim());
+    const usingStoredCredential =
+        hasStoredCredential &&
+        !isReplacingCredential &&
+        !apiKey?.trim() &&
+        !subscriptionToken?.trim();
 
     // Editing any credential field (or switching credential type) invalidates a
     // previous Test result. The bespoke Textarea used to do this inline; the
@@ -306,11 +312,28 @@ export function CuratedConnectPanel({
 
                     {hasStoredCredential && (
                         <Alert variant="info">
-                            <AlertDescription className="text-pretty">
-                                A key for <strong>{providerLabel}</strong> is
-                                already stored. Paste a new one to replace it —
-                                or leave blank to keep the current key while you
-                                switch models or tweak advanced settings.
+                            <AlertDescription className="flex flex-wrap items-center justify-between gap-3 text-pretty">
+                                <span>
+                                    Using your saved{" "}
+                                    <strong>{providerLabel}</strong>{" "}
+                                    {existingConfig?.credentialType ===
+                                    "subscription_token"
+                                        ? "subscription credential"
+                                        : "API key"}
+                                    . You can switch models without entering it
+                                    again.
+                                </span>
+                                {!isReplacingCredential && (
+                                    <Button
+                                        type="button"
+                                        size="xs"
+                                        variant="tertiary"
+                                        onClick={() =>
+                                            setIsReplacingCredential(true)
+                                        }>
+                                        Replace credential
+                                    </Button>
+                                )}
                             </AlertDescription>
                         </Alert>
                     )}
@@ -319,49 +342,52 @@ export function CuratedConnectPanel({
                         providers list via useSuspenseGetLLMProviders, so they
                         need a Suspense ancestor (this catalog tree has none).
                         They share the one query, so they suspend together. */}
-                    <Suspense
-                        fallback={
-                            <div className="bg-card-lv2 h-32 animate-pulse rounded-md" />
-                        }>
-                        {/* Providers that support subscription tokens
-                            (anthropic, openai) get the toggle;
-                            CredentialTypeToggle self-hides for every other
-                            provider, leaving the plain api-key input untouched. */}
-                        <div className="flex flex-col gap-3">
-                            <CredentialTypeToggle />
+                    {(!hasStoredCredential || isReplacingCredential) && (
+                        <Suspense
+                            fallback={
+                                <div className="bg-card-lv2 h-32 animate-pulse rounded-md" />
+                            }>
+                            {/* Providers that support subscription tokens
+                                (anthropic, openai) get the toggle;
+                                CredentialTypeToggle self-hides for every other
+                                provider, leaving the plain api-key input untouched. */}
+                            <div className="flex flex-col gap-3">
+                                <CredentialTypeToggle />
 
-                            {/* ByokKeyInput switches on credentialType: the
-                                api-key textarea for "api_key", the subscription
-                                token + setup instructions for
-                                "subscription_token". */}
-                            <ByokKeyInput />
-                        </div>
-                    </Suspense>
+                                {/* ByokKeyInput switches on credentialType: the
+                                    api-key textarea for "api_key", the subscription
+                                    token + setup instructions for
+                                    "subscription_token". */}
+                                <ByokKeyInput />
+                            </div>
+                        </Suspense>
+                    )}
 
                     {/* Preserve the curated panel's "Get a key" / endpoint
                         helper — but only for the api-key path, since the
                         subscription input renders its own setup guidance. */}
-                    {credentialType === "api_key" && (
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                            <a
-                                href={activeApiKeyUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-primary-light inline-flex items-center gap-1 text-xs hover:underline">
-                                Get a key from {providerLabel}
-                                {variant ? ` (${variant.label})` : ""}
-                                <ExternalLinkIcon size={12} />
-                            </a>
-                            {activeBaseURL && (
-                                <span className="text-text-tertiary text-xs">
-                                    Endpoint:{" "}
-                                    <code className="bg-card-lv2 rounded px-1 py-0.5 font-mono text-[11px]">
-                                        {activeBaseURL}
-                                    </code>
-                                </span>
-                            )}
-                        </div>
-                    )}
+                    {credentialType === "api_key" &&
+                        (!hasStoredCredential || isReplacingCredential) && (
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                <a
+                                    href={activeApiKeyUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-primary-light inline-flex items-center gap-1 text-xs hover:underline">
+                                    Get a key from {providerLabel}
+                                    {variant ? ` (${variant.label})` : ""}
+                                    <ExternalLinkIcon size={12} />
+                                </a>
+                                {activeBaseURL && (
+                                    <span className="text-text-tertiary text-xs">
+                                        Endpoint:{" "}
+                                        <code className="bg-card-lv2 rounded px-1 py-0.5 font-mono text-[11px]">
+                                            {activeBaseURL}
+                                        </code>
+                                    </span>
+                                )}
+                            </div>
+                        )}
 
                     <TestResultBanner state={testState} />
 
@@ -377,18 +403,22 @@ export function CuratedConnectPanel({
                             onClick={onBack}>
                             Cancel
                         </Button>
-                        <Button
-                            type="button"
-                            size="md"
-                            variant="helper"
-                            leftIcon={<PlugIcon />}
-                            loading={testing}
-                            disabled={!isValid || !hasCredential || isSaving}
-                            onClick={() => {
-                                void runTest();
-                            }}>
-                            Test
-                        </Button>
+                        {!usingStoredCredential && (
+                            <Button
+                                type="button"
+                                size="md"
+                                variant="helper"
+                                leftIcon={<PlugIcon />}
+                                loading={testing}
+                                disabled={
+                                    !isValid || !hasCredential || isSaving
+                                }
+                                onClick={() => {
+                                    void runTest();
+                                }}>
+                                Test
+                            </Button>
+                        )}
                         <Button
                             type="button"
                             size="md"
@@ -399,8 +429,8 @@ export function CuratedConnectPanel({
                             onClick={() => {
                                 void handleTestAndSave();
                             }}>
-                            {existingKey && !apiKey?.trim() ? (
-                                "Save"
+                            {usingStoredCredential ? (
+                                "Switch model"
                             ) : (
                                 <>Test &amp; save</>
                             )}
