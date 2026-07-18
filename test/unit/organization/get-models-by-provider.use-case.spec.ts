@@ -6,15 +6,6 @@ jest.mock('axios');
 jest.mock('@libs/common/utils/crypto', () => ({
     decrypt: (value: string) => value,
 }));
-jest.mock('@kodus/flow', () => ({
-    createLogger: () => ({
-        log: jest.fn(),
-        error: jest.fn(),
-        warn: jest.fn(),
-        debug: jest.fn(),
-    }),
-}));
-
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 const originalCatalogClientVersion =
     process.env.KODUS_CODEX_CATALOG_CLIENT_VERSION;
@@ -138,7 +129,6 @@ describe('GetModelsByProviderUseCase', () => {
                 'gpt-5.5',
                 'gpt-5.4',
                 'gpt-5.4-mini',
-                'gpt-5.3-codex',
             ]),
         );
     });

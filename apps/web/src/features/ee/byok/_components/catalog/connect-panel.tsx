@@ -91,7 +91,9 @@ export function CuratedConnectPanel({
     // api_key and subscription_token). A fresh connection requires credentials.
     const form = useForm<EditKeyForm>({
         mode: "onChange",
-        resolver: zodResolver(existingKey ? editKeySchema : createKeySchema),
+        resolver: zodResolver(
+            existingKey ? editKeySchema : createKeySchema,
+        ) as any,
         defaultValues: {
             provider: variant?.provider ?? model.provider,
             model: model.id,

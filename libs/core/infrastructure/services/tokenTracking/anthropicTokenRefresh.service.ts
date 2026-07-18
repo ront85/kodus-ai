@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { decrypt, encrypt } from '@libs/common/utils/crypto';
-import { createLogger } from '@kodus/flow';
+import { createLogger } from '@libs/core/log/logger';
 
 const logger = createLogger('AnthropicTokenRefresh');
 
