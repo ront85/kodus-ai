@@ -31,9 +31,39 @@ interface OpenAIResponse {
     data: OpenAIModel[];
 }
 
+interface OpenAICodexModel {
+    slug?: string;
+    id?: string;
+    display_name?: string;
+    displayName?: string;
+    visibility?: string;
+    hidden?: boolean;
+    supported_in_api?: boolean;
+    supportedInApi?: boolean;
+    supported_reasoning_levels?: Array<{ effort?: string }>;
+    supportedReasoningLevels?: Array<{
+        effort?: string;
+        reasoningEffort?: string;
+    }>;
+}
+
+interface OpenAICodexResponse {
+    models?: OpenAICodexModel[];
+}
+
+interface ProviderCredentials extends OrganizationAndTeamData {
+    apiKey?: string;
+    subscriptionToken?: string;
+    chatgptAccountId?: string;
+    baseURL?: string;
+}
+
 interface AnthropicModel {
     id: string;
     display_name?: string;
+    capabilities?: {
+        thinking?: { supported?: boolean };
+    };
     context_length: number;
     pricing: {
         prompt: string;
@@ -236,12 +266,7 @@ export class GetModelsByProviderUseCase {
 
     async execute(
         provider: string,
-        userCredentials?: OrganizationAndTeamData & {
-            apiKey?: string;
-            subscriptionToken?: string;
-            chatgptAccountId?: string;
-            baseURL?: string;
-        },
+        userCredentials?: ProviderCredentials,
     ): Promise<ModelResponse> {
         if (!this.providerService.isProviderSupported(provider)) {
             throw new BadRequestException(`Unsupported provider: ${provider}`);
@@ -300,9 +325,16 @@ export class GetModelsByProviderUseCase {
 
         switch (byokProvider) {
             case BYOKProvider.OPENAI: {
-                // Subscription token = Codex via ChatGPT Plus — return static Codex model list
                 if (subscriptionToken) {
-                    return this.getOpenAICodexStaticModels();
+                    const accountId =
+                        chatgptAccountId ||
+                        this.extractChatgptAccountId(
+                            subscriptionToken,
+                        );
+                    return this.getOpenAICodexModels(
+                        subscriptionToken,
+                        accountId,
+                    );
                 }
                 const openaiKey = apiKey || process.env.API_OPEN_AI_API_KEY;
                 // No API key available — return static list instead of a guaranteed 401
@@ -470,10 +502,12 @@ export class GetModelsByProviderUseCase {
         // with a ChatGPT account". These slugs come from the codex CLI's
         // own models cache (visibility=list).
         const codexModels = [
+            { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' },
+            { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra' },
+            { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' },
             { id: 'gpt-5.5', name: 'GPT-5.5' },
             { id: 'gpt-5.4', name: 'GPT-5.4' },
             { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini' },
-            { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark' },
         ];
 
         return {
@@ -490,6 +524,135 @@ export class GetModelsByProviderUseCase {
                 };
             }),
         };
+    }
+
+    private extractChatgptAccountId(token: string): string | undefined {
+        try {
+            const payload = JSON.parse(
+                Buffer.from(token.split('.')[1], 'base64').toString('utf8'),
+            );
+            return (
+                payload['https://api.openai.com/auth.chatgpt_account_id'] ??
+                payload['https://api.openai.com/auth']?.chatgpt_account_id ??
+                undefined
+            );
+        } catch {
+            return undefined;
+        }
+    }
+
+    private async getOpenAICodexModels(
+        subscriptionToken: string,
+        chatgptAccountId?: string,
+    ): Promise<ModelResponse> {
+        if (!chatgptAccountId) {
+            return this.getOpenAICodexStaticModels();
+        }
+
+        try {
+            const response = await axios.get<OpenAICodexResponse>(
+                'https://chatgpt.com/backend-api/codex/models',
+                {
+                    headers: {
+                        'Authorization': `Bearer ${subscriptionToken}`,
+                        'ChatGPT-Account-ID': chatgptAccountId,
+                        'originator': 'codex_cli_rs',
+                        'User-Agent': 'codex_cli_rs/0.1.0',
+                        'Accept': 'application/json',
+                    },
+                    // Keep this aligned with the newest catalog schema Kodus
+                    // supports; deployments can advance it without a code change.
+                    params: {
+                        client_version:
+                            process.env.KODUS_CODEX_CATALOG_CLIENT_VERSION ||
+                            '0.144.0',
+                    },
+                    timeout: 8000,
+                },
+            );
+
+            const entries = Array.isArray(response.data.models)
+                ? response.data.models.filter(
+                      (model): model is OpenAICodexModel => Boolean(model),
+                  )
+                : [];
+            const models = entries
+                .filter((model) => {
+                    const isVisible =
+                        model.hidden !== true &&
+                        (model.visibility === 'list' ||
+                            (model.visibility === undefined &&
+                                model.hidden === false));
+                    const isSupported =
+                        model.supported_in_api !== false &&
+                        model.supportedInApi !== false;
+                    return isVisible && isSupported;
+                })
+                .map((model) => {
+                    const id = model.slug?.trim() || model.id?.trim() || '';
+                    const reasoningConfig =
+                        this.getOpenAICodexReasoningConfig(model, id);
+                    return {
+                        id,
+                        name: model.display_name ?? model.displayName ?? id,
+                        ...(reasoningConfig && {
+                            supportsReasoning: true,
+                            reasoningConfig,
+                        }),
+                    };
+                })
+                .filter((model) => model.id.length > 0);
+
+            const uniqueModels = [
+                ...new Map(models.map((model) => [model.id, model])).values(),
+            ];
+
+            if (uniqueModels.length === 0) {
+                throw new Error('No picker-visible models returned');
+            }
+
+            return { provider: BYOKProvider.OPENAI, models: uniqueModels };
+        } catch {
+            this.logger.warn({
+                message:
+                    'OpenAI Codex models API failed, returning static list',
+                context: GetModelsByProviderUseCase.name,
+            });
+            return this.getOpenAICodexStaticModels();
+        }
+    }
+
+    private getOpenAICodexReasoningConfig(
+        model: OpenAICodexModel,
+        id: string,
+    ): ReasoningConfig | undefined {
+        const remoteLevels =
+            model.supported_reasoning_levels ??
+            model.supportedReasoningLevels;
+        if (!Array.isArray(remoteLevels)) {
+            return getModelCapabilities(id).reasoningConfig;
+        }
+
+        const normalized = remoteLevels
+            .map((level) => level.effort ?? level.reasoningEffort)
+            .map((level) => {
+                if (level === 'none') return undefined;
+                if (level === 'minimal') return 'low' as const;
+                if (level === 'xhigh' || level === 'max' || level === 'ultra') {
+                    return 'high' as const;
+                }
+                if (level === 'low' || level === 'medium' || level === 'high') {
+                    return level;
+                }
+                return undefined;
+            })
+            .filter(
+                (level): level is 'low' | 'medium' | 'high' =>
+                    level !== undefined,
+            );
+        const options = [...new Set(normalized)];
+
+        return options.length > 0 ? { type: 'level', options } : undefined;
     }
 
     private async getOpenAIModels(apiKey?: string): Promise<ModelResponse> {
@@ -529,7 +692,10 @@ export class GetModelsByProviderUseCase {
         }
     }
 
-    private async getAnthropicModels(apiKey?: string, subscriptionToken?: string): Promise<ModelResponse> {
+    private async getAnthropicModels(
+        apiKey?: string,
+        subscriptionToken?: string,
+    ): Promise<ModelResponse> {
         // If no credential at all, return static list
         if (!apiKey && !subscriptionToken) {
             return this.getAnthropicStaticModels();
@@ -555,27 +721,60 @@ export class GetModelsByProviderUseCase {
 
             const response = await axios.get<AnthropicResponse>(
                 'https://api.anthropic.com/v1/models',
-                { headers },
+                { headers, params: { limit: 1000 }, timeout: 8000 },
             );
 
-            return {
-                provider: BYOKProvider.ANTHROPIC,
-                models: response.data.data.map((model: AnthropicModel) => {
-                    const capabilities = getModelCapabilities(model.id);
+            if (
+                !Array.isArray(response.data.data) ||
+                response.data.data.length === 0
+            ) {
+                throw new Error('No Anthropic models returned');
+            }
+
+            const models = response.data.data
+                .filter(
+                    (model): model is AnthropicModel =>
+                        typeof model?.id === 'string' &&
+                        model.id.trim().length > 0,
+                )
+                .map((model: AnthropicModel) => {
+                    const id = model.id.trim();
+                    const localReasoningConfig =
+                        getModelCapabilities(id).reasoningConfig;
+                    const providerSupportsThinking =
+                        model.capabilities?.thinking?.supported;
+                    const reasoningConfig =
+                        providerSupportsThinking === false
+                            ? undefined
+                            : localReasoningConfig ??
+                              (providerSupportsThinking
+                                  ? {
+                                        type: 'budget' as const,
+                                        options: {
+                                            min: 128,
+                                            default: 3000,
+                                        },
+                                    }
+                                  : undefined);
                     return {
-                        id: model.id,
-                        name: model.display_name || model.id,
-                        ...(capabilities.supportsReasoning && {
+                        id,
+                        name: model.display_name || id,
+                        ...(reasoningConfig && {
                             supportsReasoning: true,
-                            reasoningConfig: capabilities.reasoningConfig,
+                            reasoningConfig,
                         }),
                     };
-                }),
-            };
-        } catch (error) {
+                });
+
+            if (models.length === 0) {
+                throw new Error('No valid Anthropic models returned');
+            }
+
+            return { provider: BYOKProvider.ANTHROPIC, models };
+        } catch {
             // Fall back to static list on any auth/network error
             this.logger.warn({
-                message: `Anthropic models API failed (${(error as Error).message}), returning static list`,
+                message: 'Anthropic models API failed, returning static list',
                 context: GetModelsByProviderUseCase.name,
             });
             return this.getAnthropicStaticModels();
@@ -584,13 +783,16 @@ export class GetModelsByProviderUseCase {
 
     private getAnthropicStaticModels(): ModelResponse {
         const staticModels = [
+            { id: 'claude-fable-5', name: 'Claude Fable 5' },
             { id: 'claude-opus-4-8', name: 'Claude Opus 4.8' },
+            { id: 'claude-sonnet-5', name: 'Claude Sonnet 5' },
             { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+            { id: 'claude-opus-4-6', name: 'Claude Opus 4.6' },
             { id: 'claude-opus-4-5-20251101', name: 'Claude Opus 4.5' },
-            { id: 'claude-sonnet-4-5-20251101', name: 'Claude Sonnet 4.5' },
+            { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5' },
             { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' },
-            { id: 'claude-opus-4-0-20250514', name: 'Claude Opus 4' },
-            { id: 'claude-sonnet-4-0-20250514', name: 'Claude Sonnet 4' },
+            { id: 'claude-opus-4-20250514', name: 'Claude Opus 4' },
+            { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
             { id: 'claude-3-7-sonnet-20250219', name: 'Claude 3.7 Sonnet' },
             { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
             { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },

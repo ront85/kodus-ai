@@ -165,6 +165,7 @@ const REASONING_PATTERN_RULES: Array<[RegExp, ReasoningConfig]> = [
     [/^gemini-2\.0-.*thinking.*/i, budget()],
 
     // Anthropic Claude - adaptive for 4.7+, budget for older families
+    [/^claude-(?:fable|mythos|opus|sonnet|haiku)-5(\b|[-_@])/, adaptive()],
     [/^claude-opus-4-8(\b|[-_@])/, adaptive()],
     [/^claude-opus-4-7(\b|[-_@])/, adaptive()],
     [/^claude-sonnet-4-7(\b|[-_@])/, adaptive()],
@@ -209,8 +210,8 @@ const DEFAULT_MAX_TOKENS_PATTERN_RULES: Array<[RegExp, number]> = [
     [/^gemini-2\.0-flash(\b|[-_@])/, 8000],
 
     // Anthropic Claude 4.x
-    [/^claude-opus-4(\b|[-_@])/, 15000],
-    [/^claude-sonnet-4(\b|[-_@])/, 15000],
+    [/^claude-(?:fable|mythos|opus|sonnet|haiku)-5(\b|[-_@])/, 15000],
+    [/^claude-(?:opus|sonnet|haiku)-4(\b|[-_@])/, 15000],
     [/^claude-3-7-sonnet(\b|[-_@])/, 15000],
 
     // Anthropic Claude 3.x
