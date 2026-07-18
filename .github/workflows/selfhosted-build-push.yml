@@ -245,6 +245,7 @@ jobs:
     create-rc-tag:
         name: Create RC git tag at current SHA
         needs: plan-release
+        if: ${{ always() && needs.plan-release.result == 'success' }}
         runs-on: ubuntu-latest
         permissions:
             contents: write
@@ -275,6 +276,7 @@ jobs:
         needs:
             - plan-release
             - create-rc-tag
+        if: ${{ always() && needs.plan-release.result == 'success' && needs.create-rc-tag.result == 'success' }}
         runs-on: ubuntu-latest
         # No environment: production here on purpose. The gate is at PROMOTE,
         # not at build — the Friday-morning flow dispatches at 9h and lets
