@@ -47,6 +47,28 @@ export function useSuspenseGetLLMProviderModels({
     );
 }
 
+export function useGetLLMProviderModels({
+    provider,
+    useSavedKey,
+    enabled = true,
+}: {
+    provider?: string;
+    useSavedKey?: boolean;
+    enabled?: boolean;
+}) {
+    return useFetch<{ models: Array<{ id: string; name: string }> }>(
+        ORGANIZATION_PARAMETERS_PATHS.GET_PROVIDER_MODELS_LIST,
+        {
+            params: {
+                provider,
+                ...(useSavedKey ? { useSavedKey: "true" } : {}),
+            },
+        },
+        enabled && Boolean(provider),
+        { staleTime: 1000 * 60 * 5 },
+    );
+}
+
 export function useGetTimezone() {
     const result = useFetch<{ configValue: Timezone } | null>(
         ORGANIZATION_PARAMETERS_PATHS.GET_BY_KEY,

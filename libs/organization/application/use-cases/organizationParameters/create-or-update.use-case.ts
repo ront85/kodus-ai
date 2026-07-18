@@ -120,7 +120,9 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
         );
 
         if (!existing?.configValue?.main || !existing?.configValue?.fallback) {
-            throw new Error('Both main and fallback must be configured to swap');
+            throw new Error(
+                'Both main and fallback must be configured to swap',
+            );
         }
 
         const swapped = {
@@ -128,11 +130,12 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
             fallback: existing.configValue.main,
         };
 
-        const result = await this.organizationParametersService.createOrUpdateConfig(
-            OrganizationParametersKey.BYOK_CONFIG,
-            swapped,
-            organizationAndTeamData,
-        );
+        const result =
+            await this.organizationParametersService.createOrUpdateConfig(
+                OrganizationParametersKey.BYOK_CONFIG,
+                swapped,
+                organizationAndTeamData,
+            );
 
         return !!result;
     }
@@ -245,6 +248,22 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
         // refreshToken) instead of an apiKey; tokens may be pasted as raw
         // strings or as the full credentials JSON file.
         if (next.credentialType === BYOKCredentialType.SUBSCRIPTION_TOKEN) {
+            if (!next.subscriptionToken?.trim()) {
+                if (!existing?.subscriptionToken) {
+                    throw new Error(
+                        'subscriptionToken is required when using subscription token credential type',
+                    );
+                }
+
+                return {
+                    ...next,
+                    subscriptionToken: existing.subscriptionToken,
+                    refreshToken: existing.refreshToken,
+                    tokenExpiresAt: existing.tokenExpiresAt,
+                    chatgptAccountId: existing.chatgptAccountId,
+                };
+            }
+
             return this.encryptSubscriptionTokenConfig(next);
         }
 
@@ -257,8 +276,7 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
             const hasBearer =
                 !!next.awsBearerToken?.trim() || !!existing?.awsBearerToken;
             const hasIam =
-                (!!next.awsAccessKeyId?.trim() ||
-                    !!existing?.awsAccessKeyId) &&
+                (!!next.awsAccessKeyId?.trim() || !!existing?.awsAccessKeyId) &&
                 (!!next.awsSecretAccessKey?.trim() ||
                     !!existing?.awsSecretAccessKey);
 
@@ -310,10 +328,12 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
 
     private extractJwtExpiry(token: string): number {
         try {
-            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
+            const payload = JSON.parse(
+                Buffer.from(token.split('.')[1], 'base64').toString('utf8'),
+            );
             if (payload.exp) {
                 // JWT exp is in seconds; subtract 1 minute buffer
-                return (payload.exp * 1000) - 60_000;
+                return payload.exp * 1000 - 60_000;
             }
         } catch {
             // Fall through to default
@@ -324,17 +344,24 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
 
     private extractChatgptAccountId(token: string): string {
         try {
-            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString('utf8'));
-            return payload['https://api.openai.com/auth.chatgpt_account_id']
-                ?? payload['https://api.openai.com/auth']?.chatgpt_account_id
-                ?? payload['https://api.openai.com/auth']?.user_id
-                ?? '';
+            const payload = JSON.parse(
+                Buffer.from(token.split('.')[1], 'base64').toString('utf8'),
+            );
+            return (
+                payload['https://api.openai.com/auth.chatgpt_account_id'] ??
+                payload['https://api.openai.com/auth']?.chatgpt_account_id ??
+                payload['https://api.openai.com/auth']?.user_id ??
+                ''
+            );
         } catch {
             return '';
         }
     }
 
-    private parseAnthropicCredentialsJson(raw: string): { subscriptionToken: string; refreshToken?: string } {
+    private parseAnthropicCredentialsJson(raw: string): {
+        subscriptionToken: string;
+        refreshToken?: string;
+    } {
         try {
             const parsed = JSON.parse(raw);
             // Support ~/.claude/.credentials.json format: { "claudeAiOauth": { "accessToken": "...", "refreshToken": "..." } }
@@ -344,14 +371,21 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
             if (!accessToken) {
                 throw new Error('Missing accessToken in credentials JSON');
             }
-            return { subscriptionToken: accessToken, refreshToken: refreshToken ?? undefined };
+            return {
+                subscriptionToken: accessToken,
+                refreshToken: refreshToken ?? undefined,
+            };
         } catch (e) {
             if (e.message?.includes('accessToken')) throw e;
             throw new Error('Invalid Anthropic credentials JSON');
         }
     }
 
-    private parseOpenAIAuthJson(raw: string): { subscriptionToken: string; refreshToken?: string; accountId?: string } {
+    private parseOpenAIAuthJson(raw: string): {
+        subscriptionToken: string;
+        refreshToken?: string;
+        accountId?: string;
+    } {
         try {
             const parsed = JSON.parse(raw);
             const subscriptionToken = parsed?.tokens?.access_token;
@@ -360,17 +394,25 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
             if (!subscriptionToken) {
                 throw new Error('Missing tokens.access_token in auth.json');
             }
-            return { subscriptionToken, refreshToken: refreshToken ?? undefined, accountId: accountId ?? undefined };
+            return {
+                subscriptionToken,
+                refreshToken: refreshToken ?? undefined,
+                accountId: accountId ?? undefined,
+            };
         } catch {
             throw new Error('Invalid auth.json content');
         }
     }
 
     private encryptSubscriptionTokenConfig(
-        cfg: NonNullable<BYOKConfig['main']> | NonNullable<BYOKConfig['fallback']>,
+        cfg:
+            | NonNullable<BYOKConfig['main']>
+            | NonNullable<BYOKConfig['fallback']>,
     ) {
         if (!cfg.subscriptionToken) {
-            throw new Error('subscriptionToken is required when using subscription token credential type');
+            throw new Error(
+                'subscriptionToken is required when using subscription token credential type',
+            );
         }
 
         const isOpenAI = cfg.provider === BYOKProvider.OPENAI;
@@ -387,7 +429,8 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
                 refreshToken = extracted.refreshToken ?? refreshToken;
                 authJsonAccountId = extracted.accountId;
             } else if (isAnthropic) {
-                const extracted = this.parseAnthropicCredentialsJson(subscriptionToken);
+                const extracted =
+                    this.parseAnthropicCredentialsJson(subscriptionToken);
                 subscriptionToken = extracted.subscriptionToken;
                 refreshToken = extracted.refreshToken ?? refreshToken;
             }
@@ -397,7 +440,8 @@ export class CreateOrUpdateOrganizationParametersUseCase implements IUseCase {
             ? this.extractJwtExpiry(subscriptionToken)
             : Date.now() + 8 * 60 * 60 * 1000;
         const chatgptAccountId = isOpenAI
-            ? (authJsonAccountId || this.extractChatgptAccountId(subscriptionToken))
+            ? authJsonAccountId ||
+              this.extractChatgptAccountId(subscriptionToken)
             : undefined;
 
         return {

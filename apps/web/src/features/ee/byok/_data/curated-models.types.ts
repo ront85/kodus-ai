@@ -41,6 +41,8 @@ export type CuratedModel = {
     docsUrl?: string;
     latencyP50Ms?: number;
     errorRatePct?: number;
+    /** Model was returned by the provider catalog rather than curated by Kodus. */
+    discovered?: boolean;
 };
 
 export type ModelAnnotation = {

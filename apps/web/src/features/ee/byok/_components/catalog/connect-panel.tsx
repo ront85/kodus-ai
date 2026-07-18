@@ -5,11 +5,11 @@ import { Alert, AlertDescription } from "@components/ui/alert";
 import { Button } from "@components/ui/button";
 import { Card, CardContent, CardHeader } from "@components/ui/card";
 import { zodResolver } from "@hookform/resolvers/zod";
+import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import {
     testBYOK,
     type TestBYOKResult,
 } from "@services/organizationParameters/fetch";
-import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import {
     ArrowLeftIcon,
     CheckCircle2Icon,
@@ -20,11 +20,6 @@ import {
 } from "lucide-react";
 import { FormProvider, useForm } from "react-hook-form";
 
-import type {
-    CuratedModel,
-    ModelVariant,
-} from "../../_data/curated-models.types";
-import type { BYOKConfig } from "../../_types";
 import { ByokAdvancedSettings } from "../_modals/edit-key/_components/advanced-settings";
 import { CredentialTypeToggle } from "../_modals/edit-key/_components/credential-type-toggle";
 import { ByokKeyInput } from "../_modals/edit-key/_components/key-input";
@@ -33,6 +28,11 @@ import {
     editKeySchema,
     type EditKeyForm,
 } from "../_modals/edit-key/_types";
+import type {
+    CuratedModel,
+    ModelVariant,
+} from "../../_data/curated-models.types";
+import type { BYOKConfig } from "../../_types";
 import { CuratedModelCard, PROVIDER_LABELS } from "./model-card";
 
 const resolveInitialVariant = (
@@ -41,9 +41,7 @@ const resolveInitialVariant = (
 ): ModelVariant | undefined => {
     if (!model.variants?.length) return undefined;
     if (existingBaseURL) {
-        const byUrl = model.variants.find(
-            (v) => v.baseURL === existingBaseURL,
-        );
+        const byUrl = model.variants.find((v) => v.baseURL === existingBaseURL);
         if (byUrl) return byUrl;
     }
     const byDefault = model.defaultVariantId
@@ -75,6 +73,7 @@ export function CuratedConnectPanel({
     const [variant, setVariant] = useState<ModelVariant | undefined>(() =>
         resolveInitialVariant(model, existingConfig?.baseURL),
     );
+    const hasStoredCredential = Boolean(existingConfig || existingKey);
 
     const initialBaseURL =
         existingConfig?.baseURL ??
@@ -92,7 +91,7 @@ export function CuratedConnectPanel({
     const form = useForm<EditKeyForm>({
         mode: "onChange",
         resolver: zodResolver(
-            existingKey ? editKeySchema : createKeySchema,
+            hasStoredCredential ? editKeySchema : createKeySchema,
         ) as any,
         defaultValues: {
             provider: variant?.provider ?? model.provider,
@@ -100,7 +99,7 @@ export function CuratedConnectPanel({
             credentialType: existingConfig?.credentialType ?? "api_key",
             apiKey: "",
             subscriptionToken: "",
-            isEditing: !!existingKey,
+            isEditing: hasStoredCredential,
             baseURL: initialBaseURL,
             temperature:
                 existingConfig?.temperature ?? model.defaults.temperature,
@@ -111,9 +110,9 @@ export function CuratedConnectPanel({
             maxConcurrentRequests: initialMaxConcurrent,
             reasoningEffort: existingConfig?.reasoningConfigOverride
                 ? "custom"
-                : existingConfig?.reasoningEffort ??
+                : (existingConfig?.reasoningEffort ??
                   model.defaults.reasoningEffort ??
-                  null,
+                  null),
             reasoningConfigOverride:
                 existingConfig?.reasoningConfigOverride ?? null,
             openrouterProviderOrder:
@@ -157,7 +156,7 @@ export function CuratedConnectPanel({
     // A credential is "ready" when the relevant field has content, or when a
     // key is already stored (blank = keep the existing one).
     const hasCredential =
-        !!existingKey ||
+        hasStoredCredential ||
         (credentialType === "subscription_token"
             ? !!subscriptionToken?.trim()
             : !!apiKey?.trim());
@@ -222,7 +221,7 @@ export function CuratedConnectPanel({
         // Zod-validated token and proceeds to save.
         if (
             data.credentialType === "subscription_token" ||
-            (existingKey && !data.apiKey?.trim())
+            (hasStoredCredential && !data.apiKey?.trim())
         ) {
             setTestState({ status: "idle" });
             return { ok: true, code: "ok", latencyMs: 0 };
@@ -305,13 +304,13 @@ export function CuratedConnectPanel({
                         />
                     )}
 
-                    {existingKey && (
+                    {hasStoredCredential && (
                         <Alert variant="info">
                             <AlertDescription className="text-pretty">
                                 A key for <strong>{providerLabel}</strong> is
-                                already stored. Paste a new one to replace it
-                                — or leave blank to keep the current key while
-                                you switch models or tweak advanced settings.
+                                already stored. Paste a new one to replace it —
+                                or leave blank to keep the current key while you
+                                switch models or tweak advanced settings.
                             </AlertDescription>
                         </Alert>
                     )}
@@ -459,7 +458,7 @@ function VariantSelector({
                         key={v.id}
                         value={v.id}
                         disabled={isDisabledVariant(v.id)}
-                        className="text-text-secondary hover:text-text-primary data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:ring-primary/40 data-[state=on]:shadow-sm rounded-md px-3 py-2 text-xs font-medium transition-colors data-[disabled]:opacity-40 data-[disabled]:pointer-events-none data-[state=on]:ring-1">
+                        className="text-text-secondary hover:text-text-primary data-[state=on]:bg-background data-[state=on]:text-primary data-[state=on]:ring-primary/40 rounded-md px-3 py-2 text-xs font-medium transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-40 data-[state=on]:shadow-sm data-[state=on]:ring-1">
                         {v.label}
                         {isDisabledVariant(v.id) && (
                             <span className="ml-1.5 text-xs">

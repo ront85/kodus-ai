@@ -98,7 +98,7 @@ export function CuratedModelCard({
             <CardContent className="flex h-full flex-col gap-3 p-4">
                 <div className="flex items-start justify-between gap-2">
                     <div className="flex flex-col gap-1">
-                        <span className="text-sm font-semibold leading-tight">
+                        <span className="text-sm leading-tight font-semibold">
                             {model.displayName}
                         </span>
                         <span className="text-text-tertiary text-xs">
@@ -108,24 +108,29 @@ export function CuratedModelCard({
                         </span>
                     </div>
 
-                    <Tooltip>
-                        <TooltipTrigger asChild>
-                            <span>
-                                <Badge variant="secondary" size="xs">
-                                    <TrophyIcon size={10} className="mr-1" />
-                                    <span className="tabular-nums">
-                                        {model.benchmarkScore}
-                                    </span>
-                                </Badge>
-                            </span>
-                        </TooltipTrigger>
-                        <TooltipPortal>
-                            <TooltipContent side="bottom">
-                                Benchmark score (0–100) on our code-review test
-                                suite
-                            </TooltipContent>
-                        </TooltipPortal>
-                    </Tooltip>
+                    {!model.discovered && (
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <span>
+                                    <Badge variant="secondary" size="xs">
+                                        <TrophyIcon
+                                            size={10}
+                                            className="mr-1"
+                                        />
+                                        <span className="tabular-nums">
+                                            {model.benchmarkScore}
+                                        </span>
+                                    </Badge>
+                                </span>
+                            </TooltipTrigger>
+                            <TooltipPortal>
+                                <TooltipContent side="bottom">
+                                    Benchmark score (0–100) on our code-review
+                                    test suite
+                                </TooltipContent>
+                            </TooltipPortal>
+                        </Tooltip>
+                    )}
                 </div>
 
                 {!compact && (
@@ -134,37 +139,47 @@ export function CuratedModelCard({
                     </p>
                 )}
 
-                <div className="mt-auto flex flex-wrap items-center gap-1.5">
-                    <MetricTag
-                        icon={<ClockIcon size={10} className="mr-1" />}
-                        label={SPEED_LABELS[model.speed] ?? model.speed}
-                        tooltip="Response time based on p90 latency across benchmark tests"
-                    />
-                    {latency && (
+                {model.discovered ? (
+                    <div className="mt-auto flex flex-wrap items-center gap-1.5">
+                        <Badge variant="helper" size="xs">
+                            Provider catalog
+                        </Badge>
+                    </div>
+                ) : (
+                    <div className="mt-auto flex flex-wrap items-center gap-1.5">
                         <MetricTag
-                            icon={<GaugeIcon size={10} className="mr-1" />}
-                            label={`p50 ${latency}`}
-                            tooltip="Median response time (p50) observed across production runs"
+                            icon={<ClockIcon size={10} className="mr-1" />}
+                            label={SPEED_LABELS[model.speed] ?? model.speed}
+                            tooltip="Response time based on p90 latency across benchmark tests"
                         />
-                    )}
-                    {errorRate && (
+                        {latency && (
+                            <MetricTag
+                                icon={<GaugeIcon size={10} className="mr-1" />}
+                                label={`p50 ${latency}`}
+                                tooltip="Median response time (p50) observed across production runs"
+                            />
+                        )}
+                        {errorRate && (
+                            <MetricTag
+                                icon={
+                                    <ActivityIcon size={10} className="mr-1" />
+                                }
+                                label={`err ${errorRate}`}
+                                tooltip="Error rate observed across production runs"
+                            />
+                        )}
                         <MetricTag
-                            icon={<ActivityIcon size={10} className="mr-1" />}
-                            label={`err ${errorRate}`}
-                            tooltip="Error rate observed across production runs"
+                            icon={<FileTextIcon size={10} className="mr-1" />}
+                            label={model.contextWindow}
+                            tooltip="Maximum input size per request (context window)"
                         />
-                    )}
-                    <MetricTag
-                        icon={<FileTextIcon size={10} className="mr-1" />}
-                        label={model.contextWindow}
-                        tooltip="Maximum input size per request (context window)"
-                    />
-                    <MetricTag
-                        icon={<CoinsIcon size={10} className="mr-1" />}
-                        label={model.costTier}
-                        tooltip="Relative cost per 1M tokens (input/output)"
-                    />
-                </div>
+                        <MetricTag
+                            icon={<CoinsIcon size={10} className="mr-1" />}
+                            label={model.costTier}
+                            tooltip="Relative cost per 1M tokens (input/output)"
+                        />
+                    </div>
+                )}
 
                 {!compact && model.strengths.length > 0 && (
                     <ul className="flex flex-col gap-0.5">
