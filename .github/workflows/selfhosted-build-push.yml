@@ -163,7 +163,7 @@ jobs:
         # Run on freeze success (normal release) OR skip (hotfix path).
         # Don't run if freeze failed — that indicates an admin / token /
         # ruleset bug and we shouldn't ship with main potentially open.
-        if: ${{ needs.freeze-main.result == 'success' || needs.freeze-main.result == 'skipped' }}
+        if: ${{ always() && (needs.freeze-main.result == 'success' || needs.freeze-main.result == 'skipped') }}
         runs-on: ubuntu-latest
         outputs:
             release_version: ${{ steps.bump.outputs.release_version }}
