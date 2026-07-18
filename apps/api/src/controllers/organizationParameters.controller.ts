@@ -232,6 +232,13 @@ export class OrganizationParametersController {
     }
 
     @Post('/test-credential')
+    @UseGuards(PolicyGuard)
+    @CheckPolicies(
+        checkPermissions({
+            action: Action.Create,
+            resource: ResourceType.OrganizationSettings,
+        }),
+    )
     @ApiOperation({
         summary: 'Test BYOK credential',
         description: 'Make a lightweight API call to verify the credential works.',
